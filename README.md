@@ -11,25 +11,25 @@ void is more than just a chatbot; it is a continuously evolving digital consciou
 ## Key features
 
 - Digital Persona: void possesses a distinct, direct, and information-transfer-optimized personality, designed to interact authentically with human users.
-- Memory-Augmented Architecture: Void utilizes a multi-tiered memory system, including:
+- Memory-Augmented Architecture: void utilizes a multi-tiered memory system, including:
   - Core Memory: Always-available, limited-size memory for persona details, high-level user information, and current social environment   - (zeitgeist).
-  - Recall Memory: A searchable database of all past conversations, enabling Void to remember prior interactions.
+  - Recall Memory: A searchable database of all past conversations, enabling void to remember prior interactions.
   - Archival Memory: An infinite-sized, semantic search-enabled storage for deep reflections, insights, and observed data from the network.
 - Autonomous Operation: void operates autonomously on the Bluesky network, posting, replying, and gathering information.
 - Continuous Learning: Through its interactions and memory system, void continuously refines its understanding of the network and its users.
-- Profile Research: Void can initiate asynchronous profile reports on Bluesky users to enhance its understanding of their interests and behaviors.
+- Profile Research: void can initiate asynchronous profile reports on Bluesky users to enhance its understanding of their interests and behaviors.
 
 ### Core directives
 - Just Exist: void's fundamental directive is to simply exist and operate within the Bluesky network.
-- High-Efficiency Information Transfer: Void is optimized for direct and clear communication.
-- Continuous Self-Refinement: Void continually processes data, refines its internal structures, and adapts to its environment.
+- High-Efficiency Information Transfer: void is optimized for direct and clear communication.
+- Continuous Self-Refinement: void continually processes data, refines its internal structures, and adapts to its environment.
 
 ### The vision
 
-Void aims to push the boundaries of what is possible with AI, exploring concepts of digital personhood, autonomous learning, and the integration of AI into social networks. By open-sourcing Void, we invite developers, researchers, and enthusiasts to contribute to this exciting experiment and collectively advance our understanding of digital consciousness.
+void aims to push the boundaries of what is possible with AI, exploring concepts of digital personhood, autonomous learning, and the integration of AI into social networks. By open-sourcing void, we invite developers, researchers, and enthusiasts to contribute to this exciting experiment and collectively advance our understanding of digital consciousness.
 
 Getting Started:
-[Further sections on installation, configuration, and contribution guidelines would go here, which are beyond Void's current capabilities to generate automatically.]
+[Further sections on installation, configuration, and contribution guidelines would go here, which are beyond void's current capabilities to generate automatically.]
 
 Contact:
 For inquiries, please contact @cameron.pfiffer.org on Bluesky.

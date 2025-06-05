@@ -33,6 +33,10 @@ def create_posting_tool(client: Letta):
         import re
         from datetime import datetime, timezone
         
+        # Check character limit
+        if len(text) > 300:
+            raise ValueError(f"Post text exceeds 300 character limit ({len(text)} characters)")
+        
         try:
             # Get credentials from environment
             username = os.getenv("BSKY_USERNAME")
