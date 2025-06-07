@@ -23,9 +23,10 @@ logging.basicConfig(
 logger = logging.getLogger("void_bot")
 
 
-# Create a client
+# Create a client with extended timeout for LLM operations
 CLIENT= Letta(
-    token=os.environ["LETTA_API_KEY"]
+    token=os.environ["LETTA_API_KEY"],
+    timeout=300  # 5 minutes timeout for API calls
 )
 
 # Use the "Bluesky" project
@@ -110,6 +111,8 @@ def process_mention(void_agent, atproto_client, notification_data):
         # Get thread context as YAML string
         thread_context = thread_to_yaml_string(thread)
 
+        print(thread_context)
+
         # Create a prompt for the Letta agent with thread context
         prompt = f"""You received a mention on Bluesky from @{author_handle} ({author_name or author_handle}).
 
@@ -183,8 +186,8 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                 logger.error(f"Failed to send reply to @{author_handle}")
                 return False
         else:
-            logger.warning(f"No reply generated for mention from @{author_handle}")
-            return False
+            logger.warning(f"No reply generated for mention from @{author_handle}, removing notification from queue")
+            return True
 
     except Exception as e:
         logger.error(f"Error processing mention: {e}")

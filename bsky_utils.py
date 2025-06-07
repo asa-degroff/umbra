@@ -33,7 +33,6 @@ STRIP_FIELDS = [
     "tags",
     "associated",
     "thread_context",
-    "image",
     "aspect_ratio",
     "thumb",
     "fullsize",
@@ -59,8 +58,10 @@ STRIP_FIELDS = [
     "muted",
     "muted_by_list",
     "root_author_like",
-    "embed",
     "entities",
+    "ref",
+    "mime_type",
+    "size",
 ]
 def convert_to_basic_types(obj):
     """Convert complex Python objects to basic types for JSON/YAML serialization."""
@@ -116,23 +117,23 @@ def strip_fields(obj, strip_field_list):
 def thread_to_yaml_string(thread, strip_metadata=True):
     """
     Convert thread data to a YAML-formatted string for LLM parsing.
-    
+
     Args:
         thread: The thread data from get_post_thread
         strip_metadata: Whether to strip metadata fields for cleaner output
-    
+
     Returns:
         YAML-formatted string representation of the thread
     """
     # First convert complex objects to basic types
     basic_thread = convert_to_basic_types(thread)
-    
+
     if strip_metadata:
         # Create a copy and strip unwanted fields
         cleaned_thread = strip_fields(basic_thread, STRIP_FIELDS)
     else:
         cleaned_thread = basic_thread
-    
+
     return yaml.dump(cleaned_thread, indent=2, allow_unicode=True, default_flow_style=False)
 
 
@@ -279,7 +280,7 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str) ->
         else:
             post_uri = None
             post_cid = None
-            
+
         if not post_uri or not post_cid:
             logger.error("Notification doesn't have required uri/cid fields")
             return None
