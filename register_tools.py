@@ -16,14 +16,14 @@ from tools.functions import (
     get_bluesky_feed,
     attach_user_blocks,
     detach_user_blocks,
-    update_user_blocks,
+    # update_user_blocks,
 )
 
 # Import Pydantic models for args_schema
 from tools.search import SearchArgs
 from tools.post import PostArgs
 from tools.feed import FeedArgs
-from tools.blocks import AttachUserBlockArgs, DetachUserBlockArgs, UpdateUserBlockArgs
+from tools.blocks import AttachUserBlockArgs, DetachUserBlockArgs #, UpdateUserBlockArgs
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -63,18 +63,18 @@ TOOL_CONFIGS = [
         "description": "Detach user-specific memory blocks from the agent. Blocks are preserved for later use.",
         "tags": ["memory", "blocks", "user"]
     },
-    {
-        "func": update_user_blocks,
-        "args_schema": UpdateUserBlockArgs,
-        "description": "Update the content of user-specific memory blocks",
-        "tags": ["memory", "blocks", "user"]
-    },
+    # {
+    #     "func": update_user_blocks,
+    #     "args_schema": UpdateUserBlockArgs,
+    #     "description": "Update the content of user-specific memory blocks",
+    #     "tags": ["memory", "blocks", "user"]
+    # },
 ]
 
 
 def register_tools(agent_name: str = "void", tools: List[str] = None):
     """Register tools with a Letta agent.
-    
+
     Args:
         agent_name: Name of the agent to attach tools to
         tools: List of tool names to register. If None, registers all tools.
@@ -82,7 +82,7 @@ def register_tools(agent_name: str = "void", tools: List[str] = None):
     try:
         # Initialize Letta client with API key
         client = Letta(token=os.environ["LETTA_API_KEY"])
-        
+
         # Find the agent
         agents = client.agents.list()
         agent = None
@@ -90,14 +90,14 @@ def register_tools(agent_name: str = "void", tools: List[str] = None):
             if a.name == agent_name:
                 agent = a
                 break
-        
+
         if not agent:
             console.print(f"[red]Error: Agent '{agent_name}' not found[/red]")
             console.print("\nAvailable agents:")
             for a in agents:
                 console.print(f"  - {a.name}")
             return
-        
+
         # Filter tools if specific ones requested
         tools_to_register = TOOL_CONFIGS
         if tools:
@@ -105,18 +105,18 @@ def register_tools(agent_name: str = "void", tools: List[str] = None):
             if len(tools_to_register) != len(tools):
                 missing = set(tools) - {t["func"].__name__ for t in tools_to_register}
                 console.print(f"[yellow]Warning: Unknown tools: {missing}[/yellow]")
-        
+
         # Create results table
         table = Table(title=f"Tool Registration for Agent '{agent_name}'")
         table.add_column("Tool", style="cyan")
         table.add_column("Status", style="green")
         table.add_column("Description")
-        
+
         # Register each tool
         for tool_config in tools_to_register:
             func = tool_config["func"]
             tool_name = func.__name__
-            
+
             try:
                 # Create or update the tool using the standalone function
                 created_tool = client.tools.upsert_from_function(
@@ -124,11 +124,11 @@ def register_tools(agent_name: str = "void", tools: List[str] = None):
                     args_schema=tool_config["args_schema"],
                     tags=tool_config["tags"]
                 )
-                
+
                 # Get current agent tools
                 current_tools = client.agents.tools.list(agent_id=str(agent.id))
                 tool_names = [t.name for t in current_tools]
-                
+
                 # Check if already attached
                 if created_tool.name in tool_names:
                     table.add_row(tool_name, "Already Attached", tool_config["description"])
@@ -139,13 +139,13 @@ def register_tools(agent_name: str = "void", tools: List[str] = None):
                         tool_id=str(created_tool.id)
                     )
                     table.add_row(tool_name, "✓ Attached", tool_config["description"])
-                    
+
             except Exception as e:
                 table.add_row(tool_name, f"✗ Error: {str(e)}", tool_config["description"])
                 logger.error(f"Error registering tool {tool_name}: {e}")
-        
+
         console.print(table)
-        
+
     except Exception as e:
         console.print(f"[red]Error: {str(e)}[/red]")
         logger.error(f"Fatal error: {e}")
@@ -157,27 +157,27 @@ def list_available_tools():
     table.add_column("Tool Name", style="cyan")
     table.add_column("Description")
     table.add_column("Tags", style="dim")
-    
+
     for tool_config in TOOL_CONFIGS:
         table.add_row(
             tool_config["func"].__name__,
             tool_config["description"],
             ", ".join(tool_config["tags"])
         )
-    
+
     console.print(table)
 
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Register Void tools with a Letta agent")
     parser.add_argument("agent", nargs="?", default="void", help="Agent name (default: void)")
     parser.add_argument("--tools", nargs="+", help="Specific tools to register (default: all)")
     parser.add_argument("--list", action="store_true", help="List available tools")
-    
+
     args = parser.parse_args()
-    
+
     if args.list:
         list_available_tools()
     else:

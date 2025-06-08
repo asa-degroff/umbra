@@ -250,7 +250,7 @@ def get_post_thread(client: Client, uri: str) -> Optional[Dict[str, Any]]:
         The thread data or None if not found
     """
     try:
-        thread = client.app.bsky.feed.get_post_thread({'uri': uri, 'parent_height': 80, 'depth': 10})
+        thread = client.app.bsky.feed.get_post_thread({'uri': uri, 'parent_height': 60, 'depth': 10})
         return thread
     except Exception as e:
         logger.error(f"Error fetching post thread: {e}")

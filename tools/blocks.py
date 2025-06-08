@@ -63,7 +63,6 @@ class AttachUserBlockTool(BaseTool):
                     client.agents.blocks.attach(
                         agent_id=str(agent_state.id),
                         block_id=str(block.id),
-                        enable_sleeptime=False,
                     )
                     results.append(f"✓ {handle}: Block attached")
 
@@ -132,61 +131,61 @@ class DetachUserBlockTool(BaseTool):
             return f"Error detaching user blocks: {str(e)}"
 
 
-class UserBlockUpdate(BaseModel):
-    handle: str = Field(..., description="User's Bluesky handle (e.g., 'user.bsky.social')")
-    content: str = Field(..., description="New content for the user's memory block")
+# class UserBlockUpdate(BaseModel):
+#     handle: str = Field(..., description="User's Bluesky handle (e.g., 'user.bsky.social')")
+#     content: str = Field(..., description="New content for the user's memory block")
 
 
-class UpdateUserBlockArgs(BaseModel):
-    updates: List[UserBlockUpdate] = Field(..., description="List of user block updates")
+# class UpdateUserBlockArgs(BaseModel):
+#     updates: List[UserBlockUpdate] = Field(..., description="List of user block updates")
 
 
-class UpdateUserBlockTool(BaseTool):
-    name: str = "update_user_blocks"
-    args_schema: Type[BaseModel] = UpdateUserBlockArgs
-    description: str = "Update the content of user-specific memory blocks"
-    tags: List[str] = ["memory", "blocks", "user"]
+# class UpdateUserBlockTool(BaseTool):
+#     name: str = "update_user_blocks"
+#     args_schema: Type[BaseModel] = UpdateUserBlockArgs
+#     description: str = "Update the content of user-specific memory blocks"
+#     tags: List[str] = ["memory", "blocks", "user"]
 
-    def run(self, updates: List[UserBlockUpdate]) -> str:
-        """Update user-specific memory blocks."""
-        import os
-        from letta_client import Letta
+#     def run(self, updates: List[UserBlockUpdate]) -> str:
+#         """Update user-specific memory blocks."""
+#         import os
+#         from letta_client import Letta
 
-        try:
-            client = Letta(token=os.environ["LETTA_API_KEY"])
-            results = []
+#         try:
+#             client = Letta(token=os.environ["LETTA_API_KEY"])
+#             results = []
 
-            for update in updates:
-                handle = update.handle
-                new_content = update.content
-                # Sanitize handle for block label - completely self-contained
-                clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
-                block_label = f"user_{clean_handle}"
+#             for update in updates:
+#                 handle = update.handle
+#                 new_content = update.content
+#                 # Sanitize handle for block label - completely self-contained
+#                 clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
+#                 block_label = f"user_{clean_handle}"
 
-                try:
-                    # Find the block
-                    blocks = client.blocks.list(label=block_label)
-                    if not blocks or len(blocks) == 0:
-                        results.append(f"✗ {handle}: Block not found - use attach_user_blocks first")
-                        continue
+#                 try:
+#                     # Find the block
+#                     blocks = client.blocks.list(label=block_label)
+#                     if not blocks or len(blocks) == 0:
+#                         results.append(f"✗ {handle}: Block not found - use attach_user_blocks first")
+#                         continue
 
-                    block = blocks[0]
+#                     block = blocks[0]
 
-                    # Update block content
-                    updated_block = client.blocks.modify(
-                        block_id=str(block.id),
-                        value=new_content
-                    )
+#                     # Update block content
+#                     updated_block = client.blocks.modify(
+#                         block_id=str(block.id),
+#                         value=new_content
+#                     )
 
-                    preview = new_content[:100] + "..." if len(new_content) > 100 else new_content
-                    results.append(f"✓ {handle}: Updated - {preview}")
+#                     preview = new_content[:100] + "..." if len(new_content) > 100 else new_content
+#                     results.append(f"✓ {handle}: Updated - {preview}")
 
-                except Exception as e:
-                    results.append(f"✗ {handle}: Error - {str(e)}")
-                    logger.error(f"Error updating block for {handle}: {e}")
+#                 except Exception as e:
+#                     results.append(f"✗ {handle}: Error - {str(e)}")
+#                     logger.error(f"Error updating block for {handle}: {e}")
 
-            return f"Update results:\n" + "\n".join(results)
+#             return f"Update results:\n" + "\n".join(results)
 
-        except Exception as e:
-            logger.error(f"Error updating user blocks: {e}")
-            return f"Error updating user blocks: {str(e)}"
+#         except Exception as e:
+#             logger.error(f"Error updating user blocks: {e}")
+#             return f"Error updating user blocks: {str(e)}"
