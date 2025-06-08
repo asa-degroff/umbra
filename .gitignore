@@ -2,3 +2,4 @@
 old.py
 session_*.txt
 __pycache__/
+queue/
