@@ -1,43 +1,39 @@
-#!/usr/bin/env python3
-"""
-Add Bluesky posting tool to the main void agent.
-"""
+"""Post tool for creating Bluesky posts."""
+from typing import List, Type
+from pydantic import BaseModel, Field
+from letta_client.client import BaseTool
 
-import os
-import logging
-from letta_client import Letta
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, 
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("add_posting_tool")
+class PostArgs(BaseModel):
+    text: str = Field(..., description="The text content to post (max 300 characters)")
 
-def create_posting_tool(client: Letta):
-    """Create the Bluesky posting tool using Letta SDK."""
+
+class PostToBlueskyTool(BaseTool):
+    name: str = "post_to_bluesky"
+    args_schema: Type[BaseModel] = PostArgs
+    description: str = "Post a message to Bluesky"
+    tags: List[str] = ["bluesky", "post", "create"]
     
-    def post_to_bluesky(text: str) -> str:
+    def run(self, text: str) -> str:
         """
         Post a message to Bluesky.
         
         Args:
-            text: The text content of the post (required)
+            text: The text content to post (max 300 characters)
             
         Returns:
-            Status message with the post URI if successful, error message if failed
+            Success message with post URL if successful, error message if failed
         """
         import os
-        import requests
-        import json
         import re
+        import requests
         from datetime import datetime, timezone
         
-        # Check character limit
-        if len(text) > 300:
-            raise ValueError(f"Post text exceeds 300 character limit ({len(text)} characters)")
-        
         try:
+            # Validate character limit
+            if len(text) > 300:
+                return f"Error: Post exceeds 300 character limit (current: {len(text)} characters)"
+            
             # Get credentials from environment
             username = os.getenv("BSKY_USERNAME")
             password = os.getenv("BSKY_PASSWORD")
@@ -152,67 +148,15 @@ def create_posting_tool(client: Letta):
                 result = post_response.json()
                 
                 post_uri = result.get("uri")
-                return f"✅ Post created successfully! URI: {post_uri}"
+                # Extract handle from session if available
+                handle = session.get("handle", username)
+                rkey = post_uri.split("/")[-1] if post_uri else ""
+                post_url = f"https://bsky.app/profile/{handle}/post/{rkey}"
+                
+                return f"Successfully posted to Bluesky!\nPost URL: {post_url}\nText: {text}"
                     
             except Exception as e:
                 return f"Error: Failed to create post. ({str(e)})"
             
         except Exception as e:
-            error_msg = f"Error posting to Bluesky: {str(e)}"
-            return error_msg
-    
-    # Create the tool using upsert
-    tool = client.tools.upsert_from_function(
-        func=post_to_bluesky,
-        tags=["bluesky", "post", "create"]
-    )
-    
-    logger.info(f"Created tool: {tool.name} (ID: {tool.id})")
-    return tool
-
-def add_posting_tool_to_void():
-    """Add posting tool to the void agent."""
-    
-    # Create client
-    client = Letta(token=os.environ["LETTA_API_KEY"])
-    
-    logger.info("Adding posting tool to void agent...")
-    
-    # Create the posting tool
-    posting_tool = create_posting_tool(client)
-    
-    # Find the void agent
-    agents = client.agents.list(name="void")
-    if not agents:
-        print("❌ Void agent not found")
-        return
-    
-    void_agent = agents[0]
-    
-    # Get current tools
-    current_tools = client.agents.tools.list(agent_id=void_agent.id)
-    tool_names = [tool.name for tool in current_tools]
-    
-    # Add posting tool if not already present
-    if posting_tool.name not in tool_names:
-        client.agents.tools.attach(agent_id=void_agent.id, tool_id=posting_tool.id)
-        logger.info(f"Added {posting_tool.name} to void agent")
-        print(f"✅ Added post_to_bluesky tool to void agent!")
-        print(f"\nVoid agent can now post to Bluesky:")
-        print(f"   - Simple post: 'Post \"Hello world!\" to Bluesky'")
-        print(f"   - With mentions: 'Post \"Thanks @cameron.pfiffer.org for the help!\"'")
-        print(f"   - With links: 'Post \"Check out https://bsky.app\"'")
-    else:
-        logger.info(f"Tool {posting_tool.name} already attached to void agent")
-        print(f"✅ Posting tool already present on void agent")
-
-def main():
-    """Main function."""
-    try:
-        add_posting_tool_to_void()
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        print(f"❌ Error: {e}")
-
-if __name__ == "__main__":
-    main()
+            return f"Error posting to Bluesky: {str(e)}"
