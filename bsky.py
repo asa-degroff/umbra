@@ -102,11 +102,22 @@ def process_mention(void_agent, atproto_client, notification_data):
             author_name = notification_data.author.display_name or author_handle
 
         # Retrieve the entire thread associated with the mention
-        thread = atproto_client.app.bsky.feed.get_post_thread({
-            'uri': uri,
-            'parent_height': 80,
-            'depth': 10
-        })
+        try:
+            thread = atproto_client.app.bsky.feed.get_post_thread({
+                'uri': uri,
+                'parent_height': 80,
+                'depth': 10
+            })
+        except Exception as e:
+            error_str = str(e)
+            # Check if this is a NotFound error
+            if 'NotFound' in error_str or 'Post not found' in error_str:
+                logger.warning(f"Post not found for URI {uri}, removing from queue")
+                return True  # Return True to remove from queue
+            else:
+                # Re-raise other errors
+                logger.error(f"Error fetching thread: {e}")
+                raise
 
         # Get thread context as YAML string
         thread_context = thread_to_yaml_string(thread)
