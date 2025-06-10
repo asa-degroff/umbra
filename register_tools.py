@@ -9,21 +9,11 @@ from letta_client import Letta
 from rich.console import Console
 from rich.table import Table
 
-# Import standalone functions
-from tools.functions import (
-    search_bluesky_posts,
-    post_to_bluesky,
-    get_bluesky_feed,
-    attach_user_blocks,
-    detach_user_blocks,
-    # update_user_blocks,
-)
-
-# Import Pydantic models for args_schema
-from tools.search import SearchArgs
-from tools.post import PostArgs
-from tools.feed import FeedArgs
-from tools.blocks import AttachUserBlocksArgs, DetachUserBlocksArgs #, UpdateUserBlockArgs
+# Import standalone functions and their schemas
+from tools.search import search_bluesky_posts, SearchArgs
+from tools.post import post_to_bluesky, PostArgs
+from tools.feed import get_bluesky_feed, FeedArgs
+from tools.blocks import attach_user_blocks, detach_user_blocks, AttachUserBlocksArgs, DetachUserBlocksArgs
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
