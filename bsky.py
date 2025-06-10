@@ -149,8 +149,25 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                 messages = [{"role":"user", "content": prompt}]
             )
         except Exception as api_error:
+            error_str = str(api_error)
             logger.error(f"Letta API error: {api_error}")
+            logger.error(f"Error type: {type(api_error).__name__}")
             logger.error(f"Mention text was: {mention_text}")
+            logger.error(f"Author: @{author_handle}")
+            logger.error(f"URI: {uri}")
+            
+            # Check for specific error types
+            if hasattr(api_error, 'status_code'):
+                logger.error(f"API Status code: {api_error.status_code}")
+                if api_error.status_code == 524:
+                    logger.error("524 error - timeout from Cloudflare, will retry later")
+                    return False  # Keep in queue for retry
+            
+            # Check if error indicates we should remove from queue
+            if 'status_code: 524' in error_str:
+                logger.warning("524 timeout error, keeping in queue for retry")
+                return False  # Keep in queue for retry
+            
             raise
 
         # Extract the reply text from the agent's response
