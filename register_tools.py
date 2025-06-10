@@ -23,7 +23,7 @@ from tools.functions import (
 from tools.search import SearchArgs
 from tools.post import PostArgs
 from tools.feed import FeedArgs
-from tools.blocks import AttachUserBlockArgs, DetachUserBlockArgs #, UpdateUserBlockArgs
+from tools.blocks import AttachUserBlocksArgs, DetachUserBlocksArgs #, UpdateUserBlockArgs
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -53,13 +53,13 @@ TOOL_CONFIGS = [
     },
     {
         "func": attach_user_blocks,
-        "args_schema": AttachUserBlockArgs,
+        "args_schema": AttachUserBlocksArgs,
         "description": "Attach user-specific memory blocks to the agent. Creates blocks if they don't exist.",
         "tags": ["memory", "blocks", "user"]
     },
     {
         "func": detach_user_blocks,
-        "args_schema": DetachUserBlockArgs,
+        "args_schema": DetachUserBlocksArgs,
         "description": "Detach user-specific memory blocks from the agent. Blocks are preserved for later use.",
         "tags": ["memory", "blocks", "user"]
     },
