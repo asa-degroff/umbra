@@ -105,3 +105,7 @@ Main packages (install with `uv pip install`):
 - python-dotenv: Environment management
 - rich: Enhanced terminal output
 - pyyaml: YAML processing
+
+## Key Coding Principles
+
+- All errors in tools must be thrown, not returned as strings.
