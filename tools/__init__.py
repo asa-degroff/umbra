@@ -12,7 +12,7 @@ from .functions import (
 from .search import SearchArgs
 from .post import PostArgs
 from .feed import FeedArgs
-from .blocks import AttachUserBlockArgs, DetachUserBlockArgs, UpdateUserBlockArgs
+from .blocks import AttachUserBlocksArgs, DetachUserBlocksArgs, UpdateUserBlockArgs
 
 __all__ = [
     # Functions
@@ -26,7 +26,7 @@ __all__ = [
     "SearchArgs",
     "PostArgs",
     "FeedArgs",
-    "AttachUserBlockArgs",
-    "DetachUserBlockArgs",
+    "AttachUserBlocksArgs",
+    "DetachUserBlocksArgs",
     "UpdateUserBlockArgs",
 ]

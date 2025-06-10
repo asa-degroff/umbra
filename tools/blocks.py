@@ -9,13 +9,13 @@ from letta_client import Letta
 logger = logging.getLogger(__name__)
 
 
-class AttachUserBlockArgs(BaseModel):
+class AttachUserBlocksArgs(BaseModel):
     handles: List[str] = Field(..., description="List of user Bluesky handles (e.g., ['user1.bsky.social', 'user2.bsky.social'])")
 
 
-class AttachUserBlockTool(BaseTool):
+class AttachUserBlocksTool(BaseTool):
     name: str = "attach_user_blocks"
-    args_schema: Type[BaseModel] = AttachUserBlockArgs
+    args_schema: Type[BaseModel] = AttachUserBlocksArgs
     description: str = "Attach user-specific memory blocks to the agent. Creates blocks if they don't exist."
     tags: List[str] = ["memory", "blocks", "user"]
 
@@ -77,13 +77,13 @@ class AttachUserBlockTool(BaseTool):
             raise e
 
 
-class DetachUserBlockArgs(BaseModel):
+class DetachUserBlocksArgs(BaseModel):
     handles: List[str] = Field(..., description="List of user Bluesky handles (e.g., ['user1.bsky.social', 'user2.bsky.social'])")
 
 
-class DetachUserBlockTool(BaseTool):
+class DetachUserBlocksTool(BaseTool):
     name: str = "detach_user_blocks"
-    args_schema: Type[BaseModel] = DetachUserBlockArgs
+    args_schema: Type[BaseModel] = DetachUserBlocksArgs
     description: str = "Detach user-specific memory blocks from the agent. Blocks are preserved for later use."
     tags: List[str] = ["memory", "blocks", "user"]
 
