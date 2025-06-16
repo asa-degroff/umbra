@@ -18,9 +18,10 @@ import bsky_utils
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("void_bot")
+logger.setLevel(logging.INFO)
 
 
 # Create a client with extended timeout for LLM operations
@@ -38,6 +39,8 @@ FETCH_NOTIFICATIONS_DELAY_SEC = 30
 # Queue directory
 QUEUE_DIR = Path("queue")
 QUEUE_DIR.mkdir(exist_ok=True)
+QUEUE_ERROR_DIR = Path("queue/errors")
+QUEUE_ERROR_DIR.mkdir(exist_ok=True, parents=True)
 
 def initialize_void():
 
@@ -80,14 +83,32 @@ def initialize_void():
         description = "A social media agent trapped in the void.",
         project_id = PROJECT_ID
     )
+    
+    # Log agent details
+    logger.info(f"Void agent details - ID: {void_agent.id}")
+    logger.info(f"Agent name: {void_agent.name}")
+    if hasattr(void_agent, 'llm_config'):
+        logger.info(f"Agent model: {void_agent.llm_config.model}")
+    logger.info(f"Agent project_id: {void_agent.project_id}")
+    if hasattr(void_agent, 'tools'):
+        logger.info(f"Agent has {len(void_agent.tools)} tools")
+        for tool in void_agent.tools[:3]:  # Show first 3 tools
+            logger.info(f"  - Tool: {tool.name} (type: {tool.tool_type})")
 
     return void_agent
 
 
 def process_mention(void_agent, atproto_client, notification_data):
     """Process a mention and generate a reply using the Letta agent.
-    Returns True if successfully processed, False otherwise."""
+    
+    Returns:
+        True: Successfully processed, remove from queue
+        False: Failed but retryable, keep in queue
+        None: Failed with non-retryable error, move to errors directory
+    """
     try:
+        logger.info(f"Starting process_mention with notification_data type: {type(notification_data)}")
+        
         # Handle both dict and object inputs for backwards compatibility
         if isinstance(notification_data, dict):
             uri = notification_data['uri']
@@ -100,6 +121,8 @@ def process_mention(void_agent, atproto_client, notification_data):
             mention_text = notification_data.record.text if hasattr(notification_data.record, 'text') else ""
             author_handle = notification_data.author.handle
             author_name = notification_data.author.display_name or author_handle
+        
+        logger.info(f"Extracted data - URI: {uri}, Author: @{author_handle}, Text: {mention_text[:50]}...")
 
         # Retrieve the entire thread associated with the mention
         try:
@@ -120,9 +143,22 @@ def process_mention(void_agent, atproto_client, notification_data):
                 raise
 
         # Get thread context as YAML string
-        thread_context = thread_to_yaml_string(thread)
+        logger.info("Converting thread to YAML string")
+        try:
+            thread_context = thread_to_yaml_string(thread)
+            logger.info(f"Thread context generated, length: {len(thread_context)} characters")
+            logger.debug(f"Thread context preview: {thread_context[:500]}...")
+        except Exception as yaml_error:
+            import traceback
+            logger.error(f"Error converting thread to YAML: {yaml_error}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            logger.error(f"Thread type: {type(thread)}")
+            if hasattr(thread, '__dict__'):
+                logger.error(f"Thread attributes: {thread.__dict__}")
+            # Try to continue with a simple context
+            thread_context = f"Error processing thread context: {str(yaml_error)}"
 
-        print(thread_context)
+        # print(thread_context)
 
         # Create a prompt for the Letta agent with thread context
         prompt = f"""You received a mention on Bluesky from @{author_handle} ({author_name or author_handle}).
@@ -140,8 +176,12 @@ The YAML above shows the complete conversation thread. The most recent post is t
 Use the bluesky_reply tool to send a response less than 300 characters."""
 
         # Get response from Letta agent
-        logger.info(f"Generating reply for mention from @{author_handle}")
+        logger.info(f"Mention from @{author_handle}: {mention_text}")
         logger.debug(f"Prompt being sent: {prompt}")
+        
+        # Log the exact parameters being sent to Letta
+        logger.debug(f"Calling Letta API with agent_id: {void_agent.id}")
+        logger.debug(f"Message content length: {len(prompt)} characters")
 
         try:
             message_response = CLIENT.agents.messages.create(
@@ -149,26 +189,55 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                 messages = [{"role":"user", "content": prompt}]
             )
         except Exception as api_error:
+            import traceback
             error_str = str(api_error)
             logger.error(f"Letta API error: {api_error}")
             logger.error(f"Error type: {type(api_error).__name__}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
             logger.error(f"Mention text was: {mention_text}")
             logger.error(f"Author: @{author_handle}")
             logger.error(f"URI: {uri}")
             
+            
+            # Try to extract more info from different error types
+            if hasattr(api_error, 'response'):
+                logger.error(f"Error response object exists")
+                if hasattr(api_error.response, 'text'):
+                    logger.error(f"Response text: {api_error.response.text}")
+                if hasattr(api_error.response, 'json') and callable(api_error.response.json):
+                    try:
+                        logger.error(f"Response JSON: {api_error.response.json()}")
+                    except:
+                        pass
+            
             # Check for specific error types
             if hasattr(api_error, 'status_code'):
                 logger.error(f"API Status code: {api_error.status_code}")
-                if api_error.status_code == 524:
+                if hasattr(api_error, 'body'):
+                    logger.error(f"API Response body: {api_error.body}")
+                if hasattr(api_error, 'headers'):
+                    logger.error(f"API Response headers: {api_error.headers}")
+                
+                if api_error.status_code == 413:
+                    logger.error("413 Payload Too Large - moving to errors directory")
+                    return None  # Move to errors directory - payload is too large to ever succeed
+                elif api_error.status_code == 524:
                     logger.error("524 error - timeout from Cloudflare, will retry later")
                     return False  # Keep in queue for retry
             
             # Check if error indicates we should remove from queue
-            if 'status_code: 524' in error_str:
+            if 'status_code: 413' in error_str or 'Payload Too Large' in error_str:
+                logger.warning("Payload too large error, moving to errors directory")
+                return None  # Move to errors directory - cannot be fixed by retry
+            elif 'status_code: 524' in error_str:
                 logger.warning("524 timeout error, keeping in queue for retry")
                 return False  # Keep in queue for retry
             
             raise
+
+        # Log successful response
+        logger.debug("Successfully received response from Letta API")
+        logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
 
         # Extract the reply text from the agent's response
         reply_text = ""
@@ -315,10 +384,14 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                     logger.warning(f"Unknown notification type: {notif_data['reason']}")
                     success = True  # Remove unknown types from queue
 
-                # Remove file only after successful processing
+                # Handle file based on processing result
                 if success:
                     filepath.unlink()
                     logger.info(f"Processed and removed: {filepath.name}")
+                elif success is None:  # Special case for moving to error directory
+                    error_path = QUEUE_ERROR_DIR / filepath.name
+                    filepath.rename(error_path)
+                    logger.warning(f"Moved {filepath.name} to errors directory")
                 else:
                     logger.warning(f"Failed to process {filepath.name}, keeping in queue for retry")
 
@@ -368,18 +441,32 @@ def main():
     # Initialize the Letta agent
     void_agent = initialize_void()
     logger.info(f"Void agent initialized: {void_agent.id}")
+    
+    # Check if agent has required tools
+    if hasattr(void_agent, 'tools') and void_agent.tools:
+        tool_names = [tool.name for tool in void_agent.tools]
+        logger.info(f"Agent has tools: {tool_names}")
+        
+        # Check for bluesky-related tools
+        bluesky_tools = [name for name in tool_names if 'bluesky' in name.lower() or 'reply' in name.lower()]
+        if bluesky_tools:
+            logger.info(f"Found Bluesky-related tools: {bluesky_tools}")
+        else:
+            logger.warning("No Bluesky-related tools found! Agent may not be able to reply.")
+    else:
+        logger.warning("Agent has no tools registered!")
 
     # Initialize Bluesky client
     atproto_client = bsky_utils.default_login()
     logger.info("Connected to Bluesky")
 
     # Main loop
-    logger.info(f"Starting notification monitoring (checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds)...")
+    logger.info(f"Starting notification monitoring, checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds")
 
     while True:
         try:
             process_notifications(void_agent, atproto_client)
-            print("Sleeping")
+            logger.debug("Sleeping, no notifications were detected")
             sleep(FETCH_NOTIFICATIONS_DELAY_SEC)
 
         except KeyboardInterrupt:
