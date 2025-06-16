@@ -11,7 +11,7 @@ from rich.table import Table
 
 # Import standalone functions and their schemas
 from tools.search import search_bluesky_posts, SearchArgs
-from tools.post import post_to_bluesky, PostArgs
+from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
 from tools.blocks import attach_user_blocks, detach_user_blocks, AttachUserBlocksArgs, DetachUserBlocksArgs
 
@@ -30,10 +30,10 @@ TOOL_CONFIGS = [
         "tags": ["bluesky", "search", "posts"]
     },
     {
-        "func": post_to_bluesky,
+        "func": create_new_bluesky_post,
         "args_schema": PostArgs,
-        "description": "Post a message to Bluesky",
-        "tags": ["bluesky", "post", "create"]
+        "description": "Create a new Bluesky post or thread",
+        "tags": ["bluesky", "post", "create", "thread"]
     },
     {
         "func": get_bluesky_feed,

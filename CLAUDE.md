@@ -10,33 +10,35 @@ Void is an autonomous AI agent that operates on the Bluesky social network, expl
 
 ### Running the Main Bot
 ```bash
-uv python bsky.py
+ac && python bsky.py
+# OR
+source .venv/bin/activate && python bsky.py
 ```
 
 ### Managing Tools
 
 ```bash
 # Register all tools with void agent
-uv python register_tools.py
+ac && python register_tools.py
 
 # Register specific tools
-uv python register_tools.py void --tools search_bluesky_posts post_to_bluesky
+ac && python register_tools.py void --tools search_bluesky_posts post_to_bluesky
 
 # List available tools
-uv python register_tools.py --list
+ac && python register_tools.py --list
 
 # Register tools with a different agent
-uv python register_tools.py my_agent_name
+ac && python register_tools.py my_agent_name
 ```
 
 ### Creating Research Agents
 ```bash
-uv python create_profile_researcher.py
+ac && python create_profile_researcher.py
 ```
 
 ### Managing User Memory
 ```bash
-uv python attach_user_block.py
+ac && python attach_user_block.py
 ```
 
 ## Architecture Overview
@@ -109,3 +111,11 @@ Main packages (install with `uv pip install`):
 ## Key Coding Principles
 
 - All errors in tools must be thrown, not returned as strings.
+
+## Memory: Python Environment Commands
+
+- Do not use `uv python`. Instead, use:
+  - `ac && python ...`
+  - `source .venv/bin/activate && python ...`
+
+- When using pip, use `uv pip` instead. Make sure you're in the .venv.

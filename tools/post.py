@@ -1,21 +1,51 @@
 """Post tool for creating Bluesky posts."""
-from pydantic import BaseModel, Field
+from typing import List
+from pydantic import BaseModel, Field, validator
 
 
 class PostArgs(BaseModel):
-    text: str = Field(..., description="The text content to post (max 300 characters)")
+    text: List[str] = Field(
+        ..., 
+        description="List of texts to create posts (each max 300 characters). Single item creates one post, multiple items create a thread."
+    )
+    
+    @validator('text')
+    def validate_text_list(cls, v):
+        if not v or len(v) == 0:
+            raise ValueError("Text list cannot be empty")
+        return v
 
 
-def post_to_bluesky(text: str) -> str:
-    """Post a message to Bluesky."""
+def create_new_bluesky_post(text: List[str]) -> str:
+    """
+    Create a NEW standalone post on Bluesky. This tool creates independent posts that
+    start new conversations.
+
+    IMPORTANT: This tool is ONLY for creating new posts. To reply to an existing post,
+    use reply_to_bluesky_post instead.
+
+    Args:
+        text: List of post contents (each max 300 characters). Single item creates one post, multiple items create a thread.
+
+    Returns:
+        Success message with post URL(s)
+
+    Raises:
+        Exception: If the post fails or list is empty
+    """
     import os
     import requests
     from datetime import datetime, timezone
     
     try:
-        # Validate character limit
-        if len(text) > 300:
-            raise Exception(f"Post exceeds 300 character limit (current: {len(text)} characters)")
+        # Validate input
+        if not text or len(text) == 0:
+            raise Exception("Text list cannot be empty")
+        
+        # Validate character limits for all posts
+        for i, post_text in enumerate(text):
+            if len(post_text) > 300:
+                raise Exception(f"Post {i+1} exceeds 300 character limit (current: {len(post_text)} characters)")
         
         # Get credentials from environment
         username = os.getenv("BSKY_USERNAME")
@@ -41,79 +71,103 @@ def post_to_bluesky(text: str) -> str:
         if not access_token or not user_did:
             raise Exception("Failed to get access token or DID from session")
         
-        # Build post record with facets for mentions and URLs
-        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        
-        post_record = {
-            "$type": "app.bsky.feed.post",
-            "text": text,
-            "createdAt": now,
-        }
-        
-        # Add facets for mentions and URLs
+        # Create posts (single or thread)
         import re
-        facets = []
-        
-        # Parse mentions
-        mention_regex = rb"[$|\W](@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
-        text_bytes = text.encode("UTF-8")
-        
-        for m in re.finditer(mention_regex, text_bytes):
-            handle = m.group(1)[1:].decode("UTF-8")  # Remove @ prefix
-            try:
-                resolve_resp = requests.get(
-                    f"{pds_host}/xrpc/com.atproto.identity.resolveHandle",
-                    params={"handle": handle},
-                    timeout=5
-                )
-                if resolve_resp.status_code == 200:
-                    did = resolve_resp.json()["did"]
-                    facets.append({
-                        "index": {
-                            "byteStart": m.start(1),
-                            "byteEnd": m.end(1),
-                        },
-                        "features": [{"$type": "app.bsky.richtext.facet#mention", "did": did}],
-                    })
-            except:
-                continue
-        
-        # Parse URLs
-        url_regex = rb"[$|\W](https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
-        
-        for m in re.finditer(url_regex, text_bytes):
-            url = m.group(1).decode("UTF-8")
-            facets.append({
-                "index": {
-                    "byteStart": m.start(1),
-                    "byteEnd": m.end(1),
-                },
-                "features": [{"$type": "app.bsky.richtext.facet#link", "uri": url}],
-            })
-        
-        if facets:
-            post_record["facets"] = facets
-        
-        # Create the post
-        create_record_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
         headers = {"Authorization": f"Bearer {access_token}"}
+        create_record_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
         
-        create_data = {
-            "repo": user_did,
-            "collection": "app.bsky.feed.post",
-            "record": post_record
-        }
+        post_urls = []
+        previous_post = None
+        root_post = None
         
-        post_response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
-        post_response.raise_for_status()
-        result = post_response.json()
+        for i, post_text in enumerate(text):
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            
+            post_record = {
+                "$type": "app.bsky.feed.post",
+                "text": post_text,
+                "createdAt": now,
+            }
+            
+            # If this is part of a thread (not the first post), add reply references
+            if previous_post:
+                post_record["reply"] = {
+                    "root": root_post,
+                    "parent": previous_post
+                }
+            
+            # Add facets for mentions and URLs
+            facets = []
+            
+            # Parse mentions
+            mention_regex = rb"[$|\W](@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
+            text_bytes = post_text.encode("UTF-8")
+            
+            for m in re.finditer(mention_regex, text_bytes):
+                handle = m.group(1)[1:].decode("UTF-8")  # Remove @ prefix
+                try:
+                    resolve_resp = requests.get(
+                        f"{pds_host}/xrpc/com.atproto.identity.resolveHandle",
+                        params={"handle": handle},
+                        timeout=5
+                    )
+                    if resolve_resp.status_code == 200:
+                        did = resolve_resp.json()["did"]
+                        facets.append({
+                            "index": {
+                                "byteStart": m.start(1),
+                                "byteEnd": m.end(1),
+                            },
+                            "features": [{"$type": "app.bsky.richtext.facet#mention", "did": did}],
+                        })
+                except:
+                    continue
+            
+            # Parse URLs
+            url_regex = rb"[$|\W](https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
+            
+            for m in re.finditer(url_regex, text_bytes):
+                url = m.group(1).decode("UTF-8")
+                facets.append({
+                    "index": {
+                        "byteStart": m.start(1),
+                        "byteEnd": m.end(1),
+                    },
+                    "features": [{"$type": "app.bsky.richtext.facet#link", "uri": url}],
+                })
+            
+            if facets:
+                post_record["facets"] = facets
+            
+            # Create the post
+            create_data = {
+                "repo": user_did,
+                "collection": "app.bsky.feed.post",
+                "record": post_record
+            }
+            
+            post_response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+            post_response.raise_for_status()
+            result = post_response.json()
+            
+            post_uri = result.get("uri")
+            post_cid = result.get("cid")
+            handle = session.get("handle", username)
+            rkey = post_uri.split("/")[-1] if post_uri else ""
+            post_url = f"https://bsky.app/profile/{handle}/post/{rkey}"
+            post_urls.append(post_url)
+            
+            # Set up references for thread continuation
+            previous_post = {"uri": post_uri, "cid": post_cid}
+            if i == 0:
+                root_post = previous_post
         
-        post_uri = result.get("uri")
-        handle = session.get("handle", username)
-        rkey = post_uri.split("/")[-1] if post_uri else ""
-        post_url = f"https://bsky.app/profile/{handle}/post/{rkey}"
-        
-        return f"Successfully posted to Bluesky!\nPost URL: {post_url}\nText: {text}"
+        # Return appropriate message based on single post or thread
+        if len(text) == 1:
+            return f"Successfully posted to Bluesky!\nPost URL: {post_urls[0]}\nText: {text[0]}"
+        else:
+            urls_text = "\n".join([f"Post {i+1}: {url}" for i, url in enumerate(post_urls)])
+            return f"Successfully created thread with {len(text)} posts!\n{urls_text}"
         
     except Exception as e:
         raise Exception(f"Error posting to Bluesky: {str(e)}")
