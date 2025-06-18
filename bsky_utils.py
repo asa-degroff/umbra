@@ -206,7 +206,7 @@ def default_login() -> Client:
 
 def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: str, root_uri: Optional[str] = None, root_cid: Optional[str] = None) -> Dict[str, Any]:
     """
-    Reply to a post on Bluesky.
+    Reply to a post on Bluesky with rich text support.
 
     Args:
         client: Authenticated Bluesky client
@@ -219,6 +219,8 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
     Returns:
         The response from sending the post
     """
+    import re
+    
     # If root is not provided, this is a reply to the root post
     if root_uri is None:
         root_uri = reply_to_uri
@@ -228,11 +230,59 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
     parent_ref = models.create_strong_ref(models.ComAtprotoRepoStrongRef.Main(uri=reply_to_uri, cid=reply_to_cid))
     root_ref = models.create_strong_ref(models.ComAtprotoRepoStrongRef.Main(uri=root_uri, cid=root_cid))
 
-    # Send the reply
-    response = client.send_post(
-        text=text,
-        reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
-    )
+    # Parse rich text facets (mentions and URLs)
+    facets = []
+    text_bytes = text.encode("UTF-8")
+    
+    # Parse mentions
+    mention_regex = rb"[$|\W](@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
+    
+    for m in re.finditer(mention_regex, text_bytes):
+        handle = m.group(1)[1:].decode("UTF-8")  # Remove @ prefix
+        try:
+            # Resolve handle to DID using the API
+            resolve_resp = client.app.bsky.actor.get_profile({'actor': handle})
+            if resolve_resp and hasattr(resolve_resp, 'did'):
+                facets.append(
+                    models.AppBskyRichtextFacet.Main(
+                        index=models.AppBskyRichtextFacet.ByteSlice(
+                            byteStart=m.start(1),
+                            byteEnd=m.end(1)
+                        ),
+                        features=[models.AppBskyRichtextFacet.Mention(did=resolve_resp.did)]
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"Failed to resolve handle {handle}: {e}")
+            continue
+    
+    # Parse URLs
+    url_regex = rb"[$|\W](https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
+    
+    for m in re.finditer(url_regex, text_bytes):
+        url = m.group(1).decode("UTF-8")
+        facets.append(
+            models.AppBskyRichtextFacet.Main(
+                index=models.AppBskyRichtextFacet.ByteSlice(
+                    byteStart=m.start(1),
+                    byteEnd=m.end(1)
+                ),
+                features=[models.AppBskyRichtextFacet.Link(uri=url)]
+            )
+        )
+
+    # Send the reply with facets if any were found
+    if facets:
+        response = client.send_post(
+            text=text,
+            reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
+            facets=facets
+        )
+    else:
+        response = client.send_post(
+            text=text,
+            reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
+        )
 
     logger.info(f"Reply sent successfully: {response.uri}")
     return response
