@@ -142,6 +142,8 @@ def process_mention(void_agent, atproto_client, notification_data):
                 logger.error(f"Error fetching thread: {e}")
                 raise
 
+        print(thread)
+
         # Get thread context as YAML string
         logger.info("Converting thread to YAML string")
         try:

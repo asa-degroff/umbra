@@ -234,11 +234,14 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
     facets = []
     text_bytes = text.encode("UTF-8")
     
-    # Parse mentions
-    mention_regex = rb"[$|\W](@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
+    # Parse mentions - fixed to handle @ at start of text
+    mention_regex = rb"(?:^|[$|\W])(@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
     
     for m in re.finditer(mention_regex, text_bytes):
         handle = m.group(1)[1:].decode("UTF-8")  # Remove @ prefix
+        # Adjust byte positions to account for the optional prefix
+        mention_start = m.start(1)
+        mention_end = m.end(1)
         try:
             # Resolve handle to DID using the API
             resolve_resp = client.app.bsky.actor.get_profile({'actor': handle})
@@ -246,8 +249,8 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
                 facets.append(
                     models.AppBskyRichtextFacet.Main(
                         index=models.AppBskyRichtextFacet.ByteSlice(
-                            byteStart=m.start(1),
-                            byteEnd=m.end(1)
+                            byteStart=mention_start,
+                            byteEnd=mention_end
                         ),
                         features=[models.AppBskyRichtextFacet.Mention(did=resolve_resp.did)]
                     )
@@ -256,16 +259,19 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
             logger.debug(f"Failed to resolve handle {handle}: {e}")
             continue
     
-    # Parse URLs
-    url_regex = rb"[$|\W](https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
+    # Parse URLs - fixed to handle URLs at start of text
+    url_regex = rb"(?:^|[$|\W])(https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
     
     for m in re.finditer(url_regex, text_bytes):
         url = m.group(1).decode("UTF-8")
+        # Adjust byte positions to account for the optional prefix
+        url_start = m.start(1)
+        url_end = m.end(1)
         facets.append(
             models.AppBskyRichtextFacet.Main(
                 index=models.AppBskyRichtextFacet.ByteSlice(
-                    byteStart=m.start(1),
-                    byteEnd=m.end(1)
+                    byteStart=url_start,
+                    byteEnd=url_end
                 ),
                 features=[models.AppBskyRichtextFacet.Link(uri=url)]
             )

@@ -14,6 +14,18 @@ from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
 from tools.blocks import attach_user_blocks, detach_user_blocks, AttachUserBlocksArgs, DetachUserBlocksArgs
+from tools.defensive_memory import safe_memory_insert, safe_core_memory_replace
+from pydantic import BaseModel, Field
+
+class SafeMemoryInsertArgs(BaseModel):
+    label: str = Field(..., description="Section of the memory to be edited, identified by its label")
+    content: str = Field(..., description="Content to insert")
+    insert_line: int = Field(-1, description="Line number after which to insert (-1 for end)")
+
+class SafeCoreMemoryReplaceArgs(BaseModel):
+    label: str = Field(..., description="Section of the memory to be edited")
+    old_content: str = Field(..., description="String to replace (must match exactly)")
+    new_content: str = Field(..., description="New content to replace with")
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -53,12 +65,18 @@ TOOL_CONFIGS = [
         "description": "Detach user-specific memory blocks from the agent. Blocks are preserved for later use.",
         "tags": ["memory", "blocks", "user"]
     },
-    # {
-    #     "func": update_user_blocks,
-    #     "args_schema": UpdateUserBlockArgs,
-    #     "description": "Update the content of user-specific memory blocks",
-    #     "tags": ["memory", "blocks", "user"]
-    # },
+    {
+        "func": safe_memory_insert,
+        "args_schema": SafeMemoryInsertArgs,
+        "description": "SAFE: Insert text into a memory block. Handles missing blocks by fetching from API.",
+        "tags": ["memory", "safe", "insert"]
+    },
+    {
+        "func": safe_core_memory_replace,
+        "args_schema": SafeCoreMemoryReplaceArgs,
+        "description": "SAFE: Replace content in a memory block. Handles missing blocks by fetching from API.",
+        "tags": ["memory", "safe", "replace"]
+    },
 ]
 
 
