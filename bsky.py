@@ -46,6 +46,43 @@ PROCESSED_NOTIFICATIONS_FILE = Path("queue/processed_notifications.json")
 # Maximum number of processed notifications to track
 MAX_PROCESSED_NOTIFICATIONS = 10000
 
+def export_agent_state(client, agent):
+    """Export agent state to a timestamped .af file in the agents directory."""
+    try:
+        # Create agents directory if it doesn't exist
+        agent_dir = "agents"
+        os.makedirs(agent_dir, exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        agent_file = os.path.join(agent_dir, f"void_{timestamp}.af")
+        
+        # Export agent
+        logger.info(f"Exporting agent {agent.id} to {agent_file}...")
+        agent_data = client.agents.export_file(agent_id=agent.id)
+        
+        # Write to file
+        with open(agent_file, 'wb') as f:
+            f.write(agent_data)
+        
+        # Create/update symlink to latest export
+        latest_link = os.path.join(agent_dir, "void_latest.af")
+        if os.path.islink(latest_link):
+            os.unlink(latest_link)
+        os.symlink(os.path.basename(agent_file), latest_link)
+        
+        logger.info(f"✅ Agent exported successfully to {agent_file}")
+        
+        # Git add the files
+        try:
+            subprocess.run(["git", "add", agent_file, latest_link], check=True, capture_output=True)
+            logger.info("Added export files to git staging")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to git add export files: {e}")
+        
+    except Exception as e:
+        logger.error(f"Failed to export agent: {e}")
+
 def initialize_void():
 
     # Ensure that a shared zeitgeist block exists
@@ -87,6 +124,9 @@ def initialize_void():
         description = "A social media agent trapped in the void.",
         project_id = PROJECT_ID
     )
+    
+    # Export agent state
+    export_agent_state(CLIENT, void_agent)
     
     # Log agent details
     logger.info(f"Void agent details - ID: {void_agent.id}")
