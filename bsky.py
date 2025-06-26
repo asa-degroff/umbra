@@ -41,6 +41,10 @@ QUEUE_DIR = Path("queue")
 QUEUE_DIR.mkdir(exist_ok=True)
 QUEUE_ERROR_DIR = Path("queue/errors")
 QUEUE_ERROR_DIR.mkdir(exist_ok=True, parents=True)
+PROCESSED_NOTIFICATIONS_FILE = Path("queue/processed_notifications.json")
+
+# Maximum number of processed notifications to track
+MAX_PROCESSED_NOTIFICATIONS = 10000
 
 def initialize_void():
 
@@ -141,8 +145,6 @@ def process_mention(void_agent, atproto_client, notification_data):
                 # Re-raise other errors
                 logger.error(f"Error fetching thread: {e}")
                 raise
-
-        print(thread)
 
         # Get thread context as YAML string
         logger.info("Converting thread to YAML string")
@@ -312,9 +314,40 @@ def notification_to_dict(notification):
     }
 
 
+def load_processed_notifications():
+    """Load the set of processed notification URIs."""
+    if PROCESSED_NOTIFICATIONS_FILE.exists():
+        try:
+            with open(PROCESSED_NOTIFICATIONS_FILE, 'r') as f:
+                data = json.load(f)
+                # Keep only recent entries (last MAX_PROCESSED_NOTIFICATIONS)
+                if len(data) > MAX_PROCESSED_NOTIFICATIONS:
+                    data = data[-MAX_PROCESSED_NOTIFICATIONS:]
+                    save_processed_notifications(data)
+                return set(data)
+        except Exception as e:
+            logger.error(f"Error loading processed notifications: {e}")
+    return set()
+
+
+def save_processed_notifications(processed_set):
+    """Save the set of processed notification URIs."""
+    try:
+        with open(PROCESSED_NOTIFICATIONS_FILE, 'w') as f:
+            json.dump(list(processed_set), f)
+    except Exception as e:
+        logger.error(f"Error saving processed notifications: {e}")
+
+
 def save_notification_to_queue(notification):
     """Save a notification to the queue directory with hash-based filename."""
     try:
+        # Check if already processed
+        processed_uris = load_processed_notifications()
+        if notification.uri in processed_uris:
+            logger.debug(f"Notification already processed: {notification.uri}")
+            return False
+
         # Convert notification to dict
         notif_dict = notification_to_dict(notification)
 
@@ -349,8 +382,8 @@ def save_notification_to_queue(notification):
 def load_and_process_queued_notifications(void_agent, atproto_client):
     """Load and process all notifications from the queue."""
     try:
-        # Get all JSON files in queue directory
-        queue_files = sorted(QUEUE_DIR.glob("*.json"))
+        # Get all JSON files in queue directory (excluding processed_notifications.json)
+        queue_files = sorted([f for f in QUEUE_DIR.glob("*.json") if f.name != "processed_notifications.json"])
 
         if not queue_files:
             logger.debug("No queued notifications to process")
@@ -390,10 +423,22 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                 if success:
                     filepath.unlink()
                     logger.info(f"Processed and removed: {filepath.name}")
+                    
+                    # Mark as processed to avoid reprocessing
+                    processed_uris = load_processed_notifications()
+                    processed_uris.add(notif_data['uri'])
+                    save_processed_notifications(processed_uris)
+                    
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name
                     filepath.rename(error_path)
                     logger.warning(f"Moved {filepath.name} to errors directory")
+                    
+                    # Also mark as processed to avoid retrying
+                    processed_uris = load_processed_notifications()
+                    processed_uris.add(notif_data['uri'])
+                    save_processed_notifications(processed_uris)
+                    
                 else:
                     logger.warning(f"Failed to process {filepath.name}, keeping in queue for retry")
 
@@ -414,12 +459,67 @@ def process_notifications(void_agent, atproto_client):
         # Get current time for marking notifications as seen
         last_seen_at = atproto_client.get_current_time_iso()
 
-        # Fetch notifications
-        notifications_response = atproto_client.app.bsky.notification.list_notifications()
+        # Fetch ALL notifications using pagination
+        all_notifications = []
+        cursor = None
+        page_count = 0
+        max_pages = 20  # Safety limit to prevent infinite loops
+        
+        logger.info("Fetching all unread notifications...")
+        
+        while page_count < max_pages:
+            try:
+                # Fetch notifications page
+                if cursor:
+                    notifications_response = atproto_client.app.bsky.notification.list_notifications(
+                        params={'cursor': cursor, 'limit': 100}
+                    )
+                else:
+                    notifications_response = atproto_client.app.bsky.notification.list_notifications(
+                        params={'limit': 100}
+                    )
+                
+                page_count += 1
+                page_notifications = notifications_response.notifications
+                
+                # Count unread notifications in this page
+                unread_count = sum(1 for n in page_notifications if not n.is_read and n.reason != "like")
+                logger.debug(f"Page {page_count}: {len(page_notifications)} notifications, {unread_count} unread (non-like)")
+                
+                # Add all notifications to our list
+                all_notifications.extend(page_notifications)
+                
+                # Check if we have more pages
+                if hasattr(notifications_response, 'cursor') and notifications_response.cursor:
+                    cursor = notifications_response.cursor
+                    # If this page had no unread notifications, we can stop
+                    if unread_count == 0:
+                        logger.info(f"No more unread notifications found after {page_count} pages")
+                        break
+                else:
+                    # No more pages
+                    logger.info(f"Fetched all notifications across {page_count} pages")
+                    break
+                    
+            except Exception as e:
+                error_str = str(e)
+                logger.error(f"Error fetching notifications page {page_count}: {e}")
+                
+                # Handle specific API errors
+                if 'rate limit' in error_str.lower():
+                    logger.warning("Rate limit hit while fetching notifications, will retry next cycle")
+                    break
+                elif '401' in error_str or 'unauthorized' in error_str.lower():
+                    logger.error("Authentication error, re-raising exception")
+                    raise
+                else:
+                    # For other errors, try to continue with what we have
+                    logger.warning("Continuing with notifications fetched so far")
+                    break
 
         # Queue all unread notifications (except likes)
         new_count = 0
-        for notification in notifications_response.notifications:
+        for notification in all_notifications:
             if not notification.is_read and notification.reason != "like":
                 if save_notification_to_queue(notification):
                     new_count += 1
@@ -428,6 +528,8 @@ def process_notifications(void_agent, atproto_client):
         if new_count > 0:
             atproto_client.app.bsky.notification.update_seen({'seen_at': last_seen_at})
             logger.info(f"Queued {new_count} new notifications and marked as seen")
+        else:
+            logger.debug("No new notifications to queue")
 
         # Process the queue (including any newly added notifications)
         load_and_process_queued_notifications(void_agent, atproto_client)
