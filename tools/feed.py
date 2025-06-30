@@ -3,17 +3,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, Union
 
 
-# Predefined feed mappings
-FEED_PRESETS = {
-    "home": None,  # Home timeline (default)
-    "discover": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot",
-    "ai-for-grownups": "at://did:plc:gfrmhdmjvxn2sjedzboeudef/app.bsky.feed.generator/ai-for-grownups", 
-    "atmosphere": "at://did:plc:gfrmhdmjvxn2sjedzboeudef/app.bsky.feed.generator/the-atmosphere"
-}
-
-
 class FeedArgs(BaseModel):
-    feed_name: Optional[str] = Field(None, description=f"Named feed preset: {list(FEED_PRESETS.keys())}. If not provided, returns home timeline")
+    feed_name: Optional[str] = Field(None, description="Named feed preset: ['home', 'discover', 'ai-for-grownups', 'atmosphere']. If not provided, returns home timeline")
     feed_uri: Optional[str] = Field(None, description="Custom feed URI (e.g., 'at://did:plc:abc/app.bsky.feed.generator/feed-name'). Overrides feed_name if provided")
     max_posts: int = Field(default=25, description="Maximum number of posts to retrieve (max 100)")
 
@@ -35,6 +26,14 @@ def get_bluesky_feed(feed_name: str = None, feed_uri: str = None, max_posts: int
     import requests
     
     try:
+        # Predefined feed mappings (must be inside function for sandboxing)
+        feed_presets = {
+            "home": None,  # Home timeline (default)
+            "discover": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot",
+            "ai-for-grownups": "at://did:plc:gfrmhdmjvxn2sjedzboeudef/app.bsky.feed.generator/ai-for-grownups", 
+            "atmosphere": "at://did:plc:gfrmhdmjvxn2sjedzboeudef/app.bsky.feed.generator/the-atmosphere"
+        }
+        
         # Validate inputs
         max_posts = min(max_posts, 100)
         
@@ -45,10 +44,10 @@ def get_bluesky_feed(feed_name: str = None, feed_uri: str = None, max_posts: int
             feed_display_name = feed_uri.split('/')[-1] if '/' in feed_uri else feed_uri
         elif feed_name:
             # Look up named preset
-            if feed_name not in FEED_PRESETS:
-                available_feeds = list(FEED_PRESETS.keys())
+            if feed_name not in feed_presets:
+                available_feeds = list(feed_presets.keys())
                 raise Exception(f"Unknown feed name '{feed_name}'. Available feeds: {available_feeds}")
-            resolved_feed_uri = FEED_PRESETS[feed_name]
+            resolved_feed_uri = feed_presets[feed_name]
             feed_display_name = feed_name
         else:
             # Default to home timeline
