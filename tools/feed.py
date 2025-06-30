@@ -4,18 +4,16 @@ from typing import Optional, Literal
 
 
 class FeedArgs(BaseModel):
-    feed_name: Optional[Literal["home", "discover", "ai-for-grownups", "atmosphere"]] = Field(None, description="Named feed preset. If not provided, returns home timeline")
-    feed_uri: Optional[str] = Field(None, description="Custom feed URI (e.g., 'at://did:plc:abc/app.bsky.feed.generator/feed-name'). Overrides feed_name if provided")
+    feed_name: Optional[Literal["home", "discover", "ai-for-grownups", "atmosphere"]] = Field(None, description="Named feed preset. Available feeds: 'home' (timeline), 'discover' (what's hot), 'ai-for-grownups', 'atmosphere'. If not provided, returns home timeline")
     max_posts: int = Field(default=25, description="Maximum number of posts to retrieve (max 100)")
 
 
-def get_bluesky_feed(feed_name: str = None, feed_uri: str = None, max_posts: int = 25) -> str:
+def get_bluesky_feed(feed_name: str = None, max_posts: int = 25) -> str:
     """
-    Retrieve a Bluesky feed (home timeline or custom feed).
+    Retrieve a Bluesky feed.
     
     Args:
-        feed_name: Named feed preset (home, discover, ai-for-grownups, atmosphere)
-        feed_uri: Custom feed URI (overrides feed_name if provided)
+        feed_name: Named feed preset - available options: 'home', 'discover', 'ai-for-grownups', 'atmosphere'
         max_posts: Maximum number of posts to retrieve (max 100)
         
     Returns:
@@ -37,14 +35,13 @@ def get_bluesky_feed(feed_name: str = None, feed_uri: str = None, max_posts: int
         # Validate inputs
         max_posts = min(max_posts, 100)
         
-        # Resolve feed URI from name or use direct URI
-        if feed_uri:
-            # Direct URI provided, use as-is
-            resolved_feed_uri = feed_uri
-            feed_display_name = feed_uri.split('/')[-1] if '/' in feed_uri else feed_uri
-        elif feed_name:
+        # Resolve feed URI from name
+        if feed_name:
             # Look up named preset
-            resolved_feed_uri = feed_presets.get(feed_name)
+            if feed_name not in feed_presets:
+                available_feeds = list(feed_presets.keys())
+                raise Exception(f"Invalid feed name '{feed_name}'. Available feeds: {available_feeds}")
+            resolved_feed_uri = feed_presets[feed_name]
             feed_display_name = feed_name
         else:
             # Default to home timeline
