@@ -74,6 +74,12 @@ MAX_PROCESSED_NOTIFICATIONS = 10000
 def export_agent_state(client, agent):
     """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
     try:
+        # Confirm export with user
+        response = input("Export agent state to files and stage with git? (y/n): ").lower().strip()
+        if response not in ['y', 'yes']:
+            logger.info("Agent export cancelled by user.")
+            return
+        
         # Create directories if they don't exist
         os.makedirs("agent_archive", exist_ok=True)
         os.makedirs("agents", exist_ok=True)
