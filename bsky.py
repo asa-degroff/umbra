@@ -45,6 +45,9 @@ logging.basicConfig(
 logger = logging.getLogger("void_bot")
 logger.setLevel(logging.INFO)
 
+# Set httpx logging to DEBUG to reduce noise
+logging.getLogger("httpx").setLevel(logging.DEBUG)
+
 
 # Create a client with extended timeout for LLM operations
 CLIENT= Letta(
