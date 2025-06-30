@@ -47,12 +47,12 @@ TOOL_CONFIGS = [
         "description": "Create a new Bluesky post or thread",
         "tags": ["bluesky", "post", "create", "thread"]
     },
-    {
-        "func": get_bluesky_feed,
-        "args_schema": FeedArgs,
-        "description": "Retrieve a Bluesky feed (home timeline or custom feed)",
-        "tags": ["bluesky", "feed", "timeline"]
-    },
+    # {
+    #     "func": get_bluesky_feed,
+    #     "args_schema": FeedArgs,
+    #     "description": "Retrieve a Bluesky feed (home timeline or custom feed)",
+    #     "tags": ["bluesky", "feed", "timeline"]
+    # },
     {
         "func": attach_user_blocks,
         "args_schema": AttachUserBlocksArgs,

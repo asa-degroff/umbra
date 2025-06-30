@@ -3,3 +3,4 @@ old.py
 session_*.txt
 __pycache__/
 queue/
+agent_archive/

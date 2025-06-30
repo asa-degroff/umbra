@@ -6,6 +6,7 @@ import os
 import logging
 import json
 import hashlib
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -15,6 +16,27 @@ from utils import (
 )
 
 import bsky_utils
+from tools.blocks import attach_user_blocks, detach_user_blocks
+
+def extract_handles_from_data(data):
+    """Recursively extract all unique handles from nested data structure."""
+    handles = set()
+    
+    def _extract_recursive(obj):
+        if isinstance(obj, dict):
+            # Check if this dict has a 'handle' key
+            if 'handle' in obj:
+                handles.add(obj['handle'])
+            # Recursively check all values
+            for value in obj.values():
+                _extract_recursive(value)
+        elif isinstance(obj, list):
+            # Recursively check all list items
+            for item in obj:
+                _extract_recursive(item)
+    
+    _extract_recursive(data)
+    return list(handles)
 
 # Configure logging
 logging.basicConfig(
@@ -47,38 +69,35 @@ PROCESSED_NOTIFICATIONS_FILE = Path("queue/processed_notifications.json")
 MAX_PROCESSED_NOTIFICATIONS = 10000
 
 def export_agent_state(client, agent):
-    """Export agent state to a timestamped .af file in the agents directory."""
+    """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
     try:
-        # Create agents directory if it doesn't exist
-        agent_dir = "agents"
-        os.makedirs(agent_dir, exist_ok=True)
+        # Create directories if they don't exist
+        os.makedirs("agent_archive", exist_ok=True)
+        os.makedirs("agents", exist_ok=True)
         
-        # Generate filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        agent_file = os.path.join(agent_dir, f"void_{timestamp}.af")
-        
-        # Export agent
-        logger.info(f"Exporting agent {agent.id} to {agent_file}...")
+        # Export agent data
+        logger.info(f"Exporting agent {agent.id}...")
         agent_data = client.agents.export_file(agent_id=agent.id)
         
-        # Write to file
-        with open(agent_file, 'wb') as f:
-            f.write(agent_data)
+        # Save timestamped archive copy
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_file = os.path.join("agent_archive", f"void_{timestamp}.af")
+        with open(archive_file, 'w', encoding='utf-8') as f:
+            json.dump(agent_data, f, indent=2, ensure_ascii=False)
         
-        # Create/update symlink to latest export
-        latest_link = os.path.join(agent_dir, "void_latest.af")
-        if os.path.islink(latest_link):
-            os.unlink(latest_link)
-        os.symlink(os.path.basename(agent_file), latest_link)
+        # Save current agent state
+        current_file = os.path.join("agents", "void.af")
+        with open(current_file, 'w', encoding='utf-8') as f:
+            json.dump(agent_data, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"✅ Agent exported successfully to {agent_file}")
+        logger.info(f"✅ Agent exported to {archive_file} and {current_file}")
         
-        # Git add the files
+        # Git add only the current agent file (archive is ignored)
         try:
-            subprocess.run(["git", "add", agent_file, latest_link], check=True, capture_output=True)
-            logger.info("Added export files to git staging")
+            subprocess.run(["git", "add", current_file], check=True, capture_output=True)
+            logger.info("Added current agent file to git staging")
         except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to git add export files: {e}")
+            logger.warning(f"Failed to git add agent file: {e}")
         
     except Exception as e:
         logger.error(f"Failed to export agent: {e}")
@@ -219,6 +238,26 @@ The YAML above shows the complete conversation thread. The most recent post is t
 
 Use the bluesky_reply tool to send a response less than 300 characters."""
 
+        # Extract all handles from notification and thread data
+        all_handles = set()
+        all_handles.update(extract_handles_from_data(notification_data))
+        all_handles.update(extract_handles_from_data(thread.model_dump()))
+        unique_handles = list(all_handles)
+        
+        logger.info(f"Found {len(unique_handles)} unique handles in thread: {unique_handles}")
+        
+        # Attach user blocks before agent call
+        attached_handles = []
+        if unique_handles:
+            try:
+                logger.info(f"Attaching user blocks for handles: {unique_handles}")
+                attach_result = attach_user_blocks(unique_handles, void_agent)
+                attached_handles = unique_handles  # Track successfully attached handles
+                logger.debug(f"Attach result: {attach_result}")
+            except Exception as attach_error:
+                logger.warning(f"Failed to attach user blocks: {attach_error}")
+                # Continue without user blocks rather than failing completely
+
         # Get response from Letta agent
         logger.info(f"Mention from @{author_handle}: {mention_text}")
         logger.debug(f"Prompt being sent: {prompt}")
@@ -333,6 +372,15 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
     except Exception as e:
         logger.error(f"Error processing mention: {e}")
         return False
+    finally:
+        # Detach user blocks after agent response (success or failure)
+        if 'attached_handles' in locals() and attached_handles:
+            try:
+                logger.info(f"Detaching user blocks for handles: {attached_handles}")
+                detach_result = detach_user_blocks(attached_handles, void_agent)
+                logger.debug(f"Detach result: {detach_result}")
+            except Exception as detach_error:
+                logger.warning(f"Failed to detach user blocks: {detach_error}")
 
 
 def notification_to_dict(notification):

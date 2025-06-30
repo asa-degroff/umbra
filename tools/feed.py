@@ -1,19 +1,30 @@
 """Feed tool for retrieving Bluesky feeds."""
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Union
+
+
+# Predefined feed mappings
+FEED_PRESETS = {
+    "home": None,  # Home timeline (default)
+    "discover": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot",
+    "ai-for-grownups": "at://did:plc:gfrmhdmjvxn2sjedzboeudef/app.bsky.feed.generator/ai-for-grownups", 
+    "atmosphere": "at://did:plc:gfrmhdmjvxn2sjedzboeudef/app.bsky.feed.generator/the-atmosphere"
+}
 
 
 class FeedArgs(BaseModel):
-    feed_uri: Optional[str] = Field(None, description="Custom feed URI (e.g., 'at://did:plc:abc/app.bsky.feed.generator/feed-name'). If not provided, returns home timeline")
+    feed_name: Optional[str] = Field(None, description=f"Named feed preset: {list(FEED_PRESETS.keys())}. If not provided, returns home timeline")
+    feed_uri: Optional[str] = Field(None, description="Custom feed URI (e.g., 'at://did:plc:abc/app.bsky.feed.generator/feed-name'). Overrides feed_name if provided")
     max_posts: int = Field(default=25, description="Maximum number of posts to retrieve (max 100)")
 
 
-def get_bluesky_feed(feed_uri: str = None, max_posts: int = 25) -> str:
+def get_bluesky_feed(feed_name: str = None, feed_uri: str = None, max_posts: int = 25) -> str:
     """
     Retrieve a Bluesky feed (home timeline or custom feed).
     
     Args:
-        feed_uri: Custom feed URI (e.g., 'at://did:plc:abc/app.bsky.feed.generator/feed-name'). If not provided, returns home timeline
+        feed_name: Named feed preset (home, discover, ai-for-grownups, atmosphere)
+        feed_uri: Custom feed URI (overrides feed_name if provided)
         max_posts: Maximum number of posts to retrieve (max 100)
         
     Returns:
@@ -26,6 +37,23 @@ def get_bluesky_feed(feed_uri: str = None, max_posts: int = 25) -> str:
     try:
         # Validate inputs
         max_posts = min(max_posts, 100)
+        
+        # Resolve feed URI from name or use direct URI
+        if feed_uri:
+            # Direct URI provided, use as-is
+            resolved_feed_uri = feed_uri
+            feed_display_name = feed_uri.split('/')[-1] if '/' in feed_uri else feed_uri
+        elif feed_name:
+            # Look up named preset
+            if feed_name not in FEED_PRESETS:
+                available_feeds = list(FEED_PRESETS.keys())
+                raise Exception(f"Unknown feed name '{feed_name}'. Available feeds: {available_feeds}")
+            resolved_feed_uri = FEED_PRESETS[feed_name]
+            feed_display_name = feed_name
+        else:
+            # Default to home timeline
+            resolved_feed_uri = None
+            feed_display_name = "home"
         
         # Get credentials from environment
         username = os.getenv("BSKY_USERNAME")
@@ -56,15 +84,14 @@ def get_bluesky_feed(feed_uri: str = None, max_posts: int = 25) -> str:
         # Get feed
         headers = {"Authorization": f"Bearer {access_token}"}
         
-        if feed_uri:
+        if resolved_feed_uri:
             # Custom feed
             feed_url = f"{pds_host}/xrpc/app.bsky.feed.getFeed"
             params = {
-                "feed": feed_uri,
+                "feed": resolved_feed_uri,
                 "limit": max_posts
             }
             feed_type = "custom"
-            feed_name = feed_uri.split('/')[-1] if '/' in feed_uri else feed_uri
         else:
             # Home timeline
             feed_url = f"{pds_host}/xrpc/app.bsky.feed.getTimeline"
@@ -72,7 +99,6 @@ def get_bluesky_feed(feed_uri: str = None, max_posts: int = 25) -> str:
                 "limit": max_posts
             }
             feed_type = "home"
-            feed_name = "timeline"
         
         try:
             response = requests.get(feed_url, headers=headers, params=params, timeout=10)
@@ -126,14 +152,14 @@ def get_bluesky_feed(feed_uri: str = None, max_posts: int = 25) -> str:
         feed_result = {
             "feed": {
                 "type": feed_type,
-                "name": feed_name,
+                "name": feed_display_name,
                 "post_count": len(posts),
                 "posts": posts
             }
         }
         
-        if feed_uri:
-            feed_result["feed"]["uri"] = feed_uri
+        if resolved_feed_uri:
+            feed_result["feed"]["uri"] = resolved_feed_uri
         
         return yaml.dump(feed_result, default_flow_style=False, sort_keys=False)
         
