@@ -1,10 +1,10 @@
 """Feed tool for retrieving Bluesky feeds."""
 from pydantic import BaseModel, Field
-from typing import Optional, Literal
+from typing import Optional
 
 
 class FeedArgs(BaseModel):
-    feed_name: Optional[Literal["home", "discover", "ai-for-grownups", "atmosphere"]] = Field(None, description="Named feed preset. Available feeds: 'home' (timeline), 'discover' (what's hot), 'ai-for-grownups', 'atmosphere'. If not provided, returns home timeline")
+    feed_name: Optional[str] = Field(None, description="Named feed preset. Available feeds: 'home' (timeline), 'discover' (what's hot), 'ai-for-grownups', 'atmosphere'. If not provided, returns home timeline")
     max_posts: int = Field(default=25, description="Maximum number of posts to retrieve (max 100)")
 
 
@@ -37,6 +37,10 @@ def get_bluesky_feed(feed_name: str = None, max_posts: int = 25) -> str:
         
         # Resolve feed URI from name
         if feed_name:
+            # Handle case where agent passes 'FeedName.discover' instead of 'discover'
+            if '.' in feed_name and feed_name.startswith('FeedName.'):
+                feed_name = feed_name.split('.', 1)[1]
+            
             # Look up named preset
             if feed_name not in feed_presets:
                 available_feeds = list(feed_presets.keys())
