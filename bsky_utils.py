@@ -253,7 +253,7 @@ def default_login() -> Client:
 
     return init_client(username, password)
 
-def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: str, root_uri: Optional[str] = None, root_cid: Optional[str] = None) -> Dict[str, Any]:
+def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: str, root_uri: Optional[str] = None, root_cid: Optional[str] = None, lang: Optional[str] = None) -> Dict[str, Any]:
     """
     Reply to a post on Bluesky with rich text support.
 
@@ -264,6 +264,7 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
         reply_to_cid: The CID of the post being replied to (parent)
         root_uri: The URI of the root post (if replying to a reply). If None, uses reply_to_uri
         root_cid: The CID of the root post (if replying to a reply). If None, uses reply_to_cid
+        lang: Language code for the post (e.g., 'en-US', 'es', 'ja')
 
     Returns:
         The response from sending the post
@@ -331,12 +332,14 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
         response = client.send_post(
             text=text,
             reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
-            facets=facets
+            facets=facets,
+            langs=[lang] if lang else None
         )
     else:
         response = client.send_post(
             text=text,
-            reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
+            reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
+            langs=[lang] if lang else None
         )
 
     logger.info(f"Reply sent successfully: {response.uri}")
@@ -362,7 +365,7 @@ def get_post_thread(client: Client, uri: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def reply_to_notification(client: Client, notification: Any, reply_text: str) -> Optional[Dict[str, Any]]:
+def reply_to_notification(client: Client, notification: Any, reply_text: str, lang: str = "en-US") -> Optional[Dict[str, Any]]:
     """
     Reply to a notification (mention or reply).
 
@@ -370,6 +373,7 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str) ->
         client: Authenticated Bluesky client
         notification: The notification object from list_notifications
         reply_text: The text to reply with
+        lang: Language code for the post (defaults to "en-US")
 
     Returns:
         The response from sending the reply or None if failed
@@ -417,7 +421,8 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str) ->
                 reply_to_uri=post_uri,
                 reply_to_cid=post_cid,
                 root_uri=root_uri,
-                root_cid=root_cid
+                root_cid=root_cid,
+                lang=lang
             )
         else:
             # If we can't get thread data, just reply directly
@@ -425,7 +430,8 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str) ->
                 client=client,
                 text=reply_text,
                 reply_to_uri=post_uri,
-                reply_to_cid=post_cid
+                reply_to_cid=post_cid,
+                lang=lang
             )
 
     except Exception as e:

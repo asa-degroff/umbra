@@ -368,8 +368,9 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
         logger.debug("Successfully received response from Letta API")
         logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
 
-        # Extract the reply text from the agent's response
+        # Extract the reply text and language from the agent's response
         reply_text = ""
+        reply_lang = "en-US"  # Default language
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
         
         for i, message in enumerate(message_response.messages, 1):
@@ -392,11 +393,12 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
             # Check if this is a ToolCallMessage with bluesky_reply tool
             if hasattr(message, 'tool_call') and message.tool_call:
                 if message.tool_call.name == 'bluesky_reply':
-                    # Parse the JSON arguments to get the message
+                    # Parse the JSON arguments to get the message and language
                     try:
                         args = json.loads(message.tool_call.arguments)
                         reply_text = args.get('message', '')
-                        logger.info(f"Extracted reply from tool call: {reply_text[:50]}...")
+                        reply_lang = args.get('lang', 'en-US')  # Extract language or use default
+                        logger.info(f"Extracted reply from tool call: {reply_text[:50]}... (lang: {reply_lang})")
                         break
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse tool call arguments: {e}")
@@ -411,14 +413,16 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
             print(f"\n=== GENERATED REPLY ===")
             print(f"To: @{author_handle}")
             print(f"Reply: {reply_text}")
+            print(f"Language: {reply_lang}")
             print(f"======================\n")
 
-            # Send the reply
-            logger.info(f"Sending reply: {reply_text[:50]}...")
+            # Send the reply with language
+            logger.info(f"Sending reply: {reply_text[:50]}... (lang: {reply_lang})")
             response = bsky_utils.reply_to_notification(
                 client=atproto_client,
                 notification=notification_data,
-                reply_text=reply_text
+                reply_text=reply_text,
+                lang=reply_lang
             )
 
             if response:
