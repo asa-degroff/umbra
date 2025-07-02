@@ -14,6 +14,7 @@ from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
 from tools.blocks import attach_user_blocks, detach_user_blocks, AttachUserBlocksArgs, DetachUserBlocksArgs
+from tools.reply import bluesky_reply, ReplyArgs
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -52,6 +53,12 @@ TOOL_CONFIGS = [
         "args_schema": DetachUserBlocksArgs,
         "description": "Detach user-specific memory blocks from the agent. Blocks are preserved for later use.",
         "tags": ["memory", "blocks", "user"]
+    },
+    {
+        "func": bluesky_reply,
+        "args_schema": ReplyArgs,
+        "description": "Simple reply indicator for the Letta agent (max 300 chars)",
+        "tags": ["bluesky", "reply", "response"]
     },
 ]
 
