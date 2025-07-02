@@ -520,7 +520,7 @@ def save_processed_notifications(processed_set):
 
 
 def save_notification_to_queue(notification):
-    """Save a notification to the queue directory with hash-based filename."""
+    """Save a notification to the queue directory with priority-based filename."""
     try:
         # Check if already processed
         processed_uris = load_processed_notifications()
@@ -537,9 +537,13 @@ def save_notification_to_queue(notification):
         # Generate hash for filename (to avoid duplicates)
         notif_hash = hashlib.sha256(notif_json.encode()).hexdigest()[:16]
 
-        # Create filename with timestamp and hash
+        # Determine priority based on author handle
+        author_handle = getattr(notification.author, 'handle', '') if hasattr(notification, 'author') else ''
+        priority_prefix = "0_" if author_handle == "cameron.pfiffer.org" else "1_"
+
+        # Create filename with priority, timestamp and hash
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}_{notification.reason}_{notif_hash}.json"
+        filename = f"{priority_prefix}{timestamp}_{notification.reason}_{notif_hash}.json"
         filepath = QUEUE_DIR / filename
 
         # Skip if already exists (duplicate)
@@ -551,7 +555,8 @@ def save_notification_to_queue(notification):
         with open(filepath, 'w') as f:
             json.dump(notif_dict, f, indent=2)
 
-        logger.info(f"Queued notification: {filename}")
+        priority_label = "HIGH PRIORITY" if priority_prefix == "0_" else "normal"
+        logger.info(f"Queued notification ({priority_label}): {filename}")
         return True
 
     except Exception as e:
@@ -560,10 +565,11 @@ def save_notification_to_queue(notification):
 
 
 def load_and_process_queued_notifications(void_agent, atproto_client):
-    """Load and process all notifications from the queue."""
+    """Load and process all notifications from the queue in priority order."""
     logger.info("Loading queued notifications from disk...")
     try:
         # Get all JSON files in queue directory (excluding processed_notifications.json)
+        # Files are sorted by name, which puts priority files first (0_ prefix before 1_ prefix)
         queue_files = sorted([f for f in QUEUE_DIR.glob("*.json") if f.name != "processed_notifications.json"])
 
         if not queue_files:
