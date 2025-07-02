@@ -42,10 +42,10 @@ def extract_handles_from_data(data):
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("void_bot")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 # Create a separate logger for prompts (set to WARNING to hide by default)
 prompt_logger = logging.getLogger("void_bot.prompts")
@@ -584,14 +584,12 @@ def save_notification_to_queue(notification):
 
 def load_and_process_queued_notifications(void_agent, atproto_client):
     """Load and process all notifications from the queue in priority order."""
-    logger.info("Loading queued notifications from disk...")
     try:
         # Get all JSON files in queue directory (excluding processed_notifications.json)
         # Files are sorted by name, which puts priority files first (0_ prefix before 1_ prefix)
         queue_files = sorted([f for f in QUEUE_DIR.glob("*.json") if f.name != "processed_notifications.json"])
 
         if not queue_files:
-            logger.info("No queued notifications found")
             return
 
         logger.info(f"Processing {len(queue_files)} queued notifications")
@@ -611,7 +609,6 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                     notif_data = json.load(f)
 
                 # Process based on type using dict data directly
-                logger.info(f"Processing {notif_data['reason']} from @{notif_data['author']['handle']}")
                 success = False
                 if notif_data['reason'] == "mention":
                     success = process_mention(void_agent, atproto_client, notif_data)
@@ -634,7 +631,7 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                     if success:
                         message_counters['follows'] += 1
                 elif notif_data['reason'] == "repost":
-                    logger.info(f"Skipping repost notification from @{notif_data['author']['handle']}")
+                    # Skip reposts silently
                     success = True  # Skip reposts but mark as successful to remove from queue
                     if success:
                         message_counters['reposts_skipped'] += 1
@@ -675,10 +672,8 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
 
 def process_notifications(void_agent, atproto_client):
     """Fetch new notifications, queue them, and process the queue."""
-    logger.info("Starting notification processing cycle...")
     try:
         # First, process any existing queued notifications
-        logger.info("Processing existing queued notifications...")
         load_and_process_queued_notifications(void_agent, atproto_client)
 
         # Get current time for marking notifications as seen
@@ -760,7 +755,6 @@ def process_notifications(void_agent, atproto_client):
             logger.debug("No new notifications to queue")
 
         # Process the queue (including any newly added notifications)
-        logger.info("Processing notification queue after fetching...")
         load_and_process_queued_notifications(void_agent, atproto_client)
 
     except Exception as e:
@@ -772,49 +766,38 @@ def main():
     global start_time
     start_time = time.time()
     logger.info("=== STARTING VOID BOT ===")
-    logger.info("Initializing Void bot...")
-
-    # Initialize the Letta agent
-    logger.info("Calling initialize_void()...")
     void_agent = initialize_void()
     logger.info(f"Void agent initialized: {void_agent.id}")
     
     # Check if agent has required tools
     if hasattr(void_agent, 'tools') and void_agent.tools:
         tool_names = [tool.name for tool in void_agent.tools]
-        logger.info(f"Agent has tools: {tool_names}")
-        
         # Check for bluesky-related tools
         bluesky_tools = [name for name in tool_names if 'bluesky' in name.lower() or 'reply' in name.lower()]
-        if bluesky_tools:
-            logger.info(f"Found Bluesky-related tools: {bluesky_tools}")
-        else:
+        if not bluesky_tools:
             logger.warning("No Bluesky-related tools found! Agent may not be able to reply.")
     else:
         logger.warning("Agent has no tools registered!")
 
     # Initialize Bluesky client
-    logger.info("Connecting to Bluesky...")
     atproto_client = bsky_utils.default_login()
     logger.info("Connected to Bluesky")
 
     # Main loop
-    logger.info(f"=== ENTERING MAIN LOOP ===")
     logger.info(f"Starting notification monitoring, checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds")
 
     cycle_count = 0
     while True:
         try:
             cycle_count += 1
-            logger.info(f"=== MAIN LOOP CYCLE {cycle_count} ===")
             process_notifications(void_agent, atproto_client)
             # Log cycle completion with stats
             elapsed_time = time.time() - start_time
             total_messages = sum(message_counters.values())
             messages_per_minute = (total_messages / elapsed_time * 60) if elapsed_time > 0 else 0
             
-            logger.info(f"Cycle {cycle_count} complete. Session totals: {total_messages} messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies) | {messages_per_minute:.1f} msg/min")
-            logger.info(f"Sleeping for {FETCH_NOTIFICATIONS_DELAY_SEC} seconds...")
+            if total_messages > 0:
+                logger.info(f"Cycle {cycle_count} complete. Session totals: {total_messages} messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies) | {messages_per_minute:.1f} msg/min")
             sleep(FETCH_NOTIFICATIONS_DELAY_SEC)
 
         except KeyboardInterrupt:

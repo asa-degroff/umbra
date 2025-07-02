@@ -55,7 +55,7 @@ def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
                 blocks = client.blocks.list(label=block_label)
                 if blocks and len(blocks) > 0:
                     block = blocks[0]
-                    logger.info(f"Found existing block: {block_label}")
+                    logger.debug(f"Found existing block: {block_label}")
                 else:
                     block = client.blocks.create(
                         label=block_label,
@@ -71,7 +71,7 @@ def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
                 )
                               
                 results.append(f"✓ {handle}: Block attached")
-                logger.info(f"Successfully attached block {block_label} to agent")
+                logger.debug(f"Successfully attached block {block_label} to agent")
 
             except Exception as e:
                 results.append(f"✗ {handle}: Error - {str(e)}")
@@ -126,7 +126,7 @@ def detach_user_blocks(handles: list, agent_state: "AgentState") -> str:
                         block_id=block_label_to_id[block_label]
                     )
                     results.append(f"✓ {handle}: Detached")
-                    logger.info(f"Successfully detached block {block_label} from agent")
+                    logger.debug(f"Successfully detached block {block_label} from agent")
                 except Exception as e:
                     results.append(f"✗ {handle}: Error during detachment - {str(e)}")
                     logger.error(f"Error detaching block {block_label}: {e}")

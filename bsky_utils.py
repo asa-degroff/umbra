@@ -203,9 +203,9 @@ def save_session(username: str, session_string: str) -> None:
     logger.debug(f"Session saved for {username}")
 
 def on_session_change(username: str, event: SessionEvent, session: Session) -> None:
-    logger.info(f"Session changed: {event} {repr(session)}")
+    logger.debug(f"Session changed: {event} {repr(session)}")
     if event in (SessionEvent.CREATE, SessionEvent.REFRESH):
-        logger.info(f"Saving changed session for {username}")
+        logger.debug(f"Saving changed session for {username}")
         save_session(username, session.export())
 
 def init_client(username: str, password: str) -> Client:
@@ -217,7 +217,7 @@ def init_client(username: str, password: str) -> Client:
         pds_uri = "https://bsky.social"
 
     # Print the PDS URI
-    logger.info(f"Using PDS URI: {pds_uri}")
+    logger.debug(f"Using PDS URI: {pds_uri}")
 
     client = Client(pds_uri)
     client.on_session_change(
@@ -226,10 +226,10 @@ def init_client(username: str, password: str) -> Client:
 
     session_string = get_session(username)
     if session_string:
-        logger.info(f"Reusing existing session for {username}")
+        logger.debug(f"Reusing existing session for {username}")
         client.login(session_string=session_string)
     else:
-        logger.info(f"Creating new session for {username}")
+        logger.debug(f"Creating new session for {username}")
         client.login(username, password)
 
     return client
