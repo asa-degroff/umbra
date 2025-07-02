@@ -282,9 +282,6 @@ The YAML above shows the complete conversation thread. The most recent post is t
 
 Use the bluesky_reply tool to send a response less than 300 characters."""
 
-        print(prompt)
-        exit()
-
         # Extract all handles from notification and thread data
         all_handles = set()
         all_handles.update(extract_handles_from_data(notification_data))

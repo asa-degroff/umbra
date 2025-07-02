@@ -114,6 +114,50 @@ def strip_fields(obj, strip_field_list):
     return obj
 
 
+def flatten_thread_structure(thread_data):
+    """
+    Flatten a nested thread structure into a list while preserving all data.
+    
+    Args:
+        thread_data: The thread data from get_post_thread
+        
+    Returns:
+        Dict with 'posts' key containing a list of posts in chronological order
+    """
+    posts = []
+    
+    def traverse_thread(node):
+        """Recursively traverse the thread structure to collect posts."""
+        if not node:
+            return
+            
+        # If this node has a parent, traverse it first (to maintain chronological order)
+        if hasattr(node, 'parent') and node.parent:
+            traverse_thread(node.parent)
+        
+        # Then add this node's post
+        if hasattr(node, 'post') and node.post:
+            # Convert to dict if needed to ensure we can process it
+            if hasattr(node.post, '__dict__'):
+                post_dict = node.post.__dict__.copy()
+            elif isinstance(node.post, dict):
+                post_dict = node.post.copy()
+            else:
+                post_dict = {}
+            
+            posts.append(post_dict)
+    
+    # Handle the thread structure
+    if hasattr(thread_data, 'thread'):
+        # Start from the main thread node
+        traverse_thread(thread_data.thread)
+    elif hasattr(thread_data, '__dict__') and 'thread' in thread_data.__dict__:
+        traverse_thread(thread_data.__dict__['thread'])
+    
+    # Return a simple structure with posts list
+    return {'posts': posts}
+
+
 def thread_to_yaml_string(thread, strip_metadata=True):
     """
     Convert thread data to a YAML-formatted string for LLM parsing.
@@ -125,8 +169,11 @@ def thread_to_yaml_string(thread, strip_metadata=True):
     Returns:
         YAML-formatted string representation of the thread
     """
-    # First convert complex objects to basic types
-    basic_thread = convert_to_basic_types(thread)
+    # First flatten the thread structure to avoid deep nesting
+    flattened = flatten_thread_structure(thread)
+    
+    # Convert complex objects to basic types
+    basic_thread = convert_to_basic_types(flattened)
 
     if strip_metadata:
         # Create a copy and strip unwanted fields
@@ -135,6 +182,8 @@ def thread_to_yaml_string(thread, strip_metadata=True):
         cleaned_thread = basic_thread
 
     return yaml.dump(cleaned_thread, indent=2, allow_unicode=True, default_flow_style=False)
+
+
 
 
 
