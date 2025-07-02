@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from atproto_client import Client, Session, SessionEvent, models
 
 # Configure logging
@@ -453,8 +453,6 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         List of responses from sending the replies or None if failed
     """
     try:
-        from typing import List
-        
         # Validate input
         if not reply_messages or len(reply_messages) == 0:
             logger.error("Reply messages list cannot be empty")
