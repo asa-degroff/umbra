@@ -1,5 +1,5 @@
 """Post tool for creating Bluesky posts."""
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field, validator
 
 
@@ -7,6 +7,10 @@ class PostArgs(BaseModel):
     text: List[str] = Field(
         ..., 
         description="List of texts to create posts (each max 300 characters). Single item creates one post, multiple items create a thread."
+    )
+    lang: Optional[str] = Field(
+        default="en-US",
+        description="Language code for the posts (e.g., 'en-US', 'es', 'ja', 'th'). Defaults to 'en-US'"
     )
     
     @validator('text')
@@ -16,7 +20,7 @@ class PostArgs(BaseModel):
         return v
 
 
-def create_new_bluesky_post(text: List[str]) -> str:
+def create_new_bluesky_post(text: List[str], lang: str = "en-US") -> str:
     """
     Create a NEW standalone post on Bluesky. This tool creates independent posts that
     start new conversations.
@@ -26,6 +30,7 @@ def create_new_bluesky_post(text: List[str]) -> str:
 
     Args:
         text: List of post contents (each max 300 characters). Single item creates one post, multiple items create a thread.
+        lang: Language code for the posts (e.g., 'en-US', 'es', 'ja', 'th'). Defaults to 'en-US'
 
     Returns:
         Success message with post URL(s)
@@ -87,6 +92,7 @@ def create_new_bluesky_post(text: List[str]) -> str:
                 "$type": "app.bsky.feed.post",
                 "text": post_text,
                 "createdAt": now,
+                "langs": [lang]
             }
             
             # If this is part of a thread (not the first post), add reply references
@@ -170,10 +176,10 @@ def create_new_bluesky_post(text: List[str]) -> str:
         
         # Return appropriate message based on single post or thread
         if len(text) == 1:
-            return f"Successfully posted to Bluesky!\nPost URL: {post_urls[0]}\nText: {text[0]}"
+            return f"Successfully posted to Bluesky!\nPost URL: {post_urls[0]}\nText: {text[0]}\nLanguage: {lang}"
         else:
             urls_text = "\n".join([f"Post {i+1}: {url}" for i, url in enumerate(post_urls)])
-            return f"Successfully created thread with {len(text)} posts!\n{urls_text}"
+            return f"Successfully created thread with {len(text)} posts!\n{urls_text}\nLanguage: {lang}"
         
     except Exception as e:
         raise Exception(f"Error posting to Bluesky: {str(e)}")

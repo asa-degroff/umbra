@@ -69,14 +69,7 @@ def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
                     agent_id=str(agent_state.id),
                     block_id=str(block.id)
                 )
-                
-                # STOPGAP: Also update agent_state.memory to sync in-memory state
-                try:
-                    agent_state.memory.set_block(block)
-                    print(f"[SYNC] Successfully synced block {block_label} to agent_state.memory")
-                except Exception as sync_error:
-                    print(f"[SYNC] Warning: Failed to sync block to agent_state.memory: {sync_error}")
-                
+                              
                 results.append(f"✓ {handle}: Block attached")
                 logger.info(f"Successfully attached block {block_label} to agent")
 
