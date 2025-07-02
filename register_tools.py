@@ -57,7 +57,7 @@ TOOL_CONFIGS = [
     {
         "func": bluesky_reply,
         "args_schema": ReplyArgs,
-        "description": "Simple reply indicator for the Letta agent (max 300 chars)",
+        "description": "Reply indicator for the Letta agent (1-4 messages, each max 300 chars). Creates threaded replies.",
         "tags": ["bluesky", "reply", "response"]
     },
 ]

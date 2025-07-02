@@ -439,6 +439,116 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str, la
         return None
 
 
+def reply_with_thread_to_notification(client: Client, notification: Any, reply_messages: List[str], lang: str = "en-US") -> Optional[List[Dict[str, Any]]]:
+    """
+    Reply to a notification with a threaded chain of messages (max 4).
+
+    Args:
+        client: Authenticated Bluesky client
+        notification: The notification object from list_notifications
+        reply_messages: List of reply texts (max 4 messages, each max 300 chars)
+        lang: Language code for the posts (defaults to "en-US")
+
+    Returns:
+        List of responses from sending the replies or None if failed
+    """
+    try:
+        from typing import List
+        
+        # Validate input
+        if not reply_messages or len(reply_messages) == 0:
+            logger.error("Reply messages list cannot be empty")
+            return None
+        if len(reply_messages) > 4:
+            logger.error(f"Cannot send more than 4 reply messages (got {len(reply_messages)})")
+            return None
+        
+        # Get the post URI and CID from the notification (handle both dict and object)
+        if isinstance(notification, dict):
+            post_uri = notification.get('uri')
+            post_cid = notification.get('cid')
+        elif hasattr(notification, 'uri') and hasattr(notification, 'cid'):
+            post_uri = notification.uri
+            post_cid = notification.cid
+        else:
+            post_uri = None
+            post_cid = None
+
+        if not post_uri or not post_cid:
+            logger.error("Notification doesn't have required uri/cid fields")
+            return None
+
+        # Get the thread to find the root post
+        thread_data = get_post_thread(client, post_uri)
+        
+        root_uri = post_uri
+        root_cid = post_cid
+
+        if thread_data and hasattr(thread_data, 'thread'):
+            thread = thread_data.thread
+            # If this has a parent, find the root
+            if hasattr(thread, 'parent') and thread.parent:
+                # Keep going up until we find the root
+                current = thread
+                while hasattr(current, 'parent') and current.parent:
+                    current = current.parent
+                    if hasattr(current, 'post') and hasattr(current.post, 'uri') and hasattr(current.post, 'cid'):
+                        root_uri = current.post.uri
+                        root_cid = current.post.cid
+
+        # Send replies in sequence, creating a thread
+        responses = []
+        current_parent_uri = post_uri
+        current_parent_cid = post_cid
+        
+        for i, message in enumerate(reply_messages):
+            logger.info(f"Sending reply {i+1}/{len(reply_messages)}: {message[:50]}...")
+            
+            # Send this reply
+            response = reply_to_post(
+                client=client,
+                text=message,
+                reply_to_uri=current_parent_uri,
+                reply_to_cid=current_parent_cid,
+                root_uri=root_uri,
+                root_cid=root_cid,
+                lang=lang
+            )
+            
+            if not response:
+                logger.error(f"Failed to send reply {i+1}, posting system failure message")
+                # Try to post a system failure message
+                failure_response = reply_to_post(
+                    client=client,
+                    text="[SYSTEM FAILURE: COULD NOT POST MESSAGE, PLEASE TRY AGAIN]",
+                    reply_to_uri=current_parent_uri,
+                    reply_to_cid=current_parent_cid,
+                    root_uri=root_uri,
+                    root_cid=root_cid,
+                    lang=lang
+                )
+                if failure_response:
+                    responses.append(failure_response)
+                    current_parent_uri = failure_response.uri
+                    current_parent_cid = failure_response.cid
+                else:
+                    logger.error("Could not even send system failure message, stopping thread")
+                    return responses if responses else None
+            else:
+                responses.append(response)
+                # Update parent references for next reply (if any)
+                if i < len(reply_messages) - 1:  # Not the last message
+                    current_parent_uri = response.uri
+                    current_parent_cid = response.cid
+                
+        logger.info(f"Successfully sent {len(responses)} threaded replies")
+        return responses
+
+    except Exception as e:
+        logger.error(f"Error sending threaded reply to notification: {e}")
+        return None
+
+
 if __name__ == "__main__":
     client = default_login()
     # do something with the client

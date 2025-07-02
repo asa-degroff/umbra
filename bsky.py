@@ -394,33 +394,59 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                 if message.tool_call.name == 'bluesky_reply':
                     try:
                         args = json.loads(message.tool_call.arguments)
-                        reply_text = args.get('message', '')
+                        # Handle both old format (message) and new format (messages)
+                        reply_messages = args.get('messages', [])
+                        if not reply_messages:
+                            # Fallback to old format for backward compatibility
+                            old_message = args.get('message', '')
+                            if old_message:
+                                reply_messages = [old_message]
+                        
                         reply_lang = args.get('lang', 'en-US')
-                        if reply_text:  # Only add if there's actual content
-                            reply_candidates.append((reply_text, reply_lang))
-                            logger.info(f"Found bluesky_reply candidate: {reply_text[:50]}... (lang: {reply_lang})")
+                        if reply_messages:  # Only add if there's actual content
+                            reply_candidates.append((reply_messages, reply_lang))
+                            if len(reply_messages) == 1:
+                                logger.info(f"Found bluesky_reply candidate: {reply_messages[0][:50]}... (lang: {reply_lang})")
+                            else:
+                                logger.info(f"Found bluesky_reply thread candidate with {len(reply_messages)} messages (lang: {reply_lang})")
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse tool call arguments: {e}")
 
         if reply_candidates:
             logger.info(f"Found {len(reply_candidates)} bluesky_reply candidates, trying each until one succeeds...")
             
-            for i, (reply_text, reply_lang) in enumerate(reply_candidates, 1):
+            for i, (reply_messages, reply_lang) in enumerate(reply_candidates, 1):
                 # Print the generated reply for testing
                 print(f"\n=== GENERATED REPLY {i}/{len(reply_candidates)} ===")
                 print(f"To: @{author_handle}")
-                print(f"Reply: {reply_text}")
+                if len(reply_messages) == 1:
+                    print(f"Reply: {reply_messages[0]}")
+                else:
+                    print(f"Reply thread ({len(reply_messages)} messages):")
+                    for j, msg in enumerate(reply_messages, 1):
+                        print(f"  {j}. {msg}")
                 print(f"Language: {reply_lang}")
                 print(f"======================\n")
 
-                # Send the reply with language
-                logger.info(f"Trying reply {i}/{len(reply_candidates)}: {reply_text[:50]}... (lang: {reply_lang})")
-                response = bsky_utils.reply_to_notification(
-                    client=atproto_client,
-                    notification=notification_data,
-                    reply_text=reply_text,
-                    lang=reply_lang
-                )
+                # Send the reply(s) with language
+                if len(reply_messages) == 1:
+                    # Single reply - use existing function
+                    logger.info(f"Trying single reply {i}/{len(reply_candidates)}: {reply_messages[0][:50]}... (lang: {reply_lang})")
+                    response = bsky_utils.reply_to_notification(
+                        client=atproto_client,
+                        notification=notification_data,
+                        reply_text=reply_messages[0],
+                        lang=reply_lang
+                    )
+                else:
+                    # Multiple replies - use new threaded function
+                    logger.info(f"Trying threaded reply {i}/{len(reply_candidates)} with {len(reply_messages)} messages (lang: {reply_lang})")
+                    response = bsky_utils.reply_with_thread_to_notification(
+                        client=atproto_client,
+                        notification=notification_data,
+                        reply_messages=reply_messages,
+                        lang=reply_lang
+                    )
 
                 if response:
                     logger.info(f"Successfully replied to @{author_handle} with candidate {i}")
