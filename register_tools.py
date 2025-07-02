@@ -15,6 +15,7 @@ from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
 from tools.blocks import attach_user_blocks, detach_user_blocks, AttachUserBlocksArgs, DetachUserBlocksArgs
 from tools.reply import bluesky_reply, ReplyArgs
+from tools.halt import halt_activity, HaltArgs
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +60,12 @@ TOOL_CONFIGS = [
         "args_schema": ReplyArgs,
         "description": "Reply indicator for the Letta agent (1-4 messages, each max 300 chars). Creates threaded replies.",
         "tags": ["bluesky", "reply", "response"]
+    },
+    {
+        "func": halt_activity,
+        "args_schema": HaltArgs,
+        "description": "Signal to halt all bot activity and terminate bsky.py",
+        "tags": ["control", "halt", "terminate"]
     },
 ]
 

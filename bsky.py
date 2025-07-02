@@ -195,7 +195,7 @@ def process_mention(void_agent, atproto_client, notification_data):
         None: Failed with non-retryable error, move to errors directory
     """
     try:
-        logger.info(f"Starting process_mention with notification_data type: {type(notification_data)}")
+        logger.debug(f"Starting process_mention with notification_data type: {type(notification_data)}")
         
         # Handle both dict and object inputs for backwards compatibility
         if isinstance(notification_data, dict):
@@ -288,13 +288,13 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
         all_handles.update(extract_handles_from_data(thread.model_dump()))
         unique_handles = list(all_handles)
         
-        logger.info(f"Found {len(unique_handles)} unique handles in thread: {unique_handles}")
+        logger.debug(f"Found {len(unique_handles)} unique handles in thread: {unique_handles}")
         
         # Attach user blocks before agent call
         attached_handles = []
         if unique_handles:
             try:
-                logger.info(f"Attaching user blocks for handles: {unique_handles}")
+                logger.debug(f"Attaching user blocks for handles: {unique_handles}")
                 attach_result = attach_user_blocks(unique_handles, void_agent)
                 attached_handles = unique_handles  # Track successfully attached handles
                 logger.debug(f"Attach result: {attach_result}")
@@ -389,6 +389,24 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
             else:
                 logger.debug(f"  {i}. {msg_type}: <no content>")
 
+            # Check for halt_activity tool call
+            if hasattr(message, 'tool_call') and message.tool_call:
+                if message.tool_call.name == 'halt_activity':
+                    logger.info("🛑 HALT_ACTIVITY TOOL CALLED - TERMINATING BOT")
+                    try:
+                        args = json.loads(message.tool_call.arguments)
+                        reason = args.get('reason', 'Agent requested halt')
+                        logger.info(f"Halt reason: {reason}")
+                    except:
+                        logger.info("Halt reason: <unable to parse>")
+                    
+                    # Export agent state before terminating
+                    export_agent_state(CLIENT, void_agent)
+                    
+                    # Exit the program
+                    logger.info("=== BOT TERMINATED BY AGENT ===")
+                    exit(0)
+            
             # Collect bluesky_reply tool calls
             if hasattr(message, 'tool_call') and message.tool_call:
                 if message.tool_call.name == 'bluesky_reply':
