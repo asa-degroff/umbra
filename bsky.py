@@ -673,14 +673,11 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
 def process_notifications(void_agent, atproto_client):
     """Fetch new notifications, queue them, and process the queue."""
     try:
-        # First, process any existing queued notifications
-        load_and_process_queued_notifications(void_agent, atproto_client)
-
         # Get current time for marking notifications as seen
         logger.debug("Getting current time for notification marking...")
         last_seen_at = atproto_client.get_current_time_iso()
 
-        # Fetch ALL notifications using pagination
+        # Fetch ALL notifications using pagination first
         logger.info("Beginning notification fetch with pagination...")
         all_notifications = []
         cursor = None
@@ -754,7 +751,7 @@ def process_notifications(void_agent, atproto_client):
         else:
             logger.debug("No new notifications to queue")
 
-        # Process the queue (including any newly added notifications)
+        # Now process the entire queue (old + new notifications)
         load_and_process_queued_notifications(void_agent, atproto_client)
 
     except Exception as e:
