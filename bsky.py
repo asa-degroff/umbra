@@ -9,6 +9,8 @@ import hashlib
 import subprocess
 from pathlib import Path
 from datetime import datetime
+from collections import defaultdict
+import time
 
 from utils import (
     upsert_block,
@@ -43,10 +45,14 @@ logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("void_bot")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
-# Set httpx logging to DEBUG to reduce noise
-logging.getLogger("httpx").setLevel(logging.DEBUG)
+# Create a separate logger for prompts (set to WARNING to hide by default)
+prompt_logger = logging.getLogger("void_bot.prompts")
+prompt_logger.setLevel(logging.WARNING)  # Change to DEBUG if you want to see prompts
+
+# Disable httpx logging completely
+logging.getLogger("httpx").setLevel(logging.CRITICAL)
 
 
 # Create a client with extended timeout for LLM operations
@@ -70,6 +76,10 @@ PROCESSED_NOTIFICATIONS_FILE = Path("queue/processed_notifications.json")
 
 # Maximum number of processed notifications to track
 MAX_PROCESSED_NOTIFICATIONS = 10000
+
+# Message tracking counters
+message_counters = defaultdict(int)
+start_time = time.time()
 
 def export_agent_state(client, agent):
     """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
@@ -112,8 +122,10 @@ def export_agent_state(client, agent):
         logger.error(f"Failed to export agent: {e}")
 
 def initialize_void():
+    logger.info("Starting void agent initialization...")
 
     # Ensure that a shared zeitgeist block exists
+    logger.info("Creating/updating zeitgeist block...")
     zeigeist_block = upsert_block(
         CLIENT,
         label = "zeitgeist",
@@ -122,6 +134,7 @@ def initialize_void():
     )
 
     # Ensure that a shared void personality block exists
+    logger.info("Creating/updating void-persona block...")
     persona_block = upsert_block(
         CLIENT,
         label = "void-persona",
@@ -130,6 +143,7 @@ def initialize_void():
     )
 
     # Ensure that a shared void human block exists
+    logger.info("Creating/updating void-humans block...")
     human_block = upsert_block(
         CLIENT,
         label = "void-humans",
@@ -138,6 +152,7 @@ def initialize_void():
     )
 
     # Create the agent if it doesn't exist
+    logger.info("Creating/updating void agent...")
     void_agent = upsert_agent(
         CLIENT,
         name = "void",
@@ -154,6 +169,7 @@ def initialize_void():
     )
     
     # Export agent state
+    logger.info("Exporting agent state...")
     export_agent_state(CLIENT, void_agent)
     
     # Log agent details
@@ -230,8 +246,6 @@ def process_mention(void_agent, atproto_client, notification_data):
             # Try to continue with a simple context
             thread_context = f"Error processing thread context: {str(yaml_error)}"
 
-        # print(thread_context)
-
         # Create a prompt for the Letta agent with thread context
         prompt = f"""You received a mention on Bluesky from @{author_handle} ({author_name or author_handle}).
 
@@ -269,11 +283,13 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
 
         # Get response from Letta agent
         logger.info(f"Mention from @{author_handle}: {mention_text}")
-        logger.debug(f"Prompt being sent: {prompt}")
         
-        # Log the exact parameters being sent to Letta
-        logger.debug(f"Calling Letta API with agent_id: {void_agent.id}")
-        logger.debug(f"Message content length: {len(prompt)} characters")
+        # Log prompt details to separate logger
+        prompt_logger.debug(f"Full prompt being sent:\n{prompt}")
+        
+        # Log concise prompt info to main logger
+        thread_handles_count = len(unique_handles)
+        logger.info(f"💬 Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users")
 
         try:
             message_response = CLIENT.agents.messages.create(
@@ -333,8 +349,24 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
 
         # Extract the reply text from the agent's response
         reply_text = ""
-        for message in message_response.messages:
-            print(message)
+        logger.debug(f"Processing {len(message_response.messages)} response messages...")
+        
+        for i, message in enumerate(message_response.messages, 1):
+            # Log concise message info instead of full object
+            msg_type = getattr(message, 'message_type', 'unknown')
+            if hasattr(message, 'reasoning') and message.reasoning:
+                logger.debug(f"  {i}. {msg_type}: {message.reasoning[:100]}...")
+            elif hasattr(message, 'tool_call') and message.tool_call:
+                tool_name = message.tool_call.name
+                logger.debug(f"  {i}. {msg_type}: {tool_name}")
+            elif hasattr(message, 'tool_return'):
+                tool_name = getattr(message, 'name', 'unknown_tool')
+                return_preview = str(message.tool_return)[:100] if message.tool_return else "None"
+                logger.debug(f"  {i}. {msg_type}: {tool_name} -> {return_preview}...")
+            elif hasattr(message, 'text'):
+                logger.debug(f"  {i}. {msg_type}: {message.text[:100]}...")
+            else:
+                logger.debug(f"  {i}. {msg_type}: <no content>")
 
             # Check if this is a ToolCallMessage with bluesky_reply tool
             if hasattr(message, 'tool_call') and message.tool_call:
@@ -478,40 +510,59 @@ def save_notification_to_queue(notification):
 
 def load_and_process_queued_notifications(void_agent, atproto_client):
     """Load and process all notifications from the queue."""
+    logger.info("Loading queued notifications from disk...")
     try:
         # Get all JSON files in queue directory (excluding processed_notifications.json)
         queue_files = sorted([f for f in QUEUE_DIR.glob("*.json") if f.name != "processed_notifications.json"])
 
         if not queue_files:
-            logger.debug("No queued notifications to process")
+            logger.info("No queued notifications found")
             return
 
         logger.info(f"Processing {len(queue_files)} queued notifications")
+        
+        # Log current statistics
+        elapsed_time = time.time() - start_time
+        total_messages = sum(message_counters.values())
+        messages_per_minute = (total_messages / elapsed_time * 60) if elapsed_time > 0 else 0
+        
+        logger.info(f"📊 Session stats: {total_messages} total messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies, {message_counters['follows']} follows) | {messages_per_minute:.1f} msg/min")
 
-        for filepath in queue_files:
+        for i, filepath in enumerate(queue_files, 1):
+            logger.info(f"Processing queue file {i}/{len(queue_files)}: {filepath.name}")
             try:
                 # Load notification data
                 with open(filepath, 'r') as f:
                     notif_data = json.load(f)
 
                 # Process based on type using dict data directly
+                logger.info(f"Processing {notif_data['reason']} from @{notif_data['author']['handle']}")
                 success = False
                 if notif_data['reason'] == "mention":
                     success = process_mention(void_agent, atproto_client, notif_data)
+                    if success:
+                        message_counters['mentions'] += 1
                 elif notif_data['reason'] == "reply":
                     success = process_mention(void_agent, atproto_client, notif_data)
+                    if success:
+                        message_counters['replies'] += 1
                 elif notif_data['reason'] == "follow":
                     author_handle = notif_data['author']['handle']
                     author_display_name = notif_data['author'].get('display_name', 'no display name')
                     follow_update = f"@{author_handle} ({author_display_name}) started following you."
+                    logger.info(f"Notifying agent about new follower: @{author_handle}")
                     CLIENT.agents.messages.create(
                         agent_id = void_agent.id,
                         messages = [{"role":"user", "content": f"Update: {follow_update}"}]
                     )
                     success = True  # Follow updates are always successful
+                    if success:
+                        message_counters['follows'] += 1
                 elif notif_data['reason'] == "repost":
                     logger.info(f"Skipping repost notification from @{notif_data['author']['handle']}")
                     success = True  # Skip reposts but mark as successful to remove from queue
+                    if success:
+                        message_counters['reposts_skipped'] += 1
                 else:
                     logger.warning(f"Unknown notification type: {notif_data['reason']}")
                     success = True  # Remove unknown types from queue
@@ -519,7 +570,7 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                 # Handle file based on processing result
                 if success:
                     filepath.unlink()
-                    logger.info(f"Processed and removed: {filepath.name}")
+                    logger.info(f"✅ Successfully processed and removed: {filepath.name}")
                     
                     # Mark as processed to avoid reprocessing
                     processed_uris = load_processed_notifications()
@@ -529,7 +580,7 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name
                     filepath.rename(error_path)
-                    logger.warning(f"Moved {filepath.name} to errors directory")
+                    logger.warning(f"❌ Moved {filepath.name} to errors directory")
                     
                     # Also mark as processed to avoid retrying
                     processed_uris = load_processed_notifications()
@@ -537,10 +588,10 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                     save_processed_notifications(processed_uris)
                     
                 else:
-                    logger.warning(f"Failed to process {filepath.name}, keeping in queue for retry")
+                    logger.warning(f"⚠️  Failed to process {filepath.name}, keeping in queue for retry")
 
             except Exception as e:
-                logger.error(f"Error processing queued notification {filepath.name}: {e}")
+                logger.error(f"💥 Error processing queued notification {filepath.name}: {e}")
                 # Keep the file for retry later
 
     except Exception as e:
@@ -549,14 +600,18 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
 
 def process_notifications(void_agent, atproto_client):
     """Fetch new notifications, queue them, and process the queue."""
+    logger.info("Starting notification processing cycle...")
     try:
         # First, process any existing queued notifications
+        logger.info("Processing existing queued notifications...")
         load_and_process_queued_notifications(void_agent, atproto_client)
 
         # Get current time for marking notifications as seen
+        logger.debug("Getting current time for notification marking...")
         last_seen_at = atproto_client.get_current_time_iso()
 
         # Fetch ALL notifications using pagination
+        logger.info("Beginning notification fetch with pagination...")
         all_notifications = []
         cursor = None
         page_count = 0
@@ -615,6 +670,7 @@ def process_notifications(void_agent, atproto_client):
                     break
 
         # Queue all unread notifications (except likes)
+        logger.info("Queuing unread notifications...")
         new_count = 0
         for notification in all_notifications:
             if not notification.is_read and notification.reason != "like":
@@ -629,6 +685,7 @@ def process_notifications(void_agent, atproto_client):
             logger.debug("No new notifications to queue")
 
         # Process the queue (including any newly added notifications)
+        logger.info("Processing notification queue after fetching...")
         load_and_process_queued_notifications(void_agent, atproto_client)
 
     except Exception as e:
@@ -637,9 +694,13 @@ def process_notifications(void_agent, atproto_client):
 
 def main():
     """Main bot loop that continuously monitors for notifications."""
+    global start_time
+    start_time = time.time()
+    logger.info("=== STARTING VOID BOT ===")
     logger.info("Initializing Void bot...")
 
     # Initialize the Letta agent
+    logger.info("Calling initialize_void()...")
     void_agent = initialize_void()
     logger.info(f"Void agent initialized: {void_agent.id}")
     
@@ -658,24 +719,48 @@ def main():
         logger.warning("Agent has no tools registered!")
 
     # Initialize Bluesky client
+    logger.info("Connecting to Bluesky...")
     atproto_client = bsky_utils.default_login()
     logger.info("Connected to Bluesky")
 
     # Main loop
+    logger.info(f"=== ENTERING MAIN LOOP ===")
     logger.info(f"Starting notification monitoring, checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds")
 
+    cycle_count = 0
     while True:
         try:
+            cycle_count += 1
+            logger.info(f"=== MAIN LOOP CYCLE {cycle_count} ===")
             process_notifications(void_agent, atproto_client)
-            logger.debug("Sleeping, no notifications were detected")
+            # Log cycle completion with stats
+            elapsed_time = time.time() - start_time
+            total_messages = sum(message_counters.values())
+            messages_per_minute = (total_messages / elapsed_time * 60) if elapsed_time > 0 else 0
+            
+            logger.info(f"Cycle {cycle_count} complete. Session totals: {total_messages} messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies) | {messages_per_minute:.1f} msg/min")
+            logger.info(f"Sleeping for {FETCH_NOTIFICATIONS_DELAY_SEC} seconds...")
             sleep(FETCH_NOTIFICATIONS_DELAY_SEC)
 
         except KeyboardInterrupt:
-            logger.info("Bot stopped by user")
+            # Final stats
+            elapsed_time = time.time() - start_time
+            total_messages = sum(message_counters.values())
+            messages_per_minute = (total_messages / elapsed_time * 60) if elapsed_time > 0 else 0
+            
+            logger.info("=== BOT STOPPED BY USER ===")
+            logger.info(f"📊 Final session stats: {total_messages} total messages processed in {elapsed_time/60:.1f} minutes")
+            logger.info(f"   - {message_counters['mentions']} mentions")
+            logger.info(f"   - {message_counters['replies']} replies")
+            logger.info(f"   - {message_counters['follows']} follows")
+            logger.info(f"   - {message_counters['reposts_skipped']} reposts skipped")
+            logger.info(f"   - Average rate: {messages_per_minute:.1f} messages/minute")
             break
         except Exception as e:
-            logger.error(f"Error in main loop: {e}")
+            logger.error(f"=== ERROR IN MAIN LOOP CYCLE {cycle_count} ===")
+            logger.error(f"Error details: {e}")
             # Wait a bit longer on errors
+            logger.info(f"Sleeping for {FETCH_NOTIFICATIONS_DELAY_SEC * 2} seconds due to error...")
             sleep(FETCH_NOTIFICATIONS_DELAY_SEC * 2)
 
 
