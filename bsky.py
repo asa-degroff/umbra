@@ -216,7 +216,7 @@ def process_mention(void_agent, atproto_client, notification_data):
         try:
             thread = atproto_client.app.bsky.feed.get_post_thread({
                 'uri': uri,
-                'parent_height': 80,
+                'parent_height': 40,
                 'depth': 10
             })
         except Exception as e:
@@ -235,7 +235,28 @@ def process_mention(void_agent, atproto_client, notification_data):
         try:
             thread_context = thread_to_yaml_string(thread)
             logger.info(f"Thread context generated, length: {len(thread_context)} characters")
-            logger.debug(f"Thread context preview: {thread_context[:500]}...")
+            
+            # Create a more informative preview by extracting meaningful content
+            lines = thread_context.split('\n')
+            meaningful_lines = []
+            
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                    
+                # Look for lines with actual content (not just structure)
+                if any(keyword in line for keyword in ['text:', 'handle:', 'display_name:', 'created_at:', 'reply_count:', 'like_count:']):
+                    meaningful_lines.append(line)
+                    if len(meaningful_lines) >= 5:
+                        break
+            
+            if meaningful_lines:
+                preview = '\n'.join(meaningful_lines)
+                logger.debug(f"Thread content preview:\n{preview}")
+            else:
+                # If no content fields found, just show it's a thread structure
+                logger.debug(f"Thread structure generated ({len(thread_context)} chars)")
         except Exception as yaml_error:
             import traceback
             logger.error(f"Error converting thread to YAML: {yaml_error}")
@@ -260,6 +281,9 @@ FULL THREAD CONTEXT:
 The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow.
 
 Use the bluesky_reply tool to send a response less than 300 characters."""
+
+        print(prompt)
+        exit()
 
         # Extract all handles from notification and thread data
         all_handles = set()
