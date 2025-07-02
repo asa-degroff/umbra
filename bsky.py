@@ -368,9 +368,8 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
         logger.debug("Successfully received response from Letta API")
         logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
 
-        # Extract the reply text and language from the agent's response
-        reply_text = ""
-        reply_lang = "en-US"  # Default language
+        # Extract all bluesky_reply tool calls from the agent's response
+        reply_candidates = []
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
         
         for i, message in enumerate(message_response.messages, 1):
@@ -390,49 +389,50 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
             else:
                 logger.debug(f"  {i}. {msg_type}: <no content>")
 
-            # Check if this is a ToolCallMessage with bluesky_reply tool
+            # Collect bluesky_reply tool calls
             if hasattr(message, 'tool_call') and message.tool_call:
                 if message.tool_call.name == 'bluesky_reply':
-                    # Parse the JSON arguments to get the message and language
                     try:
                         args = json.loads(message.tool_call.arguments)
                         reply_text = args.get('message', '')
-                        reply_lang = args.get('lang', 'en-US')  # Extract language or use default
-                        logger.info(f"Extracted reply from tool call: {reply_text[:50]}... (lang: {reply_lang})")
-                        break
+                        reply_lang = args.get('lang', 'en-US')
+                        if reply_text:  # Only add if there's actual content
+                            reply_candidates.append((reply_text, reply_lang))
+                            logger.info(f"Found bluesky_reply candidate: {reply_text[:50]}... (lang: {reply_lang})")
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse tool call arguments: {e}")
 
-            # Fallback to text message if available
-            elif hasattr(message, 'text') and message.text:
-                reply_text = message.text
-                break
+        if reply_candidates:
+            logger.info(f"Found {len(reply_candidates)} bluesky_reply candidates, trying each until one succeeds...")
+            
+            for i, (reply_text, reply_lang) in enumerate(reply_candidates, 1):
+                # Print the generated reply for testing
+                print(f"\n=== GENERATED REPLY {i}/{len(reply_candidates)} ===")
+                print(f"To: @{author_handle}")
+                print(f"Reply: {reply_text}")
+                print(f"Language: {reply_lang}")
+                print(f"======================\n")
 
-        if reply_text:
-            # Print the generated reply for testing
-            print(f"\n=== GENERATED REPLY ===")
-            print(f"To: @{author_handle}")
-            print(f"Reply: {reply_text}")
-            print(f"Language: {reply_lang}")
-            print(f"======================\n")
+                # Send the reply with language
+                logger.info(f"Trying reply {i}/{len(reply_candidates)}: {reply_text[:50]}... (lang: {reply_lang})")
+                response = bsky_utils.reply_to_notification(
+                    client=atproto_client,
+                    notification=notification_data,
+                    reply_text=reply_text,
+                    lang=reply_lang
+                )
 
-            # Send the reply with language
-            logger.info(f"Sending reply: {reply_text[:50]}... (lang: {reply_lang})")
-            response = bsky_utils.reply_to_notification(
-                client=atproto_client,
-                notification=notification_data,
-                reply_text=reply_text,
-                lang=reply_lang
-            )
-
-            if response:
-                logger.info(f"Successfully replied to @{author_handle}")
-                return True
-            else:
-                logger.error(f"Failed to send reply to @{author_handle}")
-                return False
+                if response:
+                    logger.info(f"Successfully replied to @{author_handle} with candidate {i}")
+                    return True
+                else:
+                    logger.warning(f"Failed to send reply candidate {i} to @{author_handle}, trying next...")
+            
+            # If we get here, all candidates failed
+            logger.error(f"All {len(reply_candidates)} reply candidates failed for @{author_handle}")
+            return False
         else:
-            logger.warning(f"No reply generated for mention from @{author_handle}, removing notification from queue")
+            logger.warning(f"No bluesky_reply tool calls found for mention from @{author_handle}, removing notification from queue")
             return True
 
     except Exception as e:
