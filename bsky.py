@@ -327,15 +327,15 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                 # Log condensed chunk info
                 if hasattr(chunk, 'message_type'):
                     if chunk.message_type == 'reasoning_message':
-                        logger.info(f"🧠 Reasoning: {chunk.reasoning[:100]}...")
+                        logger.info(f"🧠 Reasoning: {chunk.reasoning[:150]}...")
                     elif chunk.message_type == 'tool_call_message':
-                        logger.info(f"🔧 Tool call: {chunk.tool_call.name}({chunk.tool_call.arguments[:50]}...)")
+                        logger.info(f"🔧 Tool call: {chunk.tool_call.name}({chunk.tool_call.arguments[:150]}...)")
                     elif chunk.message_type == 'tool_return_message':
                         logger.info(f"📋 Tool result: {chunk.name} - {chunk.status}")
                     elif chunk.message_type == 'assistant_message':
-                        logger.info(f"💬 Assistant: {chunk.content[:100]}...")
+                        logger.info(f"💬 Assistant: {chunk.content[:150]}...")
                     else:
-                        logger.info(f"📨 {chunk.message_type}: {str(chunk)[:100]}...")
+                        logger.info(f"📨 {chunk.message_type}: {str(chunk)[:150]}...")
                 else:
                     logger.info(f"📦 Stream status: {chunk}")
                 
@@ -400,10 +400,20 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
         logger.debug("Successfully received response from Letta API")
         logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
 
-        # Extract all bluesky_reply tool calls from the agent's response
+        # Extract successful bluesky_reply tool calls from the agent's response
         reply_candidates = []
+        tool_call_results = {}  # Map tool_call_id to status
+        
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
         
+        # First pass: collect tool return statuses
+        for message in message_response.messages:
+            if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
+                if message.name == 'bluesky_reply':
+                    tool_call_results[message.tool_call_id] = message.status
+                    logger.debug(f"Tool result: {message.tool_call_id} -> {message.status}")
+        
+        # Second pass: process messages and check for successful tool calls
         for i, message in enumerate(message_response.messages, 1):
             # Log concise message info instead of full object
             msg_type = getattr(message, 'message_type', 'unknown')
@@ -415,7 +425,8 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
             elif hasattr(message, 'tool_return'):
                 tool_name = getattr(message, 'name', 'unknown_tool')
                 return_preview = str(message.tool_return)[:100] if message.tool_return else "None"
-                logger.debug(f"  {i}. {msg_type}: {tool_name} -> {return_preview}...")
+                status = getattr(message, 'status', 'unknown')
+                logger.debug(f"  {i}. {msg_type}: {tool_name} -> {return_preview}... (status: {status})")
             elif hasattr(message, 'text'):
                 logger.debug(f"  {i}. {msg_type}: {message.text[:100]}...")
             else:
@@ -439,28 +450,36 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                     logger.info("=== BOT TERMINATED BY AGENT ===")
                     exit(0)
             
-            # Collect bluesky_reply tool calls
+            # Collect bluesky_reply tool calls - only if they were successful
             if hasattr(message, 'tool_call') and message.tool_call:
                 if message.tool_call.name == 'bluesky_reply':
-                    try:
-                        args = json.loads(message.tool_call.arguments)
-                        # Handle both old format (message) and new format (messages)
-                        reply_messages = args.get('messages', [])
-                        if not reply_messages:
-                            # Fallback to old format for backward compatibility
-                            old_message = args.get('message', '')
-                            if old_message:
-                                reply_messages = [old_message]
-                        
-                        reply_lang = args.get('lang', 'en-US')
-                        if reply_messages:  # Only add if there's actual content
-                            reply_candidates.append((reply_messages, reply_lang))
-                            if len(reply_messages) == 1:
-                                logger.info(f"Found bluesky_reply candidate: {reply_messages[0][:50]}... (lang: {reply_lang})")
-                            else:
-                                logger.info(f"Found bluesky_reply thread candidate with {len(reply_messages)} messages (lang: {reply_lang})")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse tool call arguments: {e}")
+                    tool_call_id = message.tool_call.tool_call_id
+                    tool_status = tool_call_results.get(tool_call_id, 'unknown')
+                    
+                    if tool_status == 'success':
+                        try:
+                            args = json.loads(message.tool_call.arguments)
+                            # Handle both old format (message) and new format (messages)
+                            reply_messages = args.get('messages', [])
+                            if not reply_messages:
+                                # Fallback to old format for backward compatibility
+                                old_message = args.get('message', '')
+                                if old_message:
+                                    reply_messages = [old_message]
+                            
+                            reply_lang = args.get('lang', 'en-US')
+                            if reply_messages:  # Only add if there's actual content
+                                reply_candidates.append((reply_messages, reply_lang))
+                                if len(reply_messages) == 1:
+                                    logger.info(f"Found successful bluesky_reply candidate: {reply_messages[0][:50]}... (lang: {reply_lang})")
+                                else:
+                                    logger.info(f"Found successful bluesky_reply thread candidate with {len(reply_messages)} messages (lang: {reply_lang})")
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse tool call arguments: {e}")
+                    elif tool_status == 'error':
+                        logger.info(f"⚠️ Skipping failed bluesky_reply tool call (status: error)")
+                    else:
+                        logger.warning(f"⚠️ Skipping bluesky_reply tool call with unknown status: {tool_status}")
 
         if reply_candidates:
             logger.info(f"Found {len(reply_candidates)} bluesky_reply candidates, trying each until one succeeds...")
