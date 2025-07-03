@@ -58,7 +58,7 @@ logging.getLogger("httpx").setLevel(logging.CRITICAL)
 # Create a client with extended timeout for LLM operations
 CLIENT= Letta(
     token=os.environ["LETTA_API_KEY"],
-    timeout=300  # 5 minutes timeout for API calls
+    timeout=600  # 10 minutes timeout for API calls - higher than Cloudflare's 524 timeout
 )
 
 # Use the "Bluesky" project
@@ -313,10 +313,42 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
         logger.info(f"💬 Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users")
 
         try:
-            message_response = CLIENT.agents.messages.create(
-                agent_id = void_agent.id,
-                messages = [{"role":"user", "content": prompt}]
+            # Use streaming to avoid 524 timeout errors
+            message_stream = CLIENT.agents.messages.create_stream(
+                agent_id=void_agent.id,
+                messages=[{"role": "user", "content": prompt}],
+                stream_tokens=False,  # Step streaming only (faster than token streaming)
+                max_steps=100
             )
+            
+            # Collect the streaming response
+            all_messages = []
+            for chunk in message_stream:
+                # Log condensed chunk info
+                if hasattr(chunk, 'message_type'):
+                    if chunk.message_type == 'reasoning_message':
+                        logger.info(f"🧠 Reasoning: {chunk.reasoning[:100]}...")
+                    elif chunk.message_type == 'tool_call_message':
+                        logger.info(f"🔧 Tool call: {chunk.tool_call.name}({chunk.tool_call.arguments[:50]}...)")
+                    elif chunk.message_type == 'tool_return_message':
+                        logger.info(f"📋 Tool result: {chunk.name} - {chunk.status}")
+                    elif chunk.message_type == 'assistant_message':
+                        logger.info(f"💬 Assistant: {chunk.content[:100]}...")
+                    else:
+                        logger.info(f"📨 {chunk.message_type}: {str(chunk)[:100]}...")
+                else:
+                    logger.info(f"📦 Stream status: {chunk}")
+                
+                # Log full chunk for debugging
+                logger.debug(f"Full streaming chunk: {chunk}")
+                all_messages.append(chunk)
+                if str(chunk) == 'done':
+                    break
+            
+            # Convert streaming response to standard format for compatibility
+            message_response = type('StreamingResponse', (), {
+                'messages': [msg for msg in all_messages if hasattr(msg, 'message_type')]
+            })()
         except Exception as api_error:
             import traceback
             error_str = str(api_error)
