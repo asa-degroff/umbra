@@ -186,8 +186,14 @@ def initialize_void():
     return void_agent
 
 
-def process_mention(void_agent, atproto_client, notification_data):
+def process_mention(void_agent, atproto_client, notification_data, queue_filepath=None):
     """Process a mention and generate a reply using the Letta agent.
+    
+    Args:
+        void_agent: The Letta agent instance
+        atproto_client: The AT Protocol client
+        notification_data: The notification data dictionary
+        queue_filepath: Optional Path object to the queue file (for cleanup on halt)
     
     Returns:
         True: Successfully processed, remove from queue
@@ -511,6 +517,16 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                     except:
                         logger.info("Halt reason: <unable to parse>")
                     
+                    # Delete the queue file before terminating
+                    if queue_filepath and queue_filepath.exists():
+                        queue_filepath.unlink()
+                        logger.info(f"✅ Deleted queue file: {queue_filepath.name}")
+                        
+                        # Also mark as processed to avoid reprocessing
+                        processed_uris = load_processed_notifications()
+                        processed_uris.add(notification_data.get('uri', ''))
+                        save_processed_notifications(processed_uris)
+                    
                     # Export agent state before terminating
                     export_agent_state(CLIENT, void_agent)
                     
@@ -731,11 +747,11 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                 # Process based on type using dict data directly
                 success = False
                 if notif_data['reason'] == "mention":
-                    success = process_mention(void_agent, atproto_client, notif_data)
+                    success = process_mention(void_agent, atproto_client, notif_data, queue_filepath=filepath)
                     if success:
                         message_counters['mentions'] += 1
                 elif notif_data['reason'] == "reply":
-                    success = process_mention(void_agent, atproto_client, notif_data)
+                    success = process_mention(void_agent, atproto_client, notif_data, queue_filepath=filepath)
                     if success:
                         message_counters['replies'] += 1
                 elif notif_data['reason'] == "follow":
