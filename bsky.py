@@ -482,50 +482,51 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                         logger.warning(f"⚠️ Skipping bluesky_reply tool call with unknown status: {tool_status}")
 
         if reply_candidates:
-            logger.info(f"Found {len(reply_candidates)} bluesky_reply candidates, trying each until one succeeds...")
+            logger.info(f"Found {len(reply_candidates)} successful bluesky_reply candidates, using only the first one to avoid duplicates")
             
-            for i, (reply_messages, reply_lang) in enumerate(reply_candidates, 1):
-                # Print the generated reply for testing
-                print(f"\n=== GENERATED REPLY {i}/{len(reply_candidates)} ===")
-                print(f"To: @{author_handle}")
-                if len(reply_messages) == 1:
-                    print(f"Reply: {reply_messages[0]}")
-                else:
-                    print(f"Reply thread ({len(reply_messages)} messages):")
-                    for j, msg in enumerate(reply_messages, 1):
-                        print(f"  {j}. {msg}")
-                print(f"Language: {reply_lang}")
-                print(f"======================\n")
-
-                # Send the reply(s) with language
-                if len(reply_messages) == 1:
-                    # Single reply - use existing function
-                    logger.info(f"Trying single reply {i}/{len(reply_candidates)}: {reply_messages[0][:50]}... (lang: {reply_lang})")
-                    response = bsky_utils.reply_to_notification(
-                        client=atproto_client,
-                        notification=notification_data,
-                        reply_text=reply_messages[0],
-                        lang=reply_lang
-                    )
-                else:
-                    # Multiple replies - use new threaded function
-                    logger.info(f"Trying threaded reply {i}/{len(reply_candidates)} with {len(reply_messages)} messages (lang: {reply_lang})")
-                    response = bsky_utils.reply_with_thread_to_notification(
-                        client=atproto_client,
-                        notification=notification_data,
-                        reply_messages=reply_messages,
-                        lang=reply_lang
-                    )
-
-                if response:
-                    logger.info(f"Successfully replied to @{author_handle} with candidate {i}")
-                    return True
-                else:
-                    logger.warning(f"Failed to send reply candidate {i} to @{author_handle}, trying next...")
+            # Only use the first successful reply to avoid sending multiple responses
+            reply_messages, reply_lang = reply_candidates[0]
             
-            # If we get here, all candidates failed
-            logger.error(f"All {len(reply_candidates)} reply candidates failed for @{author_handle}")
-            return False
+            # Print the generated reply for testing
+            print(f"\n=== GENERATED REPLY (FIRST SUCCESSFUL) ===")
+            print(f"To: @{author_handle}")
+            if len(reply_messages) == 1:
+                print(f"Reply: {reply_messages[0]}")
+            else:
+                print(f"Reply thread ({len(reply_messages)} messages):")
+                for j, msg in enumerate(reply_messages, 1):
+                    print(f"  {j}. {msg}")
+            print(f"Language: {reply_lang}")
+            if len(reply_candidates) > 1:
+                print(f"Note: Skipped {len(reply_candidates) - 1} additional successful candidates to avoid duplicates")
+            print(f"======================\n")
+
+            # Send the reply(s) with language
+            if len(reply_messages) == 1:
+                # Single reply - use existing function
+                logger.info(f"Sending single reply: {reply_messages[0][:50]}... (lang: {reply_lang})")
+                response = bsky_utils.reply_to_notification(
+                    client=atproto_client,
+                    notification=notification_data,
+                    reply_text=reply_messages[0],
+                    lang=reply_lang
+                )
+            else:
+                # Multiple replies - use new threaded function
+                logger.info(f"Sending threaded reply with {len(reply_messages)} messages (lang: {reply_lang})")
+                response = bsky_utils.reply_with_thread_to_notification(
+                    client=atproto_client,
+                    notification=notification_data,
+                    reply_messages=reply_messages,
+                    lang=reply_lang
+                )
+
+            if response:
+                logger.info(f"Successfully replied to @{author_handle}")
+                return True
+            else:
+                logger.error(f"Failed to send reply to @{author_handle}")
+                return False
         else:
             logger.warning(f"No bluesky_reply tool calls found for mention from @{author_handle}, removing notification from queue")
             return True
