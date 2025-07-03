@@ -11,6 +11,22 @@ class DetachUserBlocksArgs(BaseModel):
     handles: List[str] = Field(..., description="List of user Bluesky handles (e.g., ['user1.bsky.social', 'user2.bsky.social'])")
 
 
+class UserNoteAppendArgs(BaseModel):
+    handle: str = Field(..., description="User Bluesky handle (e.g., 'cameron.pfiffer.org')")
+    note: str = Field(..., description="Note to append to the user's memory block (e.g., '\\n- Cameron is a person')")
+
+
+class UserNoteReplaceArgs(BaseModel):
+    handle: str = Field(..., description="User Bluesky handle (e.g., 'cameron.pfiffer.org')")
+    old_text: str = Field(..., description="Text to find and replace in the user's memory block")
+    new_text: str = Field(..., description="Text to replace the old_text with")
+
+
+class UserNoteSetArgs(BaseModel):
+    handle: str = Field(..., description="User Bluesky handle (e.g., 'cameron.pfiffer.org')")
+    content: str = Field(..., description="Complete content to set for the user's memory block")
+
+
 
 def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
     """
@@ -138,5 +154,77 @@ def detach_user_blocks(handles: list, agent_state: "AgentState") -> str:
     except Exception as e:
         logger.error(f"Error detaching user blocks: {e}")
         raise Exception(f"Error detaching user blocks: {str(e)}")
+
+
+def user_note_append(handle: str, note: str, agent_state: "AgentState") -> str:
+    """
+    Append a note to a user's memory block. Creates the block if it doesn't exist.
+    
+    Args:
+        handle: User Bluesky handle (e.g., 'cameron.pfiffer.org')
+        note: Note to append to the user's memory block
+        agent_state: The agent state object containing agent information
+        
+    Returns:
+        String confirming the note was appended
+    """
+    import os
+    import logging
+    from letta_client import Letta
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        client = Letta(token=os.environ["LETTA_API_KEY"])
+        
+        # Sanitize handle for block label
+        clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
+        block_label = f"user_{clean_handle}"
+        
+        # Check if block exists
+        blocks = client.blocks.list(label=block_label)
+        
+        if blocks and len(blocks) > 0:
+            # Block exists, append to it
+            block = blocks[0]
+            current_value = block.value
+            new_value = current_value + note
+            
+            # Update the block
+            client.blocks.modify(
+                block_id=str(block.id),
+                value=new_value
+            )
+            logger.info(f"Appended note to existing block: {block_label}")
+            return f"✓ Appended note to {handle}'s memory block"
+            
+        else:
+            # Block doesn't exist, create it with the note
+            initial_value = f"# User: {handle}\n\n{note}"
+            block = client.blocks.create(
+                label=block_label,
+                value=initial_value,
+                limit=5000
+            )
+            logger.info(f"Created new block with note: {block_label}")
+            
+            # Check if block needs to be attached to agent
+            current_blocks = client.agents.blocks.list(agent_id=str(agent_state.id))
+            current_block_labels = {block.label for block in current_blocks}
+            
+            if block_label not in current_block_labels:
+                # Attach the new block to the agent
+                client.agents.blocks.attach(
+                    agent_id=str(agent_state.id),
+                    block_id=str(block.id)
+                )
+                logger.info(f"Attached new block to agent: {block_label}")
+                return f"✓ Created and attached {handle}'s memory block with note"
+            else:
+                return f"✓ Created {handle}'s memory block with note"
+                
+    except Exception as e:
+        logger.error(f"Error appending note to user block: {e}")
+        raise Exception(f"Error appending note to user block: {str(e)}")
 
 

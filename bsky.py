@@ -95,7 +95,7 @@ def export_agent_state(client, agent):
         os.makedirs("agents", exist_ok=True)
         
         # Export agent data
-        logger.info(f"Exporting agent {agent.id}...")
+        logger.info(f"Exporting agent {agent.id}. This takes some time...")
         agent_data = client.agents.export_file(agent_id=agent.id)
         
         # Save timestamped archive copy
@@ -231,10 +231,10 @@ def process_mention(void_agent, atproto_client, notification_data):
                 raise
 
         # Get thread context as YAML string
-        logger.info("Converting thread to YAML string")
+        logger.debug("Converting thread to YAML string")
         try:
             thread_context = thread_to_yaml_string(thread)
-            logger.info(f"Thread context generated, length: {len(thread_context)} characters")
+            logger.debug(f"Thread context generated, length: {len(thread_context)} characters")
             
             # Create a more informative preview by extracting meaningful content
             lines = thread_context.split('\n')
@@ -327,11 +327,79 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                 # Log condensed chunk info
                 if hasattr(chunk, 'message_type'):
                     if chunk.message_type == 'reasoning_message':
-                        logger.info(f"🧠 Reasoning: {chunk.reasoning[:150]}...")
+                        # Show full reasoning without truncation
+                        logger.info(f"🧠 Reasoning: {chunk.reasoning}")
                     elif chunk.message_type == 'tool_call_message':
-                        logger.info(f"🔧 Tool call: {chunk.tool_call.name}({chunk.tool_call.arguments[:150]}...)")
+                        # Parse tool arguments for better display
+                        tool_name = chunk.tool_call.name
+                        try:
+                            args = json.loads(chunk.tool_call.arguments)
+                            # Format based on tool type
+                            if tool_name == 'bluesky_reply':
+                                messages = args.get('messages', [args.get('message', '')])
+                                lang = args.get('lang', 'en-US')
+                                if messages and isinstance(messages, list):
+                                    preview = messages[0][:100] + "..." if len(messages[0]) > 100 else messages[0]
+                                    msg_count = f" ({len(messages)} msgs)" if len(messages) > 1 else ""
+                                    logger.info(f"🔧 Tool call: {tool_name} → \"{preview}\"{msg_count} [lang: {lang}]")
+                                else:
+                                    logger.info(f"🔧 Tool call: {tool_name}({chunk.tool_call.arguments[:150]}...)")
+                            elif tool_name == 'archival_memory_search':
+                                query = args.get('query', 'unknown')
+                                logger.info(f"🔧 Tool call: {tool_name} → query: \"{query}\"")
+                            elif tool_name == 'update_block':
+                                label = args.get('label', 'unknown')
+                                value_preview = str(args.get('value', ''))[:50] + "..." if len(str(args.get('value', ''))) > 50 else str(args.get('value', ''))
+                                logger.info(f"🔧 Tool call: {tool_name} → {label}: \"{value_preview}\"")
+                            else:
+                                # Generic display for other tools
+                                args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                                if len(args_str) > 150:
+                                    args_str = args_str[:150] + "..."
+                                logger.info(f"🔧 Tool call: {tool_name}({args_str})")
+                        except:
+                            # Fallback to original format if parsing fails
+                            logger.info(f"🔧 Tool call: {tool_name}({chunk.tool_call.arguments[:150]}...)")
                     elif chunk.message_type == 'tool_return_message':
-                        logger.info(f"📋 Tool result: {chunk.name} - {chunk.status}")
+                        # Enhanced tool result logging
+                        tool_name = chunk.name
+                        status = chunk.status
+                        
+                        if status == 'success':
+                            # Try to show meaningful result info based on tool type
+                            if hasattr(chunk, 'tool_return') and chunk.tool_return:
+                                result_str = str(chunk.tool_return)
+                                if tool_name == 'archival_memory_search':
+                                    # Count number of results if it looks like a list
+                                    if result_str.startswith('[') and result_str.endswith(']'):
+                                        try:
+                                            results = json.loads(result_str)
+                                            logger.info(f"📋 Tool result: {tool_name} ✓ Found {len(results)} memory entries")
+                                        except:
+                                            logger.info(f"📋 Tool result: {tool_name} ✓ {result_str[:100]}...")
+                                    else:
+                                        logger.info(f"📋 Tool result: {tool_name} ✓ {result_str[:100]}...")
+                                elif tool_name == 'bluesky_reply':
+                                    logger.info(f"📋 Tool result: {tool_name} ✓ Reply posted successfully")
+                                elif tool_name == 'update_block':
+                                    logger.info(f"📋 Tool result: {tool_name} ✓ Memory block updated")
+                                else:
+                                    # Generic success with preview
+                                    preview = result_str[:100] + "..." if len(result_str) > 100 else result_str
+                                    logger.info(f"📋 Tool result: {tool_name} ✓ {preview}")
+                            else:
+                                logger.info(f"📋 Tool result: {tool_name} ✓")
+                        elif status == 'error':
+                            # Show error details
+                            error_preview = ""
+                            if hasattr(chunk, 'tool_return') and chunk.tool_return:
+                                error_str = str(chunk.tool_return)
+                                error_preview = error_str[:100] + "..." if len(error_str) > 100 else error_str
+                                logger.info(f"📋 Tool result: {tool_name} ✗ Error: {error_preview}")
+                            else:
+                                logger.info(f"📋 Tool result: {tool_name} ✗ Error occurred")
+                        else:
+                            logger.info(f"📋 Tool result: {tool_name} - {status}")
                     elif chunk.message_type == 'assistant_message':
                         logger.info(f"💬 Assistant: {chunk.content[:150]}...")
                     else:
