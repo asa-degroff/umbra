@@ -13,7 +13,7 @@ from rich.table import Table
 from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
-from tools.blocks import attach_user_blocks, detach_user_blocks, user_note_append, user_note_replace, user_note_set, AttachUserBlocksArgs, DetachUserBlocksArgs, UserNoteAppendArgs, UserNoteReplaceArgs, UserNoteSetArgs
+from tools.blocks import attach_user_blocks, detach_user_blocks, user_note_append, user_note_replace, user_note_set, user_note_view, AttachUserBlocksArgs, DetachUserBlocksArgs, UserNoteAppendArgs, UserNoteReplaceArgs, UserNoteSetArgs, UserNoteViewArgs
 from tools.reply import bluesky_reply, ReplyArgs
 from tools.halt import halt_activity, HaltArgs
 
@@ -72,6 +72,12 @@ TOOL_CONFIGS = [
         "args_schema": UserNoteSetArgs,
         "description": "Set the complete content of a user's memory block.",
         "tags": ["memory", "blocks", "user", "set"]
+    },
+    {
+        "func": user_note_view,
+        "args_schema": UserNoteViewArgs,
+        "description": "View the content of a user's memory block.",
+        "tags": ["memory", "blocks", "user", "view"]
     },
     {
         "func": bluesky_reply,

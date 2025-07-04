@@ -27,6 +27,10 @@ class UserNoteSetArgs(BaseModel):
     content: str = Field(..., description="Complete content to set for the user's memory block")
 
 
+class UserNoteViewArgs(BaseModel):
+    handle: str = Field(..., description="User Bluesky handle (e.g., 'cameron.pfiffer.org')")
+
+
 
 def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
     """
@@ -348,5 +352,45 @@ def user_note_set(handle: str, content: str, agent_state: "AgentState") -> str:
     except Exception as e:
         logger.error(f"Error setting user block content: {e}")
         raise Exception(f"Error setting user block content: {str(e)}")
+
+
+def user_note_view(handle: str, agent_state: "AgentState") -> str:
+    """
+    View the content of a user's memory block.
+    
+    Args:
+        handle: User Bluesky handle (e.g., 'cameron.pfiffer.org')
+        agent_state: The agent state object containing agent information
+        
+    Returns:
+        String containing the user's memory block content
+    """
+    import os
+    import logging
+    from letta_client import Letta
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        client = Letta(token=os.environ["LETTA_API_KEY"])
+        
+        # Sanitize handle for block label
+        clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
+        block_label = f"user_{clean_handle}"
+        
+        # Check if block exists
+        blocks = client.blocks.list(label=block_label)
+        
+        if not blocks or len(blocks) == 0:
+            return f"No memory block found for user: {handle}"
+            
+        block = blocks[0]
+        logger.info(f"Retrieved content for block: {block_label}")
+        
+        return f"Memory block for {handle}:\n\n{block.value}"
+        
+    except Exception as e:
+        logger.error(f"Error viewing user block: {e}")
+        raise Exception(f"Error viewing user block: {str(e)}")
 
 
