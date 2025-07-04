@@ -13,7 +13,7 @@ from rich.table import Table
 from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
-from tools.blocks import attach_user_blocks, detach_user_blocks, user_note_append, AttachUserBlocksArgs, DetachUserBlocksArgs, UserNoteAppendArgs
+from tools.blocks import attach_user_blocks, detach_user_blocks, user_note_append, user_note_replace, user_note_set, AttachUserBlocksArgs, DetachUserBlocksArgs, UserNoteAppendArgs, UserNoteReplaceArgs, UserNoteSetArgs
 from tools.reply import bluesky_reply, ReplyArgs
 from tools.halt import halt_activity, HaltArgs
 
@@ -60,6 +60,18 @@ TOOL_CONFIGS = [
         "args_schema": UserNoteAppendArgs,
         "description": "Append a note to a user's memory block. Creates the block if it doesn't exist.",
         "tags": ["memory", "blocks", "user", "append"]
+    },
+    {
+        "func": user_note_replace,
+        "args_schema": UserNoteReplaceArgs,
+        "description": "Replace text in a user's memory block.",
+        "tags": ["memory", "blocks", "user", "replace"]
+    },
+    {
+        "func": user_note_set,
+        "args_schema": UserNoteSetArgs,
+        "description": "Set the complete content of a user's memory block.",
+        "tags": ["memory", "blocks", "user", "set"]
     },
     {
         "func": bluesky_reply,

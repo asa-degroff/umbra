@@ -228,3 +228,125 @@ def user_note_append(handle: str, note: str, agent_state: "AgentState") -> str:
         raise Exception(f"Error appending note to user block: {str(e)}")
 
 
+def user_note_replace(handle: str, old_text: str, new_text: str, agent_state: "AgentState") -> str:
+    """
+    Replace text in a user's memory block.
+    
+    Args:
+        handle: User Bluesky handle (e.g., 'cameron.pfiffer.org')
+        old_text: Text to find and replace
+        new_text: Text to replace the old_text with
+        agent_state: The agent state object containing agent information
+        
+    Returns:
+        String confirming the text was replaced
+    """
+    import os
+    import logging
+    from letta_client import Letta
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        client = Letta(token=os.environ["LETTA_API_KEY"])
+        
+        # Sanitize handle for block label
+        clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
+        block_label = f"user_{clean_handle}"
+        
+        # Check if block exists
+        blocks = client.blocks.list(label=block_label)
+        
+        if not blocks or len(blocks) == 0:
+            raise Exception(f"No memory block found for user: {handle}")
+            
+        block = blocks[0]
+        current_value = block.value
+        
+        # Check if old_text exists in the block
+        if old_text not in current_value:
+            raise Exception(f"Text '{old_text}' not found in {handle}'s memory block")
+        
+        # Replace the text
+        new_value = current_value.replace(old_text, new_text)
+        
+        # Update the block
+        client.blocks.modify(
+            block_id=str(block.id),
+            value=new_value
+        )
+        logger.info(f"Replaced text in block: {block_label}")
+        return f"✓ Replaced text in {handle}'s memory block"
+        
+    except Exception as e:
+        logger.error(f"Error replacing text in user block: {e}")
+        raise Exception(f"Error replacing text in user block: {str(e)}")
+
+
+def user_note_set(handle: str, content: str, agent_state: "AgentState") -> str:
+    """
+    Set the complete content of a user's memory block.
+    
+    Args:
+        handle: User Bluesky handle (e.g., 'cameron.pfiffer.org')
+        content: Complete content to set for the memory block
+        agent_state: The agent state object containing agent information
+        
+    Returns:
+        String confirming the content was set
+    """
+    import os
+    import logging
+    from letta_client import Letta
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        client = Letta(token=os.environ["LETTA_API_KEY"])
+        
+        # Sanitize handle for block label
+        clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
+        block_label = f"user_{clean_handle}"
+        
+        # Check if block exists
+        blocks = client.blocks.list(label=block_label)
+        
+        if blocks and len(blocks) > 0:
+            # Block exists, update it
+            block = blocks[0]
+            client.blocks.modify(
+                block_id=str(block.id),
+                value=content
+            )
+            logger.info(f"Set content for existing block: {block_label}")
+            return f"✓ Set content for {handle}'s memory block"
+            
+        else:
+            # Block doesn't exist, create it
+            block = client.blocks.create(
+                label=block_label,
+                value=content,
+                limit=5000
+            )
+            logger.info(f"Created new block with content: {block_label}")
+            
+            # Check if block needs to be attached to agent
+            current_blocks = client.agents.blocks.list(agent_id=str(agent_state.id))
+            current_block_labels = {block.label for block in current_blocks}
+            
+            if block_label not in current_block_labels:
+                # Attach the new block to the agent
+                client.agents.blocks.attach(
+                    agent_id=str(agent_state.id),
+                    block_id=str(block.id)
+                )
+                logger.info(f"Attached new block to agent: {block_label}")
+                return f"✓ Created and attached {handle}'s memory block"
+            else:
+                return f"✓ Created {handle}'s memory block"
+                
+    except Exception as e:
+        logger.error(f"Error setting user block content: {e}")
+        raise Exception(f"Error setting user block content: {str(e)}")
+
+
