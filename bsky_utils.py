@@ -253,6 +253,31 @@ def default_login() -> Client:
 
     return init_client(username, password)
 
+def remove_outside_quotes(text: str) -> str:
+    """
+    Remove outside double quotes from response text.
+    
+    Only handles double quotes to avoid interfering with contractions:
+    - Double quotes: "text" → text
+    - Preserves single quotes and internal quotes
+    
+    Args:
+        text: The text to process
+        
+    Returns:
+        Text with outside double quotes removed
+    """
+    if not text or len(text) < 2:
+        return text
+    
+    text = text.strip()
+    
+    # Only remove double quotes from start and end
+    if text.startswith('"') and text.endswith('"'):
+        return text[1:-1]
+    
+    return text
+
 def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: str, root_uri: Optional[str] = None, root_cid: Optional[str] = None, lang: Optional[str] = None) -> Dict[str, Any]:
     """
     Reply to a post on Bluesky with rich text support.

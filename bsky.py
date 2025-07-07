@@ -588,20 +588,22 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
             # Send the reply(s) with language
             if len(reply_messages) == 1:
                 # Single reply - use existing function
-                logger.info(f"Sending single reply: {reply_messages[0][:50]}... (lang: {reply_lang})")
+                cleaned_text = bsky_utils.remove_outside_quotes(reply_messages[0])
+                logger.info(f"Sending single reply: {cleaned_text[:50]}... (lang: {reply_lang})")
                 response = bsky_utils.reply_to_notification(
                     client=atproto_client,
                     notification=notification_data,
-                    reply_text=reply_messages[0],
+                    reply_text=cleaned_text,
                     lang=reply_lang
                 )
             else:
                 # Multiple replies - use new threaded function
-                logger.info(f"Sending threaded reply with {len(reply_messages)} messages (lang: {reply_lang})")
+                cleaned_messages = [bsky_utils.remove_outside_quotes(msg) for msg in reply_messages]
+                logger.info(f"Sending threaded reply with {len(cleaned_messages)} messages (lang: {reply_lang})")
                 response = bsky_utils.reply_with_thread_to_notification(
                     client=atproto_client,
                     notification=notification_data,
-                    reply_messages=reply_messages,
+                    reply_messages=cleaned_messages,
                     lang=reply_lang
                 )
 
