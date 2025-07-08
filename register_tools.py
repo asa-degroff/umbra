@@ -14,8 +14,8 @@ from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
 from tools.blocks import attach_user_blocks, detach_user_blocks, user_note_append, user_note_replace, user_note_set, user_note_view, AttachUserBlocksArgs, DetachUserBlocksArgs, UserNoteAppendArgs, UserNoteReplaceArgs, UserNoteSetArgs, UserNoteViewArgs
-from tools.reply import bluesky_reply, ReplyArgs
 from tools.halt import halt_activity, HaltArgs
+from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -80,16 +80,16 @@ TOOL_CONFIGS = [
         "tags": ["memory", "blocks", "user", "view"]
     },
     {
-        "func": bluesky_reply,
-        "args_schema": ReplyArgs,
-        "description": "Reply indicator for the Letta agent (1-4 messages, each max 300 chars). Creates threaded replies.",
-        "tags": ["bluesky", "reply", "response"]
-    },
-    {
         "func": halt_activity,
         "args_schema": HaltArgs,
         "description": "Signal to halt all bot activity and terminate bsky.py",
         "tags": ["control", "halt", "terminate"]
+    },
+    {
+        "func": add_post_to_bluesky_reply_thread,
+        "args_schema": ReplyThreadPostArgs,
+        "description": "Add a single post to the current Bluesky reply thread atomically",
+        "tags": ["bluesky", "reply", "thread", "atomic"]
     },
 ]
 
