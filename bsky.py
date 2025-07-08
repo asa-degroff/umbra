@@ -491,11 +491,27 @@ To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times 
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
         
         # First pass: collect tool return statuses
+        ignored_notification = False
+        ignore_reason = ""
+        ignore_category = ""
+        
         for message in message_response.messages:
             if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
                 if message.name == 'add_post_to_bluesky_reply_thread':
                     tool_call_results[message.tool_call_id] = message.status
                     logger.debug(f"Tool result: {message.tool_call_id} -> {message.status}")
+                elif message.name == 'ignore_notification':
+                    # Check if the tool was successful
+                    if hasattr(message, 'tool_return') and message.status == 'success':
+                        # Parse the return value to extract category and reason
+                        result_str = str(message.tool_return)
+                        if 'IGNORED_NOTIFICATION::' in result_str:
+                            parts = result_str.split('::')
+                            if len(parts) >= 3:
+                                ignore_category = parts[1]
+                                ignore_reason = parts[2]
+                                ignored_notification = True
+                                logger.info(f"🚫 Notification ignored - Category: {ignore_category}, Reason: {ignore_reason}")
                 elif message.name == 'bluesky_reply':
                     logger.error("❌ DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
                     logger.error("Please use add_post_to_bluesky_reply_thread instead.")
@@ -584,6 +600,14 @@ To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times 
                     else:
                         logger.warning(f"⚠️ Skipping add_post_to_bluesky_reply_thread tool call with unknown status: {tool_status}")
 
+        # Check for conflicting tool calls
+        if reply_candidates and ignored_notification:
+            logger.error(f"⚠️ CONFLICT: Agent called both add_post_to_bluesky_reply_thread and ignore_notification!")
+            logger.error(f"Reply candidates: {len(reply_candidates)}, Ignore reason: {ignore_reason}")
+            logger.warning("Item will be left in queue for manual review")
+            # Return False to keep in queue
+            return False
+        
         if reply_candidates:
             # Aggregate reply posts into a thread
             reply_messages = []
@@ -642,8 +666,13 @@ To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times 
                 logger.error(f"Failed to send reply to @{author_handle}")
                 return False
         else:
-            logger.warning(f"No add_post_to_bluesky_reply_thread tool calls found for mention from @{author_handle}, moving to no_reply folder")
-            return "no_reply"
+            # Check if notification was explicitly ignored
+            if ignored_notification:
+                logger.info(f"Notification from @{author_handle} was explicitly ignored (category: {ignore_category})")
+                return "ignored"
+            else:
+                logger.warning(f"No add_post_to_bluesky_reply_thread tool calls found for mention from @{author_handle}, moving to no_reply folder")
+                return "no_reply"
 
     except Exception as e:
         logger.error(f"Error processing mention: {e}")
@@ -840,6 +869,16 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     no_reply_path = QUEUE_NO_REPLY_DIR / filepath.name
                     filepath.rename(no_reply_path)
                     logger.info(f"📭 Moved {filepath.name} to no_reply directory")
+                    
+                    # Also mark as processed to avoid retrying
+                    processed_uris = load_processed_notifications()
+                    processed_uris.add(notif_data['uri'])
+                    save_processed_notifications(processed_uris)
+                    
+                elif success == "ignored":  # Special case for explicitly ignored notifications
+                    # For ignored notifications, we just delete them (not move to no_reply)
+                    filepath.unlink()
+                    logger.info(f"🚫 Deleted ignored notification: {filepath.name}")
                     
                     # Also mark as processed to avoid retrying
                     processed_uris = load_processed_notifications()
