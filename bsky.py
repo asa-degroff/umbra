@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 import time
+import argparse
 
 from utils import (
     upsert_block,
@@ -80,6 +81,9 @@ MAX_PROCESSED_NOTIFICATIONS = 10000
 # Message tracking counters
 message_counters = defaultdict(int)
 start_time = time.time()
+
+# Testing mode flag
+TESTING_MODE = False
 
 def export_agent_state(client, agent):
     """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
@@ -186,7 +190,7 @@ def initialize_void():
     return void_agent
 
 
-def process_mention(void_agent, atproto_client, notification_data, queue_filepath=None):
+def process_mention(void_agent, atproto_client, notification_data, queue_filepath=None, testing_mode=False):
     """Process a mention and generate a reply using the Letta agent.
     
     Args:
@@ -474,7 +478,7 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
         logger.debug("Successfully received response from Letta API")
         logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
 
-        # Extract successful bluesky_reply tool calls from the agent's response
+        # Extract successful add_post_to_bluesky_reply_thread tool calls from the agent's response
         reply_candidates = []
         tool_call_results = {}  # Map tool_call_id to status
         
@@ -483,9 +487,17 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
         # First pass: collect tool return statuses
         for message in message_response.messages:
             if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
-                if message.name == 'bluesky_reply':
+                if message.name == 'add_post_to_bluesky_reply_thread':
                     tool_call_results[message.tool_call_id] = message.status
                     logger.debug(f"Tool result: {message.tool_call_id} -> {message.status}")
+                elif message.name == 'bluesky_reply':
+                    logger.error("❌ DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
+                    logger.error("Please use add_post_to_bluesky_reply_thread instead.")
+                    logger.error("Update the agent's tools using register_tools.py")
+                    # Export agent state before terminating
+                    export_agent_state(CLIENT, void_agent)
+                    logger.info("=== BOT TERMINATED DUE TO DEPRECATED TOOL USE ===")
+                    exit(1)
         
         # Second pass: process messages and check for successful tool calls
         for i, message in enumerate(message_response.messages, 1):
@@ -534,45 +546,53 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                     logger.info("=== BOT TERMINATED BY AGENT ===")
                     exit(0)
             
-            # Collect bluesky_reply tool calls - only if they were successful
+            # Check for deprecated bluesky_reply tool
             if hasattr(message, 'tool_call') and message.tool_call:
                 if message.tool_call.name == 'bluesky_reply':
+                    logger.error("❌ DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
+                    logger.error("Please use add_post_to_bluesky_reply_thread instead.")
+                    logger.error("Update the agent's tools using register_tools.py")
+                    # Export agent state before terminating
+                    export_agent_state(CLIENT, void_agent)
+                    logger.info("=== BOT TERMINATED DUE TO DEPRECATED TOOL USE ===")
+                    exit(1)
+                
+                # Collect add_post_to_bluesky_reply_thread tool calls - only if they were successful
+                elif message.tool_call.name == 'add_post_to_bluesky_reply_thread':
                     tool_call_id = message.tool_call.tool_call_id
                     tool_status = tool_call_results.get(tool_call_id, 'unknown')
                     
                     if tool_status == 'success':
                         try:
                             args = json.loads(message.tool_call.arguments)
-                            # Handle both old format (message) and new format (messages)
-                            reply_messages = args.get('messages', [])
-                            if not reply_messages:
-                                # Fallback to old format for backward compatibility
-                                old_message = args.get('message', '')
-                                if old_message:
-                                    reply_messages = [old_message]
-                            
+                            reply_text = args.get('text', '')
                             reply_lang = args.get('lang', 'en-US')
-                            if reply_messages:  # Only add if there's actual content
-                                reply_candidates.append((reply_messages, reply_lang))
-                                if len(reply_messages) == 1:
-                                    logger.info(f"Found successful bluesky_reply candidate: {reply_messages[0][:50]}... (lang: {reply_lang})")
-                                else:
-                                    logger.info(f"Found successful bluesky_reply thread candidate with {len(reply_messages)} messages (lang: {reply_lang})")
+                            
+                            if reply_text:  # Only add if there's actual content
+                                reply_candidates.append((reply_text, reply_lang))
+                                logger.info(f"Found successful add_post_to_bluesky_reply_thread candidate: {reply_text[:50]}... (lang: {reply_lang})")
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to parse tool call arguments: {e}")
                     elif tool_status == 'error':
-                        logger.info(f"⚠️ Skipping failed bluesky_reply tool call (status: error)")
+                        logger.info(f"⚠️ Skipping failed add_post_to_bluesky_reply_thread tool call (status: error)")
                     else:
-                        logger.warning(f"⚠️ Skipping bluesky_reply tool call with unknown status: {tool_status}")
+                        logger.warning(f"⚠️ Skipping add_post_to_bluesky_reply_thread tool call with unknown status: {tool_status}")
 
         if reply_candidates:
-            logger.info(f"Found {len(reply_candidates)} successful bluesky_reply candidates, using only the first one to avoid duplicates")
+            # Aggregate reply posts into a thread
+            reply_messages = []
+            reply_langs = []
+            for text, lang in reply_candidates:
+                reply_messages.append(text)
+                reply_langs.append(lang)
             
-            # Only use the first successful reply to avoid sending multiple responses
-            reply_messages, reply_lang = reply_candidates[0]
+            # Use the first language for the entire thread (could be enhanced later)
+            reply_lang = reply_langs[0] if reply_langs else 'en-US'
+            
+            logger.info(f"Found {len(reply_candidates)} add_post_to_bluesky_reply_thread calls, building thread")
             
             # Print the generated reply for testing
-            print(f"\n=== GENERATED REPLY (FIRST SUCCESSFUL) ===")
+            print(f"\n=== GENERATED REPLY THREAD ===")
             print(f"To: @{author_handle}")
             if len(reply_messages) == 1:
                 print(f"Reply: {reply_messages[0]}")
@@ -581,31 +601,33 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                 for j, msg in enumerate(reply_messages, 1):
                     print(f"  {j}. {msg}")
             print(f"Language: {reply_lang}")
-            if len(reply_candidates) > 1:
-                print(f"Note: Skipped {len(reply_candidates) - 1} additional successful candidates to avoid duplicates")
             print(f"======================\n")
 
-            # Send the reply(s) with language
-            if len(reply_messages) == 1:
-                # Single reply - use existing function
-                cleaned_text = bsky_utils.remove_outside_quotes(reply_messages[0])
-                logger.info(f"Sending single reply: {cleaned_text[:50]}... (lang: {reply_lang})")
-                response = bsky_utils.reply_to_notification(
-                    client=atproto_client,
-                    notification=notification_data,
-                    reply_text=cleaned_text,
-                    lang=reply_lang
-                )
+            # Send the reply(s) with language (unless in testing mode)
+            if testing_mode:
+                logger.info("🧪 TESTING MODE: Skipping actual Bluesky post")
+                response = True  # Simulate success
             else:
-                # Multiple replies - use new threaded function
-                cleaned_messages = [bsky_utils.remove_outside_quotes(msg) for msg in reply_messages]
-                logger.info(f"Sending threaded reply with {len(cleaned_messages)} messages (lang: {reply_lang})")
-                response = bsky_utils.reply_with_thread_to_notification(
-                    client=atproto_client,
-                    notification=notification_data,
-                    reply_messages=cleaned_messages,
-                    lang=reply_lang
-                )
+                if len(reply_messages) == 1:
+                    # Single reply - use existing function
+                    cleaned_text = bsky_utils.remove_outside_quotes(reply_messages[0])
+                    logger.info(f"Sending single reply: {cleaned_text[:50]}... (lang: {reply_lang})")
+                    response = bsky_utils.reply_to_notification(
+                        client=atproto_client,
+                        notification=notification_data,
+                        reply_text=cleaned_text,
+                        lang=reply_lang
+                    )
+                else:
+                    # Multiple replies - use new threaded function
+                    cleaned_messages = [bsky_utils.remove_outside_quotes(msg) for msg in reply_messages]
+                    logger.info(f"Sending threaded reply with {len(cleaned_messages)} messages (lang: {reply_lang})")
+                    response = bsky_utils.reply_with_thread_to_notification(
+                        client=atproto_client,
+                        notification=notification_data,
+                        reply_messages=cleaned_messages,
+                        lang=reply_lang
+                    )
 
             if response:
                 logger.info(f"Successfully replied to @{author_handle}")
@@ -614,8 +636,8 @@ Use the bluesky_reply tool to send a response less than 300 characters."""
                 logger.error(f"Failed to send reply to @{author_handle}")
                 return False
         else:
-            logger.warning(f"No bluesky_reply tool calls found for mention from @{author_handle}, removing notification from queue")
-            return True
+            logger.warning(f"No add_post_to_bluesky_reply_thread tool calls found for mention from @{author_handle}, keeping notification in queue")
+            return False
 
     except Exception as e:
         logger.error(f"Error processing mention: {e}")
@@ -702,10 +724,18 @@ def save_notification_to_queue(notification):
         filename = f"{priority_prefix}{timestamp}_{notification.reason}_{notif_hash}.json"
         filepath = QUEUE_DIR / filename
 
-        # Skip if already exists (duplicate)
-        if filepath.exists():
-            logger.debug(f"Notification already queued: {filename}")
-            return False
+        # Check if this notification URI is already in the queue
+        for existing_file in QUEUE_DIR.glob("*.json"):
+            if existing_file.name == "processed_notifications.json":
+                continue
+            try:
+                with open(existing_file, 'r') as f:
+                    existing_data = json.load(f)
+                    if existing_data.get('uri') == notification.uri:
+                        logger.debug(f"Notification already queued (URI: {notification.uri})")
+                        return False
+            except:
+                continue
 
         # Write to file
         with open(filepath, 'w') as f:
@@ -720,7 +750,7 @@ def save_notification_to_queue(notification):
         return False
 
 
-def load_and_process_queued_notifications(void_agent, atproto_client):
+def load_and_process_queued_notifications(void_agent, atproto_client, testing_mode=False):
     """Load and process all notifications from the queue in priority order."""
     try:
         # Get all JSON files in queue directory (excluding processed_notifications.json)
@@ -749,11 +779,11 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
                 # Process based on type using dict data directly
                 success = False
                 if notif_data['reason'] == "mention":
-                    success = process_mention(void_agent, atproto_client, notif_data, queue_filepath=filepath)
+                    success = process_mention(void_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     if success:
                         message_counters['mentions'] += 1
                 elif notif_data['reason'] == "reply":
-                    success = process_mention(void_agent, atproto_client, notif_data, queue_filepath=filepath)
+                    success = process_mention(void_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     if success:
                         message_counters['replies'] += 1
                 elif notif_data['reason'] == "follow":
@@ -779,13 +809,16 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
 
                 # Handle file based on processing result
                 if success:
-                    filepath.unlink()
-                    logger.info(f"✅ Successfully processed and removed: {filepath.name}")
-                    
-                    # Mark as processed to avoid reprocessing
-                    processed_uris = load_processed_notifications()
-                    processed_uris.add(notif_data['uri'])
-                    save_processed_notifications(processed_uris)
+                    if testing_mode:
+                        logger.info(f"🧪 TESTING MODE: Keeping queue file: {filepath.name}")
+                    else:
+                        filepath.unlink()
+                        logger.info(f"✅ Successfully processed and removed: {filepath.name}")
+                        
+                        # Mark as processed to avoid reprocessing
+                        processed_uris = load_processed_notifications()
+                        processed_uris.add(notif_data['uri'])
+                        save_processed_notifications(processed_uris)
                     
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name
@@ -808,7 +841,7 @@ def load_and_process_queued_notifications(void_agent, atproto_client):
         logger.error(f"Error loading queued notifications: {e}")
 
 
-def process_notifications(void_agent, atproto_client):
+def process_notifications(void_agent, atproto_client, testing_mode=False):
     """Fetch new notifications, queue them, and process the queue."""
     try:
         # Get current time for marking notifications as seen
@@ -882,21 +915,38 @@ def process_notifications(void_agent, atproto_client):
                 if save_notification_to_queue(notification):
                     new_count += 1
 
-        # Mark all notifications as seen immediately after queuing
-        if new_count > 0:
-            atproto_client.app.bsky.notification.update_seen({'seen_at': last_seen_at})
-            logger.info(f"Queued {new_count} new notifications and marked as seen")
+        # Mark all notifications as seen immediately after queuing (unless in testing mode)
+        if testing_mode:
+            logger.info("🧪 TESTING MODE: Skipping marking notifications as seen")
         else:
-            logger.debug("No new notifications to queue")
+            if new_count > 0:
+                atproto_client.app.bsky.notification.update_seen({'seen_at': last_seen_at})
+                logger.info(f"Queued {new_count} new notifications and marked as seen")
+            else:
+                logger.debug("No new notifications to queue")
 
         # Now process the entire queue (old + new notifications)
-        load_and_process_queued_notifications(void_agent, atproto_client)
+        load_and_process_queued_notifications(void_agent, atproto_client, testing_mode)
 
     except Exception as e:
         logger.error(f"Error processing notifications: {e}")
 
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Void Bot - Bluesky autonomous agent')
+    parser.add_argument('--test', action='store_true', help='Run in testing mode (no messages sent, queue files preserved)')
+    args = parser.parse_args()
+    
+    global TESTING_MODE
+    TESTING_MODE = args.test
+    
+    if TESTING_MODE:
+        logger.info("🧪 === RUNNING IN TESTING MODE ===")
+        logger.info("   - No messages will be sent to Bluesky")
+        logger.info("   - Queue files will not be deleted")
+        logger.info("   - Notifications will not be marked as seen")
+        print("\n")
     """Main bot loop that continuously monitors for notifications."""
     global start_time
     start_time = time.time()
@@ -925,7 +975,7 @@ def main():
     while True:
         try:
             cycle_count += 1
-            process_notifications(void_agent, atproto_client)
+            process_notifications(void_agent, atproto_client, TESTING_MODE)
             # Log cycle completion with stats
             elapsed_time = time.time() - start_time
             total_messages = sum(message_counters.values())
