@@ -73,6 +73,8 @@ QUEUE_DIR = Path("queue")
 QUEUE_DIR.mkdir(exist_ok=True)
 QUEUE_ERROR_DIR = Path("queue/errors")
 QUEUE_ERROR_DIR.mkdir(exist_ok=True, parents=True)
+QUEUE_NO_REPLY_DIR = Path("queue/no_reply")
+QUEUE_NO_REPLY_DIR.mkdir(exist_ok=True, parents=True)
 PROCESSED_NOTIFICATIONS_FILE = Path("queue/processed_notifications.json")
 
 # Maximum number of processed notifications to track
@@ -203,6 +205,7 @@ def process_mention(void_agent, atproto_client, notification_data, queue_filepat
         True: Successfully processed, remove from queue
         False: Failed but retryable, keep in queue
         None: Failed with non-retryable error, move to errors directory
+        "no_reply": No reply was generated, move to no_reply directory
     """
     try:
         logger.debug(f"Starting process_mention with notification_data type: {type(notification_data)}")
@@ -639,8 +642,8 @@ To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times 
                 logger.error(f"Failed to send reply to @{author_handle}")
                 return False
         else:
-            logger.warning(f"No add_post_to_bluesky_reply_thread tool calls found for mention from @{author_handle}, keeping notification in queue")
-            return False
+            logger.warning(f"No add_post_to_bluesky_reply_thread tool calls found for mention from @{author_handle}, moving to no_reply folder")
+            return "no_reply"
 
     except Exception as e:
         logger.error(f"Error processing mention: {e}")
@@ -827,6 +830,16 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     error_path = QUEUE_ERROR_DIR / filepath.name
                     filepath.rename(error_path)
                     logger.warning(f"❌ Moved {filepath.name} to errors directory")
+                    
+                    # Also mark as processed to avoid retrying
+                    processed_uris = load_processed_notifications()
+                    processed_uris.add(notif_data['uri'])
+                    save_processed_notifications(processed_uris)
+                    
+                elif success == "no_reply":  # Special case for moving to no_reply directory
+                    no_reply_path = QUEUE_NO_REPLY_DIR / filepath.name
+                    filepath.rename(no_reply_path)
+                    logger.info(f"📭 Moved {filepath.name} to no_reply directory")
                     
                     # Also mark as processed to avoid retrying
                     processed_uris = load_processed_notifications()
