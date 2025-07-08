@@ -290,7 +290,10 @@ FULL THREAD CONTEXT:
 
 The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow.
 
-Use the bluesky_reply tool to send a response less than 300 characters."""
+To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times to create a threaded reply:
+- Each call adds one post to the reply thread (max 300 characters per post)
+- Use multiple calls to build longer responses across several posts
+- Example: First call for opening thought, second call for elaboration, etc."""
 
         # Extract all handles from notification and thread data
         all_handles = set()
