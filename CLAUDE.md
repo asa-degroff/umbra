@@ -41,6 +41,30 @@ ac && python create_profile_researcher.py
 ac && python attach_user_block.py
 ```
 
+### Queue Management
+```bash
+# View queue statistics
+python queue_manager.py stats
+
+# List all notifications in queue
+python queue_manager.py list
+
+# List notifications including errors and no_reply folders
+python queue_manager.py list --all
+
+# Filter notifications by handle
+python queue_manager.py list --handle "example.bsky.social"
+
+# Delete all notifications from a specific handle (dry run)
+python queue_manager.py delete @example.bsky.social --dry-run
+
+# Delete all notifications from a specific handle (actual deletion)
+python queue_manager.py delete @example.bsky.social
+
+# Delete all notifications from a specific handle (skip confirmation)
+python queue_manager.py delete @example.bsky.social --force
+```
+
 ## Architecture Overview
 
 ### Core Components
