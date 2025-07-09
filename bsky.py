@@ -87,14 +87,20 @@ start_time = time.time()
 # Testing mode flag
 TESTING_MODE = False
 
-def export_agent_state(client, agent):
+# Skip git operations flag
+SKIP_GIT = False
+
+def export_agent_state(client, agent, skip_git=False):
     """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
     try:
-        # Confirm export with user
-        response = input("Export agent state to files and stage with git? (y/n): ").lower().strip()
-        if response not in ['y', 'yes']:
-            logger.info("Agent export cancelled by user.")
-            return
+        # Confirm export with user unless git is being skipped
+        if not skip_git:
+            response = input("Export agent state to files and stage with git? (y/n): ").lower().strip()
+            if response not in ['y', 'yes']:
+                logger.info("Agent export cancelled by user.")
+                return
+        else:
+            logger.info("Exporting agent state (git staging disabled)")
         
         # Create directories if they don't exist
         os.makedirs("agent_archive", exist_ok=True)
@@ -117,12 +123,13 @@ def export_agent_state(client, agent):
         
         logger.info(f"✅ Agent exported to {archive_file} and {current_file}")
         
-        # Git add only the current agent file (archive is ignored)
-        try:
-            subprocess.run(["git", "add", current_file], check=True, capture_output=True)
-            logger.info("Added current agent file to git staging")
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to git add agent file: {e}")
+        # Git add only the current agent file (archive is ignored) unless skip_git is True
+        if not skip_git:
+            try:
+                subprocess.run(["git", "add", current_file], check=True, capture_output=True)
+                logger.info("Added current agent file to git staging")
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Failed to git add agent file: {e}")
         
     except Exception as e:
         logger.error(f"Failed to export agent: {e}")
@@ -176,7 +183,7 @@ def initialize_void():
     
     # Export agent state
     logger.info("Exporting agent state...")
-    export_agent_state(CLIENT, void_agent)
+    export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
     
     # Log agent details
     logger.info(f"Void agent details - ID: {void_agent.id}")
@@ -517,7 +524,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times 
                     logger.error("Please use add_post_to_bluesky_reply_thread instead.")
                     logger.error("Update the agent's tools using register_tools.py")
                     # Export agent state before terminating
-                    export_agent_state(CLIENT, void_agent)
+                    export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
                     logger.info("=== BOT TERMINATED DUE TO DEPRECATED TOOL USE ===")
                     exit(1)
         
@@ -562,7 +569,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times 
                         save_processed_notifications(processed_uris)
                     
                     # Export agent state before terminating
-                    export_agent_state(CLIENT, void_agent)
+                    export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
                     
                     # Exit the program
                     logger.info("=== BOT TERMINATED BY AGENT ===")
@@ -575,7 +582,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times 
                     logger.error("Please use add_post_to_bluesky_reply_thread instead.")
                     logger.error("Update the agent's tools using register_tools.py")
                     # Export agent state before terminating
-                    export_agent_state(CLIENT, void_agent)
+                    export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
                     logger.info("=== BOT TERMINATED DUE TO DEPRECATED TOOL USE ===")
                     exit(1)
                 
@@ -991,10 +998,15 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Void Bot - Bluesky autonomous agent')
     parser.add_argument('--test', action='store_true', help='Run in testing mode (no messages sent, queue files preserved)')
+    parser.add_argument('--no-git', action='store_true', help='Skip git operations when exporting agent state')
     args = parser.parse_args()
     
     global TESTING_MODE
     TESTING_MODE = args.test
+    
+    # Store no-git flag globally for use in export_agent_state calls
+    global SKIP_GIT
+    SKIP_GIT = args.no_git
     
     if TESTING_MODE:
         logger.info("🧪 === RUNNING IN TESTING MODE ===")

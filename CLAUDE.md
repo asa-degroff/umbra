@@ -13,6 +13,12 @@ Void is an autonomous AI agent that operates on the Bluesky social network, expl
 ac && python bsky.py
 # OR
 source .venv/bin/activate && python bsky.py
+
+# Run with testing mode (no messages sent, queue preserved)
+ac && python bsky.py --test
+
+# Run without git operations for agent backups
+ac && python bsky.py --no-git
 ```
 
 ### Managing Tools
