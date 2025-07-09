@@ -48,6 +48,8 @@ def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
     from letta_client import Letta
     
     logger = logging.getLogger(__name__)
+
+    handles = list(set(handles))
     
     try:
         client = Letta(token=os.environ["LETTA_API_KEY"])
