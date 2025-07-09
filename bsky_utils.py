@@ -466,12 +466,12 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str, la
 
 def reply_with_thread_to_notification(client: Client, notification: Any, reply_messages: List[str], lang: str = "en-US") -> Optional[List[Dict[str, Any]]]:
     """
-    Reply to a notification with a threaded chain of messages (max 4).
+    Reply to a notification with a threaded chain of messages (max 15).
 
     Args:
         client: Authenticated Bluesky client
         notification: The notification object from list_notifications
-        reply_messages: List of reply texts (max 4 messages, each max 300 chars)
+        reply_messages: List of reply texts (max 15 messages, each max 300 chars)
         lang: Language code for the posts (defaults to "en-US")
 
     Returns:
@@ -482,8 +482,8 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         if not reply_messages or len(reply_messages) == 0:
             logger.error("Reply messages list cannot be empty")
             return None
-        if len(reply_messages) > 4:
-            logger.error(f"Cannot send more than 4 reply messages (got {len(reply_messages)})")
+        if len(reply_messages) > 15:
+            logger.error(f"Cannot send more than 15 reply messages (got {len(reply_messages)})")
             return None
         
         # Get the post URI and CID from the notification (handle both dict and object)
