@@ -300,10 +300,14 @@ FULL THREAD CONTEXT:
 
 The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow.
 
-To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times to create a threaded reply:
-- Each call adds one post to the reply thread (max 300 characters per post)
-- Use multiple calls to build longer responses across several posts
-- Example: First call for opening thought, second call for elaboration, etc."""
+To reply, use the add_post_to_bluesky_reply_thread tool:
+- Each call creates one post (max 300 characters)
+- For most responses, a single call is sufficient
+- Only use multiple calls for threaded replies when:
+  * The topic requires extended explanation that cannot fit in 300 characters
+  * You're explicitly asked for a detailed/long response
+  * The conversation naturally benefits from a structured multi-part answer
+- Avoid unnecessary threads - be concise when possible"""
 
         # Extract all handles from notification and thread data
         all_handles = set()
