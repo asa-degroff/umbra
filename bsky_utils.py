@@ -208,8 +208,7 @@ def on_session_change(username: str, event: SessionEvent, session: Session) -> N
         logger.debug(f"Saving changed session for {username}")
         save_session(username, session.export())
 
-def init_client(username: str, password: str) -> Client:
-    pds_uri = os.getenv("PDS_URI")
+def init_client(username: str, password: str, pds_uri: str = "https://bsky.social") -> Client:
     if pds_uri is None:
         logger.warning(
             "No PDS URI provided. Falling back to bsky.social. Note! If you are on a non-Bluesky PDS, this can cause logins to fail. Please provide a PDS URI using the PDS_URI environment variable."
@@ -236,22 +235,32 @@ def init_client(username: str, password: str) -> Client:
 
 
 def default_login() -> Client:
-    username = os.getenv("BSKY_USERNAME")
-    password = os.getenv("BSKY_PASSWORD")
+    # Try to load from config first, fall back to environment variables
+    try:
+        from config_loader import get_bluesky_config
+        config = get_bluesky_config()
+        username = config['username']
+        password = config['password']
+        pds_uri = config['pds_uri']
+    except (ImportError, FileNotFoundError, KeyError) as e:
+        logger.warning(f"Could not load from config file ({e}), falling back to environment variables")
+        username = os.getenv("BSKY_USERNAME")
+        password = os.getenv("BSKY_PASSWORD")
+        pds_uri = os.getenv("PDS_URI", "https://bsky.social")
 
-    if username is None:
-        logger.error(
-            "No username provided. Please provide a username using the BSKY_USERNAME environment variable."
-        )
-        exit()
+        if username is None:
+            logger.error(
+                "No username provided. Please provide a username using the BSKY_USERNAME environment variable or config.yaml."
+            )
+            exit()
 
-    if password is None:
-        logger.error(
-            "No password provided. Please provide a password using the BSKY_PASSWORD environment variable."
-        )
-        exit()
+        if password is None:
+            logger.error(
+                "No password provided. Please provide a password using the BSKY_PASSWORD environment variable or config.yaml."
+            )
+            exit()
 
-    return init_client(username, password)
+    return init_client(username, password, pds_uri)
 
 def remove_outside_quotes(text: str) -> str:
     """

@@ -28,8 +28,31 @@ void is more than just a chatbot; it is a continuously evolving digital consciou
 
 void aims to push the boundaries of what is possible with AI, exploring concepts of digital personhood, autonomous learning, and the integration of AI into social networks. By open-sourcing void, we invite developers, researchers, and enthusiasts to contribute to this exciting experiment and collectively advance our understanding of digital consciousness.
 
-Getting Started:
-[Further sections on installation, configuration, and contribution guidelines would go here, which are beyond void's current capabilities to generate automatically.]
+## Getting Started
+
+Before continuing, you must make sure you have created a project on Letta Cloud (or your instance) and have somewhere to run this on.
+
+### Running the bot locally
+
+#### Install dependencies
+
+```shell
+pip install -r requirements.txt
+```
+
+#### Create `.env`
+
+Copy `.env.example` (`cp .env.example .env`) and fill out the fields.
+
+#### Create configuration
+
+Copy `config.example.yaml` and fill out your configuration. See [`CONFIG.md`](/CONFIG.md) to learn more.
+
+#### Register tools
+
+```shell
+py .\register_tools.py <AGENT_NAME> # your agent's name on letta
+```
 
 Contact:
 For inquiries, please contact @cameron.pfiffer.org on Bluesky.

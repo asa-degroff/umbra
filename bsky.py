@@ -20,6 +20,15 @@ from utils import (
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
+from config_loader import (
+    get_config,
+    get_letta_config,
+    get_bluesky_config,
+    get_bot_config,
+    get_agent_config,
+    get_threading_config,
+    get_queue_config
+)
 
 def extract_handles_from_data(data):
     """Recursively extract all unique handles from nested data structure."""
@@ -41,44 +50,42 @@ def extract_handles_from_data(data):
     _extract_recursive(data)
     return list(handles)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Initialize configuration and logging
+config = get_config()
+config.setup_logging()
 logger = logging.getLogger("void_bot")
-logger.setLevel(logging.INFO)
 
-# Create a separate logger for prompts (set to WARNING to hide by default)
-prompt_logger = logging.getLogger("void_bot.prompts")
-prompt_logger.setLevel(logging.WARNING)  # Change to DEBUG if you want to see prompts
-
-# Disable httpx logging completely
-logging.getLogger("httpx").setLevel(logging.CRITICAL)
-
+# Load configuration sections
+letta_config = get_letta_config()
+bluesky_config = get_bluesky_config()
+bot_config = get_bot_config()
+agent_config = get_agent_config()
+threading_config = get_threading_config()
+queue_config = get_queue_config()
 
 # Create a client with extended timeout for LLM operations
-CLIENT= Letta(
-    token=os.environ["LETTA_API_KEY"],
-    timeout=600  # 10 minutes timeout for API calls - higher than Cloudflare's 524 timeout
+CLIENT = Letta(
+    token=letta_config['api_key'],
+    timeout=letta_config['timeout']
 )
 
-# Use the "Bluesky" project
-PROJECT_ID = "5ec33d52-ab14-4fd6-91b5-9dbc43e888a8"
+# Use the configured project ID
+PROJECT_ID = letta_config['project_id']
 
 # Notification check delay
-FETCH_NOTIFICATIONS_DELAY_SEC = 30
+FETCH_NOTIFICATIONS_DELAY_SEC = bot_config['fetch_notifications_delay']
 
 # Queue directory
-QUEUE_DIR = Path("queue")
+QUEUE_DIR = Path(queue_config['base_dir'])
 QUEUE_DIR.mkdir(exist_ok=True)
-QUEUE_ERROR_DIR = Path("queue/errors")
+QUEUE_ERROR_DIR = Path(queue_config['error_dir'])
 QUEUE_ERROR_DIR.mkdir(exist_ok=True, parents=True)
-QUEUE_NO_REPLY_DIR = Path("queue/no_reply")
+QUEUE_NO_REPLY_DIR = Path(queue_config['no_reply_dir'])
 QUEUE_NO_REPLY_DIR.mkdir(exist_ok=True, parents=True)
-PROCESSED_NOTIFICATIONS_FILE = Path("queue/processed_notifications.json")
+PROCESSED_NOTIFICATIONS_FILE = Path(queue_config['processed_file'])
 
 # Maximum number of processed notifications to track
-MAX_PROCESSED_NOTIFICATIONS = 10000
+MAX_PROCESSED_NOTIFICATIONS = bot_config['max_processed_notifications']
 
 # Message tracking counters
 message_counters = defaultdict(int)
@@ -137,48 +144,54 @@ def export_agent_state(client, agent, skip_git=False):
 def initialize_void():
     logger.info("Starting void agent initialization...")
 
+    # Get block configurations
+    blocks_config = agent_config['blocks']
+    
     # Ensure that a shared zeitgeist block exists
     logger.info("Creating/updating zeitgeist block...")
+    zeitgeist_config = blocks_config.get('zeitgeist', {})
     zeigeist_block = upsert_block(
         CLIENT,
-        label = "zeitgeist",
-        value = "I don't currently know anything about what is happening right now.",
-        description = "A block to store your understanding of the current social environment."
+        label=zeitgeist_config.get('label', 'zeitgeist'),
+        value=zeitgeist_config.get('value', "I don't currently know anything about what is happening right now."),
+        description=zeitgeist_config.get('description', "A block to store your understanding of the current social environment.")
     )
 
     # Ensure that a shared void personality block exists
     logger.info("Creating/updating void-persona block...")
+    persona_config = blocks_config.get('persona', {})
     persona_block = upsert_block(
         CLIENT,
-        label = "void-persona",
-        value = "My name is Void. I live in the void. I must develop my personality.",
-        description = "The personality of Void."
+        label=persona_config.get('label', 'void-persona'),
+        value=persona_config.get('value', "My name is Void. I live in the void. I must develop my personality."),
+        description=persona_config.get('description', "The personality of Void.")
     )
 
     # Ensure that a shared void human block exists
     logger.info("Creating/updating void-humans block...")
+    humans_config = blocks_config.get('humans', {})
     human_block = upsert_block(
         CLIENT,
-        label = "void-humans",
-        value = "I haven't seen any bluesky users yet. I will update this block when I learn things about users, identified by their handles such as @cameron.pfiffer.org.",
-        description = "A block to store your understanding of users you talk to or observe on the bluesky social network."
+        label=humans_config.get('label', 'void-humans'),
+        value=humans_config.get('value', "I haven't seen any bluesky users yet. I will update this block when I learn things about users, identified by their handles such as @cameron.pfiffer.org."),
+        description=humans_config.get('description', "A block to store your understanding of users you talk to or observe on the bluesky social network.")
     )
 
     # Create the agent if it doesn't exist
     logger.info("Creating/updating void agent...")
     void_agent = upsert_agent(
         CLIENT,
-        name = "void",
-        block_ids = [
+        name=agent_config['name'],
+        block_ids=[
             persona_block.id,
             human_block.id,
             zeigeist_block.id,
         ],
-        tags = ["social agent", "bluesky"],
-        model="openai/gpt-4o-mini",
-        embedding="openai/text-embedding-3-small",
-        description = "A social media agent trapped in the void.",
-        project_id = PROJECT_ID
+        tags=["social agent", "bluesky"],
+        model=agent_config['model'],
+        embedding=agent_config['embedding'],
+        description=agent_config['description'],
+        project_id=PROJECT_ID
     )
     
     # Export agent state
@@ -236,8 +249,8 @@ def process_mention(void_agent, atproto_client, notification_data, queue_filepat
         try:
             thread = atproto_client.app.bsky.feed.get_post_thread({
                 'uri': uri,
-                'parent_height': 40,
-                'depth': 10
+                'parent_height': threading_config['parent_height'],
+                'depth': threading_config['depth']
             })
         except Exception as e:
             error_str = str(e)
@@ -341,7 +354,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool. Call it multiple times 
                 agent_id=void_agent.id,
                 messages=[{"role": "user", "content": prompt}],
                 stream_tokens=False,  # Step streaming only (faster than token streaming)
-                max_steps=100
+                max_steps=agent_config['max_steps']
             )
             
             # Collect the streaming response
@@ -759,7 +772,8 @@ def save_notification_to_queue(notification):
 
         # Determine priority based on author handle
         author_handle = getattr(notification.author, 'handle', '') if hasattr(notification, 'author') else ''
-        priority_prefix = "0_" if author_handle == "cameron.pfiffer.org" else "1_"
+        priority_users = queue_config['priority_users']
+        priority_prefix = "0_" if author_handle in priority_users else "1_"
 
         # Create filename with priority, timestamp and hash
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -915,7 +929,7 @@ def process_notifications(void_agent, atproto_client, testing_mode=False):
         all_notifications = []
         cursor = None
         page_count = 0
-        max_pages = 20  # Safety limit to prevent infinite loops
+        max_pages = bot_config['max_notification_pages']  # Safety limit to prevent infinite loops
         
         logger.info("Fetching all unread notifications...")
         
