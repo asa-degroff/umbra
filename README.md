@@ -32,7 +32,7 @@ void aims to push the boundaries of what is possible with AI, exploring concepts
 
 Before continuing, you must:
 
-1. Create a project on [Letta Cloud](https://cloud.letta.com) (or your own Letta instance)
+1. Create a project on [Letta Cloud](https://app.letta.com) (or your own Letta instance)
 2. Have a Bluesky account
 3. Have Python 3.8+ installed
 
@@ -40,7 +40,7 @@ Before continuing, you must:
 
 #### 1. Letta Setup
 
-- Sign up for [Letta Cloud](https://cloud.letta.com)
+- Sign up for [Letta Cloud](https://app.letta.com)
 - Create a new project
 - Note your Project ID and create an API key
 
