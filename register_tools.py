@@ -4,10 +4,10 @@ import os
 import sys
 import logging
 from typing import List
-from dotenv import load_dotenv
 from letta_client import Letta
 from rich.console import Console
 from rich.table import Table
+from config_loader import get_config, get_letta_config, get_agent_config
 
 # Import standalone functions and their schemas
 from tools.search import search_bluesky_posts, SearchArgs
@@ -18,7 +18,9 @@ from tools.halt import halt_activity, HaltArgs
 from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
 
-load_dotenv()
+config = get_config()
+letta_config = get_letta_config()
+agent_config = get_agent_config()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 console = Console()
@@ -101,16 +103,20 @@ TOOL_CONFIGS = [
 ]
 
 
-def register_tools(agent_name: str = "void", tools: List[str] = None):
+def register_tools(agent_name: str = None, tools: List[str] = None):
     """Register tools with a Letta agent.
 
     Args:
-        agent_name: Name of the agent to attach tools to
+        agent_name: Name of the agent to attach tools to. If None, uses config default.
         tools: List of tool names to register. If None, registers all tools.
     """
+    # Use agent name from config if not provided
+    if agent_name is None:
+        agent_name = agent_config['name']
+    
     try:
-        # Initialize Letta client with API key
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Initialize Letta client with API key from config
+        client = Letta(token=letta_config['api_key'])
 
         # Find the agent
         agents = client.agents.list()
@@ -201,7 +207,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Register Void tools with a Letta agent")
-    parser.add_argument("agent", nargs="?", default="void", help="Agent name (default: void)")
+    parser.add_argument("agent", nargs="?", default=None, help=f"Agent name (default: {agent_config['name']})")
     parser.add_argument("--tools", nargs="+", help="Specific tools to register (default: all)")
     parser.add_argument("--list", action="store_true", help="List available tools")
 
@@ -210,5 +216,7 @@ if __name__ == "__main__":
     if args.list:
         list_available_tools()
     else:
-        console.print(f"\n[bold]Registering tools for agent: {args.agent}[/bold]\n")
+        # Use config default if no agent specified
+        agent_name = args.agent if args.agent is not None else agent_config['name']
+        console.print(f"\n[bold]Registering tools for agent: {agent_name}[/bold]\n")
         register_tools(args.agent, args.tools)
