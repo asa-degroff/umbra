@@ -1,4 +1,8 @@
 from rich import print # pretty printing tools
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.text import Text
 from time import sleep
 from letta_client import Letta
 from bsky_utils import thread_to_yaml_string
@@ -41,19 +45,30 @@ def extract_handles_from_data(data):
     _extract_recursive(data)
     return list(handles)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("void_bot")
-logger.setLevel(logging.INFO)
+# Logging will be configured after argument parsing
+logger = None
+prompt_logger = None
+console = None
+USE_RICH = False
+SHOW_REASONING = False
+last_archival_query = "archival memory search"
 
-# Create a separate logger for prompts (set to WARNING to hide by default)
-prompt_logger = logging.getLogger("void_bot.prompts")
-prompt_logger.setLevel(logging.WARNING)  # Change to DEBUG if you want to see prompts
-
-# Disable httpx logging completely
-logging.getLogger("httpx").setLevel(logging.CRITICAL)
+def log_with_panel(message, title=None, border_color="white"):
+    """Log a message with Rich panel if USE_RICH is enabled, otherwise use regular logger"""
+    if USE_RICH and console:
+        if title:
+            panel = Panel(
+                message,
+                title=title,
+                title_align="left",
+                border_style=border_color,
+                padding=(0, 1)
+            )
+            console.print(panel)
+        else:
+            console.print(message)
+    else:
+        logger.info(message)
 
 
 # Create a client with extended timeout for LLM operations
@@ -67,6 +82,9 @@ PROJECT_ID = "5ec33d52-ab14-4fd6-91b5-9dbc43e888a8"
 
 # Notification check delay
 FETCH_NOTIFICATIONS_DELAY_SEC = 30
+
+# Check for new notifications every N queue items
+CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS = 5
 
 # Queue directory
 QUEUE_DIR = Path("queue")
@@ -121,7 +139,7 @@ def export_agent_state(client, agent, skip_git=False):
         with open(current_file, 'w', encoding='utf-8') as f:
             json.dump(agent_data, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"✅ Agent exported to {archive_file} and {current_file}")
+        logger.info(f"Agent exported to {archive_file} and {current_file}")
         
         # Git add only the current agent file (archive is ignored) unless skip_git is True
         if not skip_git:
@@ -230,7 +248,7 @@ def process_mention(void_agent, atproto_client, notification_data, queue_filepat
             author_handle = notification_data.author.handle
             author_name = notification_data.author.display_name or author_handle
         
-        logger.info(f"Extracted data - URI: {uri}, Author: @{author_handle}, Text: {mention_text[:50]}...")
+        logger.debug(f"Extracted data - URI: {uri}, Author: @{author_handle}, Text: {mention_text[:50]}...")
 
         # Retrieve the entire thread associated with the mention
         try:
@@ -330,14 +348,30 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 # Continue without user blocks rather than failing completely
 
         # Get response from Letta agent
-        logger.info(f"Mention from @{author_handle}: {mention_text}")
+        if USE_RICH:
+            # Create and print Rich panel directly
+            mention_panel = Panel(
+                mention_text,
+                title=f"MENTION FROM @{author_handle}",
+                title_align="left",
+                border_style="cyan",
+                padding=(0, 1)
+            )
+            console.print(mention_panel)
+        else:
+            # Simple text format when Rich is disabled
+            print(f"\n{'='*60}")
+            print(f"MENTION FROM @{author_handle}")
+            print('='*60)
+            print(f"{mention_text}")
+            print('='*60 + "\n")
         
         # Log prompt details to separate logger
         prompt_logger.debug(f"Full prompt being sent:\n{prompt}")
         
         # Log concise prompt info to main logger
         thread_handles_count = len(unique_handles)
-        logger.info(f"💬 Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users")
+        logger.debug(f"Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users")
 
         try:
             # Use streaming to avoid 524 timeout errors
@@ -355,7 +389,36 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 if hasattr(chunk, 'message_type'):
                     if chunk.message_type == 'reasoning_message':
                         # Show full reasoning without truncation
-                        logger.info(f"🧠 Reasoning: {chunk.reasoning}")
+                        if SHOW_REASONING and USE_RICH:
+                            # Create and print Rich panel for reasoning
+                            reasoning_panel = Panel(
+                                chunk.reasoning,
+                                title="Reasoning",
+                                title_align="left",
+                                border_style="yellow",
+                                padding=(0, 1)
+                            )
+                            console.print(reasoning_panel)
+                        elif SHOW_REASONING:
+                            # Simple text format when Rich is disabled but reasoning is enabled
+                            print(f"\n{'='*60}")
+                            print("Reasoning")
+                            print('='*60)
+                            print(f"{chunk.reasoning}")
+                            print('='*60 + "\n")
+                        else:
+                            # Default log format (only when --reasoning is used due to log level)
+                            if USE_RICH:
+                                reasoning_panel = Panel(
+                                    chunk.reasoning,
+                                    title="Reasoning",
+                                    title_align="left", 
+                                    border_style="yellow",
+                                    padding=(0, 1)
+                                )
+                                console.print(reasoning_panel)
+                            else:
+                                logger.info(f"Reasoning: {chunk.reasoning}")
                     elif chunk.message_type == 'tool_call_message':
                         # Parse tool arguments for better display
                         tool_name = chunk.tool_call.name
@@ -368,25 +431,47 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                 if messages and isinstance(messages, list):
                                     preview = messages[0][:100] + "..." if len(messages[0]) > 100 else messages[0]
                                     msg_count = f" ({len(messages)} msgs)" if len(messages) > 1 else ""
-                                    logger.info(f"🔧 Tool call: {tool_name} → \"{preview}\"{msg_count} [lang: {lang}]")
+                                    if USE_RICH:
+                                        tool_panel = Panel(
+                                            f"\"{preview}\"{msg_count} [lang: {lang}]",
+                                            title=f"Tool call: {tool_name}",
+                                            title_align="left",
+                                            border_style="blue",
+                                            padding=(0, 1)
+                                        )
+                                        console.print(tool_panel)
+                                    else:
+                                        logger.info(f"Tool call: {tool_name} → \"{preview}\"{msg_count} [lang: {lang}]")
                                 else:
-                                    logger.info(f"🔧 Tool call: {tool_name}({chunk.tool_call.arguments[:150]}...)")
+                                    log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'archival_memory_search':
                                 query = args.get('query', 'unknown')
-                                logger.info(f"🔧 Tool call: {tool_name} → query: \"{query}\"")
+                                global last_archival_query
+                                last_archival_query = query
+                                if USE_RICH:
+                                    tool_panel = Panel(
+                                        f"query: \"{query}\"",
+                                        title=f"Tool call: {tool_name}",
+                                        title_align="left",
+                                        border_style="blue",
+                                        padding=(0, 1)
+                                    )
+                                    console.print(tool_panel)
+                                else:
+                                    log_with_panel(f"query: \"{query}\"", f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'update_block':
                                 label = args.get('label', 'unknown')
                                 value_preview = str(args.get('value', ''))[:50] + "..." if len(str(args.get('value', ''))) > 50 else str(args.get('value', ''))
-                                logger.info(f"🔧 Tool call: {tool_name} → {label}: \"{value_preview}\"")
+                                log_with_panel(f"{label}: \"{value_preview}\"", f"Tool call: {tool_name}", "blue")
                             else:
                                 # Generic display for other tools
                                 args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
                                 if len(args_str) > 150:
                                     args_str = args_str[:150] + "..."
-                                logger.info(f"🔧 Tool call: {tool_name}({args_str})")
+                                log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
                         except:
                             # Fallback to original format if parsing fails
-                            logger.info(f"🔧 Tool call: {tool_name}({chunk.tool_call.arguments[:150]}...)")
+                            log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                     elif chunk.message_type == 'tool_return_message':
                         # Enhanced tool result logging
                         tool_name = chunk.name
@@ -397,40 +482,104 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                             if hasattr(chunk, 'tool_return') and chunk.tool_return:
                                 result_str = str(chunk.tool_return)
                                 if tool_name == 'archival_memory_search':
-                                    # Count number of results if it looks like a list
-                                    if result_str.startswith('[') and result_str.endswith(']'):
-                                        try:
-                                            results = json.loads(result_str)
-                                            logger.info(f"📋 Tool result: {tool_name} ✓ Found {len(results)} memory entries")
-                                        except:
-                                            logger.info(f"📋 Tool result: {tool_name} ✓ {result_str[:100]}...")
-                                    else:
-                                        logger.info(f"📋 Tool result: {tool_name} ✓ {result_str[:100]}...")
+                                    
+                                    try:
+                                        # Handle both string and list formats
+                                        if isinstance(chunk.tool_return, str):
+                                            # The string format is: "([{...}, {...}], count)"
+                                            # We need to extract just the list part
+                                            if chunk.tool_return.strip():
+                                                # Find the list part between the first [ and last ]
+                                                start_idx = chunk.tool_return.find('[')
+                                                end_idx = chunk.tool_return.rfind(']')
+                                                if start_idx != -1 and end_idx != -1:
+                                                    list_str = chunk.tool_return[start_idx:end_idx+1]
+                                                    # Use ast.literal_eval since this is Python literal syntax, not JSON
+                                                    import ast
+                                                    results = ast.literal_eval(list_str)
+                                                else:
+                                                    logger.warning("Could not find list in archival_memory_search result")
+                                                    results = []
+                                            else:
+                                                logger.warning("Empty string returned from archival_memory_search")
+                                                results = []
+                                        else:
+                                            # If it's already a list, use directly
+                                            results = chunk.tool_return
+                                        
+                                        log_with_panel(f"Found {len(results)} memory entries", f"Tool result: {tool_name} ✓", "green")
+                                        
+                                        # Use the captured search query from the tool call
+                                        search_query = last_archival_query
+                                        
+                                        # Combine all results into a single text block
+                                        content_text = ""
+                                        for i, entry in enumerate(results, 1):
+                                            timestamp = entry.get('timestamp', 'N/A')
+                                            content = entry.get('content', '')
+                                            content_text += f"[{i}/{len(results)}] {timestamp}\n{content}\n\n"
+                                        
+                                        if USE_RICH:
+                                            # Create and print Rich panel directly
+                                            memory_panel = Panel(
+                                                content_text.strip(),
+                                                title=f"{search_query} ({len(results)} results)",
+                                                title_align="left",
+                                                border_style="blue",
+                                                padding=(0, 1)
+                                            )
+                                            console.print(memory_panel)
+                                        else:
+                                            # Use simple text format when Rich is disabled
+                                            print(f"\n{search_query} ({len(results)} results)")
+                                            print("="*80)
+                                            print(content_text.strip())
+                                            print("="*80 + "\n")
+                                        
+                                    except Exception as e:
+                                        logger.error(f"Error formatting archival memory results: {e}")
+                                        log_with_panel(result_str[:100] + "...", f"Tool result: {tool_name} ✓", "green")
                                 elif tool_name == 'bluesky_reply':
-                                    logger.info(f"📋 Tool result: {tool_name} ✓ Reply posted successfully")
+                                    log_with_panel("Reply posted successfully", f"Tool result: {tool_name} ✓", "green")
                                 elif tool_name == 'update_block':
-                                    logger.info(f"📋 Tool result: {tool_name} ✓ Memory block updated")
+                                    log_with_panel("Memory block updated", f"Tool result: {tool_name} ✓", "green")
                                 else:
                                     # Generic success with preview
                                     preview = result_str[:100] + "..." if len(result_str) > 100 else result_str
-                                    logger.info(f"📋 Tool result: {tool_name} ✓ {preview}")
+                                    log_with_panel(preview, f"Tool result: {tool_name} ✓", "green")
                             else:
-                                logger.info(f"📋 Tool result: {tool_name} ✓")
+                                log_with_panel("Success", f"Tool result: {tool_name} ✓", "green")
                         elif status == 'error':
                             # Show error details
                             error_preview = ""
                             if hasattr(chunk, 'tool_return') and chunk.tool_return:
                                 error_str = str(chunk.tool_return)
                                 error_preview = error_str[:100] + "..." if len(error_str) > 100 else error_str
-                                logger.info(f"📋 Tool result: {tool_name} ✗ Error: {error_preview}")
+                                log_with_panel(f"Error: {error_preview}", f"Tool result: {tool_name} ✗", "red")
                             else:
-                                logger.info(f"📋 Tool result: {tool_name} ✗ Error occurred")
+                                log_with_panel("Error occurred", f"Tool result: {tool_name} ✗", "red")
                         else:
-                            logger.info(f"📋 Tool result: {tool_name} - {status}")
+                            logger.info(f"Tool result: {tool_name} - {status}")
                     elif chunk.message_type == 'assistant_message':
-                        logger.info(f"💬 Assistant: {chunk.content[:150]}...")
+                        if USE_RICH:
+                            # Create and print Rich panel directly
+                            response_panel = Panel(
+                                chunk.content,
+                                title="Assistant Response",
+                                title_align="left",
+                                border_style="green",
+                                padding=(0, 1)
+                            )
+                            console.print(response_panel)
+                        else:
+                            # Simple text format when Rich is disabled
+                            print(f"\n{'='*60}")
+                            print("Assistant Response")
+                            print('='*60)
+                            print(f"{chunk.content}")
+                            print('='*60 + "\n")
                     else:
-                        logger.info(f"📨 {chunk.message_type}: {str(chunk)[:150]}...")
+                        logger.info(f"{chunk.message_type}: {str(chunk)[:150]}...")
                 else:
                     logger.info(f"📦 Stream status: {chunk}")
                 
@@ -524,7 +673,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                 ignored_notification = True
                                 logger.info(f"🚫 Notification ignored - Category: {ignore_category}, Reason: {ignore_reason}")
                 elif message.name == 'bluesky_reply':
-                    logger.error("❌ DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
+                    logger.error("DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
                     logger.error("Please use add_post_to_bluesky_reply_thread instead.")
                     logger.error("Update the agent's tools using register_tools.py")
                     # Export agent state before terminating
@@ -565,7 +714,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                     # Delete the queue file before terminating
                     if queue_filepath and queue_filepath.exists():
                         queue_filepath.unlink()
-                        logger.info(f"✅ Deleted queue file: {queue_filepath.name}")
+                        logger.info(f"Deleted queue file: {queue_filepath.name}")
                         
                         # Also mark as processed to avoid reprocessing
                         processed_uris = load_processed_notifications()
@@ -582,7 +731,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
             # Check for deprecated bluesky_reply tool
             if hasattr(message, 'tool_call') and message.tool_call:
                 if message.tool_call.name == 'bluesky_reply':
-                    logger.error("❌ DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
+                    logger.error("DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
                     logger.error("Please use add_post_to_bluesky_reply_thread instead.")
                     logger.error("Update the agent's tools using register_tools.py")
                     # Export agent state before terminating
@@ -646,7 +795,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
 
             # Send the reply(s) with language (unless in testing mode)
             if testing_mode:
-                logger.info("🧪 TESTING MODE: Skipping actual Bluesky post")
+                logger.info("TESTING MODE: Skipping actual Bluesky post")
                 response = True  # Simulate success
             else:
                 if len(reply_messages) == 1:
@@ -743,17 +892,23 @@ def save_processed_notifications(processed_set):
         logger.error(f"Error saving processed notifications: {e}")
 
 
-def save_notification_to_queue(notification):
+def save_notification_to_queue(notification, is_priority=None):
     """Save a notification to the queue directory with priority-based filename."""
     try:
         # Check if already processed
         processed_uris = load_processed_notifications()
-        if notification.uri in processed_uris:
-            logger.debug(f"Notification already processed: {notification.uri}")
+        
+        # Handle both notification objects and dicts
+        if isinstance(notification, dict):
+            notif_dict = notification
+            notification_uri = notification.get('uri')
+        else:
+            notif_dict = notification_to_dict(notification)
+            notification_uri = notification.uri
+            
+        if notification_uri in processed_uris:
+            logger.debug(f"Notification already processed: {notification_uri}")
             return False
-
-        # Convert notification to dict
-        notif_dict = notification_to_dict(notification)
 
         # Create JSON string
         notif_json = json.dumps(notif_dict, sort_keys=True)
@@ -761,13 +916,20 @@ def save_notification_to_queue(notification):
         # Generate hash for filename (to avoid duplicates)
         notif_hash = hashlib.sha256(notif_json.encode()).hexdigest()[:16]
 
-        # Determine priority based on author handle
-        author_handle = getattr(notification.author, 'handle', '') if hasattr(notification, 'author') else ''
-        priority_prefix = "0_" if author_handle == "cameron.pfiffer.org" else "1_"
+        # Determine priority based on author handle or explicit priority
+        if is_priority is not None:
+            priority_prefix = "0_" if is_priority else "1_"
+        else:
+            if isinstance(notification, dict):
+                author_handle = notification.get('author', {}).get('handle', '')
+            else:
+                author_handle = getattr(notification.author, 'handle', '') if hasattr(notification, 'author') else ''
+            priority_prefix = "0_" if author_handle == "cameron.pfiffer.org" else "1_"
 
         # Create filename with priority, timestamp and hash
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{priority_prefix}{timestamp}_{notification.reason}_{notif_hash}.json"
+        reason = notif_dict.get('reason', 'unknown')
+        filename = f"{priority_prefix}{timestamp}_{reason}_{notif_hash}.json"
         filepath = QUEUE_DIR / filename
 
         # Check if this notification URI is already in the queue
@@ -777,8 +939,8 @@ def save_notification_to_queue(notification):
             try:
                 with open(existing_file, 'r') as f:
                     existing_data = json.load(f)
-                    if existing_data.get('uri') == notification.uri:
-                        logger.debug(f"Notification already queued (URI: {notification.uri})")
+                    if existing_data.get('uri') == notification_uri:
+                        logger.debug(f"Notification already queued (URI: {notification_uri})")
                         return False
             except:
                 continue
@@ -801,7 +963,30 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
     try:
         # Get all JSON files in queue directory (excluding processed_notifications.json)
         # Files are sorted by name, which puts priority files first (0_ prefix before 1_ prefix)
-        queue_files = sorted([f for f in QUEUE_DIR.glob("*.json") if f.name != "processed_notifications.json"])
+        all_queue_files = sorted([f for f in QUEUE_DIR.glob("*.json") if f.name != "processed_notifications.json"])
+
+        # Filter out and delete like notifications immediately
+        queue_files = []
+        likes_deleted = 0
+        
+        for filepath in all_queue_files:
+            try:
+                with open(filepath, 'r') as f:
+                    notif_data = json.load(f)
+                
+                # If it's a like, delete it immediately and don't process
+                if notif_data.get('reason') == 'like':
+                    filepath.unlink()
+                    likes_deleted += 1
+                    logger.debug(f"Deleted like notification: {filepath.name}")
+                else:
+                    queue_files.append(filepath)
+            except Exception as e:
+                logger.warning(f"Error checking notification file {filepath.name}: {e}")
+                queue_files.append(filepath)  # Keep it in case it's valid
+        
+        if likes_deleted > 0:
+            logger.info(f"Deleted {likes_deleted} like notifications from queue")
 
         if not queue_files:
             return
@@ -813,9 +998,25 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
         total_messages = sum(message_counters.values())
         messages_per_minute = (total_messages / elapsed_time * 60) if elapsed_time > 0 else 0
         
-        logger.info(f"📊 Session stats: {total_messages} total messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies, {message_counters['follows']} follows) | {messages_per_minute:.1f} msg/min")
+        logger.info(f"Session stats: {total_messages} total messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies, {message_counters['follows']} follows) | {messages_per_minute:.1f} msg/min")
 
         for i, filepath in enumerate(queue_files, 1):
+            # Check for new notifications periodically during queue processing
+            if i % CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS == 0 and i > 1:
+                logger.info(f"🔄 Checking for new notifications (processed {i-1}/{len(queue_files)} queue items)")
+                try:
+                    # Fetch and queue new notifications without processing them
+                    new_count = fetch_and_queue_new_notifications(atproto_client)
+                    
+                    if new_count > 0:
+                        logger.info(f"Added {new_count} new notifications to queue")
+                        # Reload the queue files to include the new items
+                        updated_queue_files = sorted([f for f in QUEUE_DIR.glob("*.json") if f.name != "processed_notifications.json"])
+                        queue_files = updated_queue_files
+                        logger.info(f"Queue updated: now {len(queue_files)} total items")
+                except Exception as e:
+                    logger.error(f"Error checking for new notifications: {e}")
+            
             logger.info(f"Processing queue file {i}/{len(queue_files)}: {filepath.name}")
             try:
                 # Load notification data
@@ -849,6 +1050,12 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     success = True  # Skip reposts but mark as successful to remove from queue
                     if success:
                         message_counters['reposts_skipped'] += 1
+                elif notif_data['reason'] == "like":
+                    # Skip likes silently
+                    success = True  # Skip likes but mark as successful to remove from queue
+                    if success:
+                        message_counters.setdefault('likes_skipped', 0)
+                        message_counters['likes_skipped'] += 1
                 else:
                     logger.warning(f"Unknown notification type: {notif_data['reason']}")
                     success = True  # Remove unknown types from queue
@@ -856,10 +1063,10 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                 # Handle file based on processing result
                 if success:
                     if testing_mode:
-                        logger.info(f"🧪 TESTING MODE: Keeping queue file: {filepath.name}")
+                        logger.info(f"TESTING MODE: Keeping queue file: {filepath.name}")
                     else:
                         filepath.unlink()
-                        logger.info(f"✅ Successfully processed and removed: {filepath.name}")
+                        logger.info(f"Successfully processed and removed: {filepath.name}")
                         
                         # Mark as processed to avoid reprocessing
                         processed_uris = load_processed_notifications()
@@ -869,7 +1076,7 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name
                     filepath.rename(error_path)
-                    logger.warning(f"❌ Moved {filepath.name} to errors directory")
+                    logger.warning(f"Moved {filepath.name} to errors directory")
                     
                     # Also mark as processed to avoid retrying
                     processed_uris = load_processed_notifications()
@@ -879,7 +1086,7 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                 elif success == "no_reply":  # Special case for moving to no_reply directory
                     no_reply_path = QUEUE_NO_REPLY_DIR / filepath.name
                     filepath.rename(no_reply_path)
-                    logger.info(f"📭 Moved {filepath.name} to no_reply directory")
+                    logger.info(f"Moved {filepath.name} to no_reply directory")
                     
                     # Also mark as processed to avoid retrying
                     processed_uris = load_processed_notifications()
@@ -907,21 +1114,18 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
         logger.error(f"Error loading queued notifications: {e}")
 
 
-def process_notifications(void_agent, atproto_client, testing_mode=False):
-    """Fetch new notifications, queue them, and process the queue."""
+def fetch_and_queue_new_notifications(atproto_client):
+    """Fetch new notifications and queue them without processing."""
     try:
         # Get current time for marking notifications as seen
         logger.debug("Getting current time for notification marking...")
         last_seen_at = atproto_client.get_current_time_iso()
 
-        # Fetch ALL notifications using pagination first
-        logger.info("Beginning notification fetch with pagination...")
+        # Fetch ALL notifications using pagination
         all_notifications = []
         cursor = None
         page_count = 0
         max_pages = 20  # Safety limit to prevent infinite loops
-        
-        logger.info("Fetching all unread notifications...")
         
         while page_count < max_pages:
             try:
@@ -938,58 +1142,75 @@ def process_notifications(void_agent, atproto_client, testing_mode=False):
                 page_count += 1
                 page_notifications = notifications_response.notifications
                 
-                # Count unread notifications in this page
-                unread_count = sum(1 for n in page_notifications if not n.is_read and n.reason != "like")
-                logger.debug(f"Page {page_count}: {len(page_notifications)} notifications, {unread_count} unread (non-like)")
+                if not page_notifications:
+                    break
                 
-                # Add all notifications to our list
                 all_notifications.extend(page_notifications)
                 
-                # Check if we have more pages
-                if hasattr(notifications_response, 'cursor') and notifications_response.cursor:
-                    cursor = notifications_response.cursor
-                    # If this page had no unread notifications, we can stop
-                    if unread_count == 0:
-                        logger.info(f"No more unread notifications found after {page_count} pages")
-                        break
-                else:
-                    # No more pages
-                    logger.info(f"Fetched all notifications across {page_count} pages")
+                # Check if there are more pages
+                cursor = getattr(notifications_response, 'cursor', None)
+                if not cursor:
                     break
                     
             except Exception as e:
-                error_str = str(e)
                 logger.error(f"Error fetching notifications page {page_count}: {e}")
-                
-                # Handle specific API errors
-                if 'rate limit' in error_str.lower():
-                    logger.warning("Rate limit hit while fetching notifications, will retry next cycle")
-                    break
-                elif '401' in error_str or 'unauthorized' in error_str.lower():
-                    logger.error("Authentication error, re-raising exception")
-                    raise
-                else:
-                    # For other errors, try to continue with what we have
-                    logger.warning("Continuing with notifications fetched so far")
-                    break
-
-        # Queue all unread notifications (except likes)
-        logger.info("Queuing unread notifications...")
+                break
+        
+        # Now process all fetched notifications
         new_count = 0
-        for notification in all_notifications:
-            if not notification.is_read and notification.reason != "like":
-                if save_notification_to_queue(notification):
+        if all_notifications:
+            # Mark as seen first
+            try:
+                atproto_client.app.bsky.notification.update_seen(
+                    data={'seenAt': last_seen_at}
+                )
+                logger.debug(f"Marked {len(all_notifications)} notifications as seen at {last_seen_at}")
+            except Exception as e:
+                logger.error(f"Error marking notifications as seen: {e}")
+            
+            # Queue all new notifications (except likes and already read)
+            for notif in all_notifications:
+                # Skip if already read or if it's a like
+                if (hasattr(notif, 'is_read') and notif.is_read) or (hasattr(notif, 'reason') and notif.reason == 'like'):
+                    continue
+                    
+                notif_dict = notif.model_dump() if hasattr(notif, 'model_dump') else notif
+                
+                # Skip likes in dict form too
+                if notif_dict.get('reason') == 'like':
+                    continue
+                
+                # Check if it's a priority notification
+                is_priority = False
+                if notif_dict.get('reason') == 'mention':
+                    # Get the mention text to check for priority keywords
+                    record = notif_dict.get('record', {})
+                    text = record.get('text', '')
+                    if any(keyword in text.lower() for keyword in ['urgent', 'priority', 'important', 'emergency']):
+                        is_priority = True
+                
+                if save_notification_to_queue(notif_dict, is_priority=is_priority):
                     new_count += 1
-
-        # Mark all notifications as seen immediately after queuing (unless in testing mode)
-        if testing_mode:
-            logger.info("🧪 TESTING MODE: Skipping marking notifications as seen")
+            
+            logger.info(f"Queued {new_count} new notifications and marked as seen")
         else:
-            if new_count > 0:
-                atproto_client.app.bsky.notification.update_seen({'seen_at': last_seen_at})
-                logger.info(f"Queued {new_count} new notifications and marked as seen")
-            else:
-                logger.debug("No new notifications to queue")
+            logger.debug("No new notifications to queue")
+            
+        return new_count
+            
+    except Exception as e:
+        logger.error(f"Error fetching and queueing notifications: {e}")
+        return 0
+
+
+def process_notifications(void_agent, atproto_client, testing_mode=False):
+    """Fetch new notifications, queue them, and process the queue."""
+    try:
+        # Fetch and queue new notifications
+        new_count = fetch_and_queue_new_notifications(atproto_client)
+        
+        if new_count > 0:
+            logger.info(f"Found {new_count} new notifications to process")
 
         # Now process the entire queue (old + new notifications)
         load_and_process_queued_notifications(void_agent, atproto_client, testing_mode)
@@ -1003,17 +1224,53 @@ def main():
     parser = argparse.ArgumentParser(description='Void Bot - Bluesky autonomous agent')
     parser.add_argument('--test', action='store_true', help='Run in testing mode (no messages sent, queue files preserved)')
     parser.add_argument('--no-git', action='store_true', help='Skip git operations when exporting agent state')
+    parser.add_argument('--simple-logs', action='store_true', help='Use simplified log format (void - LEVEL - message)')
+    parser.add_argument('--rich', action='store_true', help='Enable Rich formatting for archival memory display')
+    parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
     args = parser.parse_args()
     
-    global TESTING_MODE
+    # Configure logging based on command line arguments
+    if args.simple_logs:
+        log_format = "void - %(levelname)s - %(message)s"
+    else:
+        log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    # Reset logging configuration and apply new format
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    logging.basicConfig(level=logging.INFO, format=log_format, force=True)
+    
+    global logger, prompt_logger, console
+    logger = logging.getLogger("void_bot")
+    logger.setLevel(logging.INFO)
+    
+    # Create a separate logger for prompts (set to WARNING to hide by default)
+    prompt_logger = logging.getLogger("void_bot.prompts")
+    if args.reasoning:
+        prompt_logger.setLevel(logging.INFO)  # Show reasoning when --reasoning is used
+    else:
+        prompt_logger.setLevel(logging.WARNING)  # Hide by default
+    
+    # Disable httpx logging completely
+    logging.getLogger("httpx").setLevel(logging.CRITICAL)
+    
+    # Create Rich console for pretty printing
+    console = Console()
+    
+    global TESTING_MODE, SKIP_GIT, USE_RICH, SHOW_REASONING
     TESTING_MODE = args.test
     
     # Store no-git flag globally for use in export_agent_state calls
-    global SKIP_GIT
     SKIP_GIT = args.no_git
     
+    # Store rich flag globally
+    USE_RICH = args.rich
+    
+    # Store reasoning flag globally
+    SHOW_REASONING = args.reasoning
+    
     if TESTING_MODE:
-        logger.info("🧪 === RUNNING IN TESTING MODE ===")
+        logger.info("=== RUNNING IN TESTING MODE ===")
         logger.info("   - No messages will be sent to Bluesky")
         logger.info("   - Queue files will not be deleted")
         logger.info("   - Notifications will not be marked as seen")
@@ -1063,7 +1320,7 @@ def main():
             messages_per_minute = (total_messages / elapsed_time * 60) if elapsed_time > 0 else 0
             
             logger.info("=== BOT STOPPED BY USER ===")
-            logger.info(f"📊 Final session stats: {total_messages} total messages processed in {elapsed_time/60:.1f} minutes")
+            logger.info(f"Final session stats: {total_messages} total messages processed in {elapsed_time/60:.1f} minutes")
             logger.info(f"   - {message_counters['mentions']} mentions")
             logger.info(f"   - {message_counters['replies']} replies")
             logger.info(f"   - {message_counters['follows']} follows")
