@@ -425,23 +425,25 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         try:
                             args = json.loads(chunk.tool_call.arguments)
                             # Format based on tool type
-                            if tool_name == 'bluesky_reply':
-                                messages = args.get('messages', [args.get('message', '')])
-                                lang = args.get('lang', 'en-US')
-                                if messages and isinstance(messages, list):
-                                    preview = messages[0][:100] + "..." if len(messages[0]) > 100 else messages[0]
-                                    msg_count = f" ({len(messages)} msgs)" if len(messages) > 1 else ""
+                            if tool_name in ['add_post_to_bluesky_reply_thread', 'bluesky_reply']:
+                                # Extract the text being posted
+                                text = args.get('text', '')
+                                if text:
                                     if USE_RICH:
-                                        tool_panel = Panel(
-                                            f"\"{preview}\"{msg_count} [lang: {lang}]",
-                                            title=f"Tool call: {tool_name}",
+                                        post_panel = Panel(
+                                            text,
+                                            title="Bluesky Post",
                                             title_align="left",
                                             border_style="blue",
                                             padding=(0, 1)
                                         )
-                                        console.print(tool_panel)
+                                        console.print(post_panel)
                                     else:
-                                        logger.info(f"Tool call: {tool_name} → \"{preview}\"{msg_count} [lang: {lang}]")
+                                        print(f"\n{'='*60}")
+                                        print("Bluesky Post")
+                                        print('='*60)
+                                        print(text)
+                                        print('='*60 + "\n")
                                 else:
                                     log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'archival_memory_search':
@@ -539,8 +541,12 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                     except Exception as e:
                                         logger.error(f"Error formatting archival memory results: {e}")
                                         log_with_panel(result_str[:100] + "...", f"Tool result: {tool_name} ✓", "green")
-                                elif tool_name == 'bluesky_reply':
-                                    log_with_panel("Reply posted successfully", f"Tool result: {tool_name} ✓", "green")
+                                elif tool_name == 'add_post_to_bluesky_reply_thread':
+                                    # Just show success for bluesky posts, the text was already shown in tool call
+                                    log_with_panel("Post queued successfully", f"Bluesky Post ✓", "green")
+                                elif tool_name == 'archival_memory_insert':
+                                    # Skip archival memory insert results (always returns None)
+                                    pass
                                 elif tool_name == 'update_block':
                                     log_with_panel("Memory block updated", f"Tool result: {tool_name} ✓", "green")
                                 else:
@@ -551,13 +557,20 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                 log_with_panel("Success", f"Tool result: {tool_name} ✓", "green")
                         elif status == 'error':
                             # Show error details
-                            error_preview = ""
-                            if hasattr(chunk, 'tool_return') and chunk.tool_return:
-                                error_str = str(chunk.tool_return)
-                                error_preview = error_str[:100] + "..." if len(error_str) > 100 else error_str
-                                log_with_panel(f"Error: {error_preview}", f"Tool result: {tool_name} ✗", "red")
+                            if tool_name == 'add_post_to_bluesky_reply_thread':
+                                error_str = str(chunk.tool_return) if hasattr(chunk, 'tool_return') and chunk.tool_return else "Error occurred"
+                                log_with_panel(error_str, f"Bluesky Post ✗", "red")
+                            elif tool_name == 'archival_memory_insert':
+                                # Skip archival memory insert errors too
+                                pass
                             else:
-                                log_with_panel("Error occurred", f"Tool result: {tool_name} ✗", "red")
+                                error_preview = ""
+                                if hasattr(chunk, 'tool_return') and chunk.tool_return:
+                                    error_str = str(chunk.tool_return)
+                                    error_preview = error_str[:100] + "..." if len(error_str) > 100 else error_str
+                                    log_with_panel(f"Error: {error_preview}", f"Tool result: {tool_name} ✗", "red")
+                                else:
+                                    log_with_panel("Error occurred", f"Tool result: {tool_name} ✗", "red")
                         else:
                             logger.info(f"Tool result: {tool_name} - {status}")
                     elif chunk.message_type == 'assistant_message':
@@ -579,7 +592,9 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                             print(f"{chunk.content}")
                             print('='*60 + "\n")
                     else:
-                        logger.info(f"{chunk.message_type}: {str(chunk)[:150]}...")
+                        # Filter out verbose message types
+                        if chunk.message_type not in ['usage_statistics', 'stop_reason']:
+                            logger.info(f"{chunk.message_type}: {str(chunk)[:150]}...")
                 else:
                     logger.info(f"📦 Stream status: {chunk}")
                 
@@ -752,11 +767,11 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                             
                             if reply_text:  # Only add if there's actual content
                                 reply_candidates.append((reply_text, reply_lang))
-                                logger.info(f"Found successful add_post_to_bluesky_reply_thread candidate: {reply_text[:50]}... (lang: {reply_lang})")
+                                logger.debug(f"Found successful add_post_to_bluesky_reply_thread candidate: {reply_text[:50]}... (lang: {reply_lang})")
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to parse tool call arguments: {e}")
                     elif tool_status == 'error':
-                        logger.info(f"⚠️ Skipping failed add_post_to_bluesky_reply_thread tool call (status: error)")
+                        logger.debug(f"Skipping failed add_post_to_bluesky_reply_thread tool call (status: error)")
                     else:
                         logger.warning(f"⚠️ Skipping add_post_to_bluesky_reply_thread tool call with unknown status: {tool_status}")
 
@@ -779,19 +794,30 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
             # Use the first language for the entire thread (could be enhanced later)
             reply_lang = reply_langs[0] if reply_langs else 'en-US'
             
-            logger.info(f"Found {len(reply_candidates)} add_post_to_bluesky_reply_thread calls, building thread")
+            logger.debug(f"Found {len(reply_candidates)} add_post_to_bluesky_reply_thread calls, building thread")
             
-            # Print the generated reply for testing
-            print(f"\n=== GENERATED REPLY THREAD ===")
-            print(f"To: @{author_handle}")
+            # Display the generated reply thread
             if len(reply_messages) == 1:
-                print(f"Reply: {reply_messages[0]}")
+                content = reply_messages[0]
+                title = f"Reply to @{author_handle}"
             else:
-                print(f"Reply thread ({len(reply_messages)} messages):")
-                for j, msg in enumerate(reply_messages, 1):
-                    print(f"  {j}. {msg}")
-            print(f"Language: {reply_lang}")
-            print(f"======================\n")
+                content = "\n\n".join([f"{j}. {msg}" for j, msg in enumerate(reply_messages, 1)])
+                title = f"Reply Thread to @{author_handle} ({len(reply_messages)} messages)"
+            
+            if USE_RICH:
+                reply_panel = Panel(
+                    content,
+                    title=title,
+                    title_align="left",
+                    border_style="green",
+                    padding=(0, 1)
+                )
+                console.print(reply_panel)
+            else:
+                print(f"\n{title}")
+                print("="*60)
+                print(content)
+                print("="*60 + "\n")
 
             # Send the reply(s) with language (unless in testing mode)
             if testing_mode:
