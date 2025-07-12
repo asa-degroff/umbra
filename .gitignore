@@ -1,4 +1,5 @@
 .env
+config.yaml
 old.py
 session_*.txt
 __pycache__/

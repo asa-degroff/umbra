@@ -1,0 +1,23 @@
+# Core dependencies for Void Bot
+
+# Configuration and utilities
+PyYAML>=6.0.2
+rich>=14.0.0
+python-dotenv>=1.0.0
+
+# Letta API client
+letta-client>=0.1.198
+
+# AT Protocol (Bluesky) client
+atproto>=0.0.54
+
+# HTTP client for API calls
+httpx>=0.28.1
+httpx-sse>=0.4.0
+requests>=2.31.0
+
+# Data validation
+pydantic>=2.11.7
+
+# Async support
+anyio>=4.9.0

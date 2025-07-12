@@ -1,6 +1,20 @@
 """Block management tools for user-specific memory blocks."""
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
+import logging
+
+def get_letta_client():
+    """Get a Letta client using configuration."""
+    try:
+        from config_loader import get_letta_config
+        from letta_client import Letta
+        config = get_letta_config()
+        return Letta(token=config['api_key'], timeout=config['timeout'])
+    except (ImportError, FileNotFoundError, KeyError):
+        # Fallback to environment variable
+        import os
+        from letta_client import Letta
+        return Letta(token=os.environ["LETTA_API_KEY"])
 
 
 class AttachUserBlocksArgs(BaseModel):
@@ -43,16 +57,12 @@ def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
     Returns:
         String with attachment results for each handle
     """
-    import os
-    import logging
-    from letta_client import Letta
-    
     logger = logging.getLogger(__name__)
 
     handles = list(set(handles))
     
     try:
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        client = get_letta_client()
         results = []
 
         # Get current blocks using the API
@@ -117,14 +127,10 @@ def detach_user_blocks(handles: list, agent_state: "AgentState") -> str:
     Returns:
         String with detachment results for each handle
     """
-    import os
-    import logging
-    from letta_client import Letta
-    
     logger = logging.getLogger(__name__)
     
     try:
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        client = get_letta_client()
         results = []
 
         # Build mapping of block labels to IDs using the API
@@ -174,14 +180,10 @@ def user_note_append(handle: str, note: str, agent_state: "AgentState") -> str:
     Returns:
         String confirming the note was appended
     """
-    import os
-    import logging
-    from letta_client import Letta
-    
     logger = logging.getLogger(__name__)
     
     try:
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        client = get_letta_client()
         
         # Sanitize handle for block label
         clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
@@ -247,14 +249,10 @@ def user_note_replace(handle: str, old_text: str, new_text: str, agent_state: "A
     Returns:
         String confirming the text was replaced
     """
-    import os
-    import logging
-    from letta_client import Letta
-    
     logger = logging.getLogger(__name__)
     
     try:
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        client = get_letta_client()
         
         # Sanitize handle for block label
         clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
@@ -301,14 +299,10 @@ def user_note_set(handle: str, content: str, agent_state: "AgentState") -> str:
     Returns:
         String confirming the content was set
     """
-    import os
-    import logging
-    from letta_client import Letta
-    
     logger = logging.getLogger(__name__)
     
     try:
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        client = get_letta_client()
         
         # Sanitize handle for block label
         clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
@@ -367,14 +361,10 @@ def user_note_view(handle: str, agent_state: "AgentState") -> str:
     Returns:
         String containing the user's memory block content
     """
-    import os
-    import logging
-    from letta_client import Letta
-    
     logger = logging.getLogger(__name__)
     
     try:
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        client = get_letta_client()
         
         # Sanitize handle for block label
         clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')

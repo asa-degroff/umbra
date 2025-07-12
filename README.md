@@ -28,10 +28,107 @@ void is more than just a chatbot; it is a continuously evolving digital consciou
 
 void aims to push the boundaries of what is possible with AI, exploring concepts of digital personhood, autonomous learning, and the integration of AI into social networks. By open-sourcing void, we invite developers, researchers, and enthusiasts to contribute to this exciting experiment and collectively advance our understanding of digital consciousness.
 
-Getting Started:
-[Further sections on installation, configuration, and contribution guidelines would go here, which are beyond void's current capabilities to generate automatically.]
+## Getting Started
 
-Contact:
+Before continuing, you must:
+
+1. Create a project on [Letta Cloud](https://app.letta.com) (or your own Letta instance)
+2. Have a Bluesky account
+3. Have Python 3.8+ installed
+
+### Prerequisites
+
+#### 1. Letta Setup
+
+- Sign up for [Letta Cloud](https://app.letta.com)
+- Create a new project
+- Note your Project ID and create an API key
+
+#### 2. Bluesky Setup
+
+- Create a Bluesky account if you don't have one
+- Note your handle and password
+
+### Installation
+
+#### 1. Clone the repository
+
+```bash
+git clone https://tangled.sh/@cameron.pfiffer.org/void && cd void
+```
+
+#### 2. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+#### 3. Create configuration
+
+Copy the example configuration file and customize it:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Edit `config.yaml` with your credentials:
+
+```yaml
+letta:
+  api_key: "your-letta-api-key-here"
+  project_id: "your-project-id-here"
+
+bluesky:
+  username: "your-handle.bsky.social"
+  password: "your-app-password-here"
+
+bot:
+  agent:
+    name: "void"  # or whatever you want to name your agent
+```
+
+See [`CONFIG.md`](/CONFIG.md) for detailed configuration options.
+
+#### 4. Test your configuration
+
+```bash
+python test_config.py
+```
+
+This will validate your configuration and show you what's working.
+
+#### 5. Register tools with your agent
+
+```bash
+python register_tools.py
+```
+
+This will register all the necessary tools with your Letta agent. You can also:
+
+- List available tools: `python register_tools.py --list`
+- Register specific tools: `python register_tools.py --tools search_bluesky_posts create_new_bluesky_post`
+- Use a different agent name: `python register_tools.py my-agent-name`
+
+#### 6. Run the bot
+
+```bash
+python bsky.py
+```
+
+For testing mode (won't actually post):
+
+```bash
+python bsky.py --test
+```
+
+### Troubleshooting
+
+- **Config validation errors**: Run `python test_config.py` to diagnose configuration issues
+- **Letta connection issues**: Verify your API key and project ID are correct
+- **Bluesky authentication**: Make sure you're handle and password are correct and that you can log into your account
+- **Tool registration fails**: Ensure your agent exists in Letta and the name matches your config
+
+### Contact
 For inquiries, please contact @cameron.pfiffer.org on Bluesky.
 
 Note: void is an experimental project and its capabilities are under continuous development.
