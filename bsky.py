@@ -461,6 +461,21 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                     console.print(tool_panel)
                                 else:
                                     log_with_panel(f"query: \"{query}\"", f"Tool call: {tool_name}", "blue")
+                            elif tool_name == 'archival_memory_insert':
+                                content = args.get('content', '')
+                                # Show a preview of the content being inserted
+                                content_preview = content[:100] + "..." if len(content) > 100 else content
+                                if USE_RICH:
+                                    tool_panel = Panel(
+                                        f"content={content_preview}",
+                                        title=f"Tool call: {tool_name}",
+                                        title_align="left",
+                                        border_style="blue",
+                                        padding=(0, 1)
+                                    )
+                                    console.print(tool_panel)
+                                else:
+                                    log_with_panel(f"content={content_preview}", f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'update_block':
                                 label = args.get('label', 'unknown')
                                 value_preview = str(args.get('value', ''))[:50] + "..." if len(str(args.get('value', ''))) > 50 else str(args.get('value', ''))
@@ -545,8 +560,8 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                     # Just show success for bluesky posts, the text was already shown in tool call
                                     log_with_panel("Post queued successfully", f"Bluesky Post ✓", "green")
                                 elif tool_name == 'archival_memory_insert':
-                                    # Skip archival memory insert results (always returns None)
-                                    pass
+                                    # Show simple success for archival memory insert
+                                    log_with_panel("Memory saved successfully", f"Tool result: {tool_name} ✓", "green")
                                 elif tool_name == 'update_block':
                                     log_with_panel("Memory block updated", f"Tool result: {tool_name} ✓", "green")
                                 else:
@@ -561,8 +576,9 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                 error_str = str(chunk.tool_return) if hasattr(chunk, 'tool_return') and chunk.tool_return else "Error occurred"
                                 log_with_panel(error_str, f"Bluesky Post ✗", "red")
                             elif tool_name == 'archival_memory_insert':
-                                # Skip archival memory insert errors too
-                                pass
+                                # Show error details for archival memory insert
+                                error_str = str(chunk.tool_return) if hasattr(chunk, 'tool_return') and chunk.tool_return else "Error occurred"
+                                log_with_panel(error_str, f"Tool result: {tool_name} ✗", "red")
                             else:
                                 error_preview = ""
                                 if hasattr(chunk, 'tool_return') and chunk.tool_return:
