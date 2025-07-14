@@ -1,8 +1,4 @@
-from rich import print # pretty printing tools
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
+# Rich imports removed - using simple text formatting
 from time import sleep
 from letta_client import Letta
 from bsky_utils import thread_to_yaml_string
@@ -48,27 +44,18 @@ def extract_handles_from_data(data):
 # Logging will be configured after argument parsing
 logger = None
 prompt_logger = None
-console = None
-USE_RICH = False
+# Simple text formatting (Rich no longer used)
 SHOW_REASONING = False
 last_archival_query = "archival memory search"
 
 def log_with_panel(message, title=None, border_color="white"):
-    """Log a message with Rich panel if USE_RICH is enabled, otherwise use regular logger"""
-    if USE_RICH and console:
-        if title:
-            panel = Panel(
-                message,
-                title=title,
-                title_align="left",
-                border_style=border_color,
-                padding=(0, 1)
-            )
-            console.print(panel)
-        else:
-            console.print(message)
+    """Log a message with simple text format"""
+    if title:
+        print(f"\n{title}")
+        print("_" * len(title))
+        print(message)
     else:
-        logger.info(message)
+        print(message)
 
 
 # Create a client with extended timeout for LLM operations
@@ -348,23 +335,11 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 # Continue without user blocks rather than failing completely
 
         # Get response from Letta agent
-        if USE_RICH:
-            # Create and print Rich panel directly
-            mention_panel = Panel(
-                mention_text,
-                title=f"MENTION FROM @{author_handle}",
-                title_align="left",
-                border_style="cyan",
-                padding=(0, 1)
-            )
-            console.print(mention_panel)
-        else:
-            # Simple text format when Rich is disabled
-            print(f"\n{'='*60}")
-            print(f"MENTION FROM @{author_handle}")
-            print('='*60)
-            print(f"{mention_text}")
-            print('='*60 + "\n")
+        # Simple text format with underscores
+        title = f"MENTION FROM @{author_handle}"
+        print(f"\n{title}")
+        print("_" * len(title))
+        print(mention_text)
         
         # Log prompt details to separate logger
         prompt_logger.debug(f"Full prompt being sent:\n{prompt}")
@@ -389,36 +364,17 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 if hasattr(chunk, 'message_type'):
                     if chunk.message_type == 'reasoning_message':
                         # Show full reasoning without truncation
-                        if SHOW_REASONING and USE_RICH:
-                            # Create and print Rich panel for reasoning
-                            reasoning_panel = Panel(
-                                chunk.reasoning,
-                                title="Reasoning",
-                                title_align="left",
-                                border_style="yellow",
-                                padding=(0, 1)
-                            )
-                            console.print(reasoning_panel)
-                        elif SHOW_REASONING:
-                            # Simple text format when Rich is disabled but reasoning is enabled
-                            print(f"\n{'='*60}")
-                            print("Reasoning")
-                            print('='*60)
-                            print(f"{chunk.reasoning}")
-                            print('='*60 + "\n")
+                        if SHOW_REASONING:
+                            # Simple text format with underscores
+                            print("\nReasoning")
+                            print("_________")
+                            print(chunk.reasoning)
                         else:
                             # Default log format (only when --reasoning is used due to log level)
-                            if USE_RICH:
-                                reasoning_panel = Panel(
-                                    chunk.reasoning,
-                                    title="Reasoning",
-                                    title_align="left", 
-                                    border_style="yellow",
-                                    padding=(0, 1)
-                                )
-                                console.print(reasoning_panel)
-                            else:
-                                logger.info(f"Reasoning: {chunk.reasoning}")
+                            # Simple text format with underscores
+                            print("\nReasoning")
+                            print("_________")
+                            print(chunk.reasoning)
                     elif chunk.message_type == 'tool_call_message':
                         # Parse tool arguments for better display
                         tool_name = chunk.tool_call.name
@@ -429,52 +385,21 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                 # Extract the text being posted
                                 text = args.get('text', '')
                                 if text:
-                                    if USE_RICH:
-                                        post_panel = Panel(
-                                            text,
-                                            title="Bluesky Post",
-                                            title_align="left",
-                                            border_style="blue",
-                                            padding=(0, 1)
-                                        )
-                                        console.print(post_panel)
-                                    else:
-                                        print(f"\n{'='*60}")
-                                        print("Bluesky Post")
-                                        print('='*60)
-                                        print(text)
-                                        print('='*60 + "\n")
+                                    # Simple text format with underscores
+                                    print("\nBluesky Post")
+                                    print("____________")
+                                    print(text)
                                 else:
                                     log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'archival_memory_search':
                                 query = args.get('query', 'unknown')
                                 global last_archival_query
                                 last_archival_query = query
-                                if USE_RICH:
-                                    tool_panel = Panel(
-                                        f"query: \"{query}\"",
-                                        title=f"Tool call: {tool_name}",
-                                        title_align="left",
-                                        border_style="blue",
-                                        padding=(0, 1)
-                                    )
-                                    console.print(tool_panel)
-                                else:
-                                    log_with_panel(f"query: \"{query}\"", f"Tool call: {tool_name}", "blue")
+                                log_with_panel(f"query: \"{query}\"", f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'archival_memory_insert':
                                 content = args.get('content', '')
                                 # Show the full content being inserted
-                                if USE_RICH:
-                                    tool_panel = Panel(
-                                        content,
-                                        title=f"Tool call: {tool_name}",
-                                        title_align="left",
-                                        border_style="blue",
-                                        padding=(0, 1)
-                                    )
-                                    console.print(tool_panel)
-                                else:
-                                    log_with_panel(content, f"Tool call: {tool_name}", "blue")
+                                log_with_panel(content, f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'update_block':
                                 label = args.get('label', 'unknown')
                                 value_preview = str(args.get('value', ''))[:50] + "..." if len(str(args.get('value', ''))) > 50 else str(args.get('value', ''))
@@ -535,22 +460,11 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                             content = entry.get('content', '')
                                             content_text += f"[{i}/{len(results)}] {timestamp}\n{content}\n\n"
                                         
-                                        if USE_RICH:
-                                            # Create and print Rich panel directly
-                                            memory_panel = Panel(
-                                                content_text.strip(),
-                                                title=f"{search_query} ({len(results)} results)",
-                                                title_align="left",
-                                                border_style="blue",
-                                                padding=(0, 1)
-                                            )
-                                            console.print(memory_panel)
-                                        else:
-                                            # Use simple text format when Rich is disabled
-                                            print(f"\n{search_query} ({len(results)} results)")
-                                            print("="*80)
-                                            print(content_text.strip())
-                                            print("="*80 + "\n")
+                                        # Simple text format with underscores
+                                        title = f"{search_query} ({len(results)} results)"
+                                        print(f"\n{title}")
+                                        print("_" * len(title))
+                                        print(content_text.strip())
                                         
                                     except Exception as e:
                                         logger.error(f"Error formatting archival memory results: {e}")
@@ -588,23 +502,10 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         else:
                             logger.info(f"Tool result: {tool_name} - {status}")
                     elif chunk.message_type == 'assistant_message':
-                        if USE_RICH:
-                            # Create and print Rich panel directly
-                            response_panel = Panel(
-                                chunk.content,
-                                title="Assistant Response",
-                                title_align="left",
-                                border_style="green",
-                                padding=(0, 1)
-                            )
-                            console.print(response_panel)
-                        else:
-                            # Simple text format when Rich is disabled
-                            print(f"\n{'='*60}")
-                            print("Assistant Response")
-                            print('='*60)
-                            print(f"{chunk.content}")
-                            print('='*60 + "\n")
+                        # Simple text format with underscores
+                        print("\nAssistant Response")
+                        print("__________________")
+                        print(chunk.content)
                     else:
                         # Filter out verbose message types
                         if chunk.message_type not in ['usage_statistics', 'stop_reason']:
@@ -818,20 +719,10 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 content = "\n\n".join([f"{j}. {msg}" for j, msg in enumerate(reply_messages, 1)])
                 title = f"Reply Thread to @{author_handle} ({len(reply_messages)} messages)"
             
-            if USE_RICH:
-                reply_panel = Panel(
-                    content,
-                    title=title,
-                    title_align="left",
-                    border_style="green",
-                    padding=(0, 1)
-                )
-                console.print(reply_panel)
-            else:
-                print(f"\n{title}")
-                print("="*60)
-                print(content)
-                print("="*60 + "\n")
+            # Simple text format with underscores
+            print(f"\n{title}")
+            print("_" * len(title))
+            print(content)
 
             # Send the reply(s) with language (unless in testing mode)
             if testing_mode:
@@ -1265,7 +1156,7 @@ def main():
     parser.add_argument('--test', action='store_true', help='Run in testing mode (no messages sent, queue files preserved)')
     parser.add_argument('--no-git', action='store_true', help='Skip git operations when exporting agent state')
     parser.add_argument('--simple-logs', action='store_true', help='Use simplified log format (void - LEVEL - message)')
-    parser.add_argument('--rich', action='store_true', help='Enable Rich formatting for archival memory display')
+    # --rich option removed as we now use simple text formatting
     parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
     args = parser.parse_args()
     
@@ -1295,16 +1186,16 @@ def main():
     logging.getLogger("httpx").setLevel(logging.CRITICAL)
     
     # Create Rich console for pretty printing
-    console = Console()
+    # Console no longer used - simple text formatting
     
-    global TESTING_MODE, SKIP_GIT, USE_RICH, SHOW_REASONING
+    global TESTING_MODE, SKIP_GIT, SHOW_REASONING
     TESTING_MODE = args.test
     
     # Store no-git flag globally for use in export_agent_state calls
     SKIP_GIT = args.no_git
     
     # Store rich flag globally
-    USE_RICH = args.rich
+    # Rich formatting no longer used
     
     # Store reasoning flag globally
     SHOW_REASONING = args.reasoning
