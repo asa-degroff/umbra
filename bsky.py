@@ -1113,6 +1113,13 @@ def fetch_and_queue_new_notifications(atproto_client):
                 
                 # Check if it's a priority notification
                 is_priority = False
+                
+                # Priority for cameron.pfiffer.org notifications
+                author_handle = notif_dict.get('author', {}).get('handle', '')
+                if author_handle == "cameron.pfiffer.org":
+                    is_priority = True
+                
+                # Also check for priority keywords in mentions
                 if notif_dict.get('reason') == 'mention':
                     # Get the mention text to check for priority keywords
                     record = notif_dict.get('record', {})
@@ -1150,6 +1157,47 @@ def process_notifications(void_agent, atproto_client, testing_mode=False):
         logger.error(f"Error processing notifications: {e}")
 
 
+def periodic_user_block_cleanup(client: Letta, agent_id: str) -> None:
+    """
+    Detach all user blocks from the agent to prevent memory bloat.
+    This should be called periodically to ensure clean state.
+    """
+    try:
+        # Get all blocks attached to the agent
+        attached_blocks = client.agents.blocks.list(agent_id=agent_id)
+        
+        user_blocks_to_detach = []
+        for block in attached_blocks:
+            if hasattr(block, 'label') and block.label.startswith('user_'):
+                user_blocks_to_detach.append({
+                    'label': block.label,
+                    'id': block.id
+                })
+        
+        if not user_blocks_to_detach:
+            logger.debug("No user blocks found to detach during periodic cleanup")
+            return
+            
+        # Detach each user block
+        detached_count = 0
+        for block_info in user_blocks_to_detach:
+            try:
+                client.agents.blocks.detach(
+                    agent_id=agent_id,
+                    block_id=str(block_info['id'])
+                )
+                detached_count += 1
+                logger.debug(f"Detached user block: {block_info['label']}")
+            except Exception as e:
+                logger.warning(f"Failed to detach block {block_info['label']}: {e}")
+        
+        if detached_count > 0:
+            logger.info(f"Periodic cleanup: Detached {detached_count} user blocks")
+            
+    except Exception as e:
+        logger.error(f"Error during periodic user block cleanup: {e}")
+
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Void Bot - Bluesky autonomous agent')
@@ -1158,6 +1206,7 @@ def main():
     parser.add_argument('--simple-logs', action='store_true', help='Use simplified log format (void - LEVEL - message)')
     # --rich option removed as we now use simple text formatting
     parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
+    parser.add_argument('--cleanup-interval', type=int, default=10, help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
     args = parser.parse_args()
     
     # Configure logging based on command line arguments
@@ -1231,10 +1280,23 @@ def main():
     logger.info(f"Starting notification monitoring, checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds")
 
     cycle_count = 0
+    CLEANUP_INTERVAL = args.cleanup_interval
+    
+    if CLEANUP_INTERVAL > 0:
+        logger.info(f"User block cleanup enabled every {CLEANUP_INTERVAL} cycles")
+    else:
+        logger.info("User block cleanup disabled")
+    
     while True:
         try:
             cycle_count += 1
             process_notifications(void_agent, atproto_client, TESTING_MODE)
+            
+            # Run periodic cleanup every N cycles
+            if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:
+                logger.debug(f"Running periodic user block cleanup (cycle {cycle_count})")
+                periodic_user_block_cleanup(CLIENT, void_agent.id)
+            
             # Log cycle completion with stats
             elapsed_time = time.time() - start_time
             total_messages = sum(message_counters.values())
