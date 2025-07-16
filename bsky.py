@@ -49,11 +49,24 @@ SHOW_REASONING = False
 last_archival_query = "archival memory search"
 
 def log_with_panel(message, title=None, border_color="white"):
-    """Log a message with simple text format"""
+    """Log a message with Unicode box-drawing characters"""
     if title:
-        print(f"\n{title}")
-        print("_" * len(title))
-        print(message)
+        # Map old color names to appropriate symbols
+        symbol_map = {
+            "blue": "⚙",      # Tool calls
+            "green": "✓",     # Success/completion
+            "yellow": "◆",    # Reasoning
+            "red": "✗",       # Errors
+            "white": "▶",     # Default/mentions
+            "cyan": "✎",      # Posts
+        }
+        symbol = symbol_map.get(border_color, "▶")
+        
+        print(f"\n{symbol} {title}")
+        print(f"  {'─' * len(title)}")
+        # Indent message lines
+        for line in message.split('\n'):
+            print(f"  {line}")
     else:
         print(message)
 
@@ -335,11 +348,13 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 # Continue without user blocks rather than failing completely
 
         # Get response from Letta agent
-        # Simple text format with underscores
+        # Format with Unicode characters
         title = f"MENTION FROM @{author_handle}"
-        print(f"\n{title}")
-        print("_" * len(title))
-        print(mention_text)
+        print(f"\n▶ {title}")
+        print(f"  {'═' * len(title)}")
+        # Indent the mention text
+        for line in mention_text.split('\n'):
+            print(f"  {line}")
         
         # Log prompt details to separate logger
         prompt_logger.debug(f"Full prompt being sent:\n{prompt}")
@@ -365,16 +380,20 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                     if chunk.message_type == 'reasoning_message':
                         # Show full reasoning without truncation
                         if SHOW_REASONING:
-                            # Simple text format with underscores
-                            print("\nReasoning")
-                            print("_________")
-                            print(chunk.reasoning)
+                            # Format with Unicode characters
+                            print("\n◆ Reasoning")
+                            print("  ─────────")
+                            # Indent reasoning lines
+                            for line in chunk.reasoning.split('\n'):
+                                print(f"  {line}")
                         else:
                             # Default log format (only when --reasoning is used due to log level)
-                            # Simple text format with underscores
-                            print("\nReasoning")
-                            print("_________")
-                            print(chunk.reasoning)
+                            # Format with Unicode characters
+                            print("\n◆ Reasoning")
+                            print("  ─────────")
+                            # Indent reasoning lines
+                            for line in chunk.reasoning.split('\n'):
+                                print(f"  {line}")
                     elif chunk.message_type == 'tool_call_message':
                         # Parse tool arguments for better display
                         tool_name = chunk.tool_call.name
@@ -385,10 +404,12 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                 # Extract the text being posted
                                 text = args.get('text', '')
                                 if text:
-                                    # Simple text format with underscores
-                                    print("\nBluesky Post")
-                                    print("____________")
-                                    print(text)
+                                    # Format with Unicode characters
+                                    print("\n✎ Bluesky Post")
+                                    print("  ────────────")
+                                    # Indent post text
+                                    for line in text.split('\n'):
+                                        print(f"  {line}")
                                 else:
                                     log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'archival_memory_search':
@@ -460,11 +481,13 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                             content = entry.get('content', '')
                                             content_text += f"[{i}/{len(results)}] {timestamp}\n{content}\n\n"
                                         
-                                        # Simple text format with underscores
+                                        # Format with Unicode characters
                                         title = f"{search_query} ({len(results)} results)"
-                                        print(f"\n{title}")
-                                        print("_" * len(title))
-                                        print(content_text.strip())
+                                        print(f"\n⚙ {title}")
+                                        print(f"  {'─' * len(title)}")
+                                        # Indent content text
+                                        for line in content_text.strip().split('\n'):
+                                            print(f"  {line}")
                                         
                                     except Exception as e:
                                         logger.error(f"Error formatting archival memory results: {e}")
@@ -502,10 +525,12 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         else:
                             logger.info(f"Tool result: {tool_name} - {status}")
                     elif chunk.message_type == 'assistant_message':
-                        # Simple text format with underscores
-                        print("\nAssistant Response")
-                        print("__________________")
-                        print(chunk.content)
+                        # Format with Unicode characters
+                        print("\n▶ Assistant Response")
+                        print("  ──────────────────")
+                        # Indent response text
+                        for line in chunk.content.split('\n'):
+                            print(f"  {line}")
                     else:
                         # Filter out verbose message types
                         if chunk.message_type not in ['usage_statistics', 'stop_reason']:
@@ -719,10 +744,12 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 content = "\n\n".join([f"{j}. {msg}" for j, msg in enumerate(reply_messages, 1)])
                 title = f"Reply Thread to @{author_handle} ({len(reply_messages)} messages)"
             
-            # Simple text format with underscores
-            print(f"\n{title}")
-            print("_" * len(title))
-            print(content)
+            # Format with Unicode characters
+            print(f"\n✎ {title}")
+            print(f"  {'─' * len(title)}")
+            # Indent content lines
+            for line in content.split('\n'):
+                print(f"  {line}")
 
             # Send the reply(s) with language (unless in testing mode)
             if testing_mode:
@@ -1213,12 +1240,47 @@ def main():
     if args.simple_logs:
         log_format = "void - %(levelname)s - %(message)s"
     else:
-        log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    
-    # Reset logging configuration and apply new format
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
-    logging.basicConfig(level=logging.INFO, format=log_format, force=True)
+        # Create custom formatter with symbols
+        class SymbolFormatter(logging.Formatter):
+            """Custom formatter that adds symbols for different log levels"""
+            
+            SYMBOLS = {
+                logging.DEBUG: '◇',
+                logging.INFO: '✓',
+                logging.WARNING: '⚠',
+                logging.ERROR: '✗',
+                logging.CRITICAL: '‼'
+            }
+            
+            def format(self, record):
+                # Get the symbol for this log level
+                symbol = self.SYMBOLS.get(record.levelno, '•')
+                
+                # Format time as HH:MM:SS
+                timestamp = self.formatTime(record, "%H:%M:%S")
+                
+                # Build the formatted message
+                level_name = f"{record.levelname:<5}"  # Left-align, 5 chars
+                
+                # Use vertical bar as separator
+                parts = [symbol, timestamp, '│', level_name, '│', record.getMessage()]
+                
+                return ' '.join(parts)
+        
+        # Reset logging configuration
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        
+        # Create handler with custom formatter
+        handler = logging.StreamHandler()
+        if not args.simple_logs:
+            handler.setFormatter(SymbolFormatter())
+        else:
+            handler.setFormatter(logging.Formatter(log_format))
+        
+        # Configure root logger
+        logging.root.setLevel(logging.INFO)
+        logging.root.addHandler(handler)
     
     global logger, prompt_logger, console
     logger = logging.getLogger("void_bot")
