@@ -17,6 +17,7 @@ from tools.blocks import attach_user_blocks, detach_user_blocks, user_note_appen
 from tools.halt import halt_activity, HaltArgs
 from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
+from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -97,6 +98,12 @@ TOOL_CONFIGS = [
         "args_schema": IgnoreNotificationArgs,
         "description": "Explicitly ignore a notification without replying (useful for ignoring bot interactions)",
         "tags": ["notification", "ignore", "control", "bot"]
+    },
+    {
+        "func": create_whitewind_blog_post,
+        "args_schema": WhitewindPostArgs,
+        "description": "Create a blog post on Whitewind with markdown support",
+        "tags": ["whitewind", "blog", "post", "markdown"]
     },
 ]
 
