@@ -101,7 +101,7 @@ def create_whitewind_blog_post(title: str, content: str, subtitle: Optional[str]
         if post_uri:
             rkey = post_uri.split("/")[-1]
             # Construct the Whitewind blog URL
-            blog_url = f"https://whtwnd.com/{handle}/entries/{rkey}"
+            blog_url = f"https://whtwnd.com/{handle}/{rkey}"
         else:
             blog_url = "URL generation failed"
         
