@@ -779,6 +779,28 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
 
             if response:
                 logger.info(f"Successfully replied to @{author_handle}")
+                
+                # Acknowledge the post we're replying to with stream.thought.ack
+                try:
+                    post_uri = notification_data.get('uri')
+                    post_cid = notification_data.get('cid')
+                    
+                    if post_uri and post_cid:
+                        ack_result = bsky_utils.acknowledge_post(
+                            client=atproto_client,
+                            post_uri=post_uri,
+                            post_cid=post_cid
+                        )
+                        if ack_result:
+                            logger.info(f"Successfully acknowledged post from @{author_handle} with stream.thought.ack")
+                        else:
+                            logger.warning(f"Failed to acknowledge post from @{author_handle}")
+                    else:
+                        logger.warning(f"Missing URI or CID for acknowledging post from @{author_handle}")
+                except Exception as e:
+                    logger.error(f"Error acknowledging post from @{author_handle}: {e}")
+                    # Don't fail the entire operation if acknowledgment fails
+                
                 return True
             else:
                 logger.error(f"Failed to send reply to @{author_handle}")

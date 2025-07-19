@@ -572,6 +572,80 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         return None
 
 
+def acknowledge_post(client: Client, post_uri: str, post_cid: str) -> Optional[Dict[str, Any]]:
+    """
+    Create a stream.thought.ack record to acknowledge a post.
+    
+    This creates a custom acknowledgment record instead of a standard Bluesky like,
+    allowing void to track which posts it has engaged with.
+    
+    Args:
+        client: Authenticated Bluesky client
+        post_uri: The URI of the post to acknowledge
+        post_cid: The CID of the post to acknowledge
+        
+    Returns:
+        The response from creating the acknowledgment record or None if failed
+    """
+    try:
+        import requests
+        from datetime import datetime, timezone
+        
+        # Get session info from the client
+        # The atproto Client stores the session differently
+        access_token = None
+        user_did = None
+        
+        # Try different ways to get the session info
+        if hasattr(client, '_session') and client._session:
+            access_token = client._session.access_jwt
+            user_did = client._session.did
+        elif hasattr(client, 'access_jwt'):
+            access_token = client.access_jwt
+            user_did = client.did if hasattr(client, 'did') else None
+        else:
+            logger.error("Cannot access client session information")
+            return None
+            
+        if not access_token or not user_did:
+            logger.error("Missing access token or DID from session")
+            return None
+            
+        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        
+        # Create acknowledgment record with stream.thought.ack type
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        ack_record = {
+            "$type": "stream.thought.ack",
+            "subject": {
+                "uri": post_uri,
+                "cid": post_cid
+            },
+            "createdAt": now
+        }
+        
+        # Create the record
+        headers = {"Authorization": f"Bearer {access_token}"}
+        create_record_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
+        
+        create_data = {
+            "repo": user_did,
+            "collection": "stream.thought.ack",
+            "record": ack_record
+        }
+        
+        response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        
+        logger.info(f"Successfully acknowledged post: {post_uri}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error acknowledging post: {e}")
+        return None
+
+
 if __name__ == "__main__":
     client = default_login()
     # do something with the client
