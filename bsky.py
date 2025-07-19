@@ -602,6 +602,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         # Extract successful add_post_to_bluesky_reply_thread tool calls from the agent's response
         reply_candidates = []
         tool_call_results = {}  # Map tool_call_id to status
+        ack_note = None  # Track any note from annotate_ack tool
         
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
         
@@ -693,6 +694,17 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                     export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
                     logger.info("=== BOT TERMINATED DUE TO DEPRECATED TOOL USE ===")
                     exit(1)
+                
+                # Collect annotate_ack tool calls
+                elif message.tool_call.name == 'annotate_ack':
+                    try:
+                        args = json.loads(message.tool_call.arguments)
+                        note = args.get('note', '')
+                        if note:
+                            ack_note = note
+                            logger.debug(f"Found annotate_ack with note: {note[:50]}...")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse annotate_ack arguments: {e}")
                 
                 # Collect add_post_to_bluesky_reply_thread tool calls - only if they were successful
                 elif message.tool_call.name == 'add_post_to_bluesky_reply_thread':
@@ -789,10 +801,14 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         ack_result = bsky_utils.acknowledge_post(
                             client=atproto_client,
                             post_uri=post_uri,
-                            post_cid=post_cid
+                            post_cid=post_cid,
+                            note=ack_note
                         )
                         if ack_result:
-                            logger.info(f"Successfully acknowledged post from @{author_handle} with stream.thought.ack")
+                            if ack_note:
+                                logger.info(f"Successfully acknowledged post from @{author_handle} with stream.thought.ack (note: \"{ack_note[:50]}...\")")
+                            else:
+                                logger.info(f"Successfully acknowledged post from @{author_handle} with stream.thought.ack")
                         else:
                             logger.warning(f"Failed to acknowledge post from @{author_handle}")
                     else:

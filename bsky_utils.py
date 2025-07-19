@@ -572,7 +572,7 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         return None
 
 
-def acknowledge_post(client: Client, post_uri: str, post_cid: str) -> Optional[Dict[str, Any]]:
+def acknowledge_post(client: Client, post_uri: str, post_cid: str, note: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Create a stream.thought.ack record to acknowledge a post.
     
@@ -583,6 +583,7 @@ def acknowledge_post(client: Client, post_uri: str, post_cid: str) -> Optional[D
         client: Authenticated Bluesky client
         post_uri: The URI of the post to acknowledge
         post_cid: The CID of the post to acknowledge
+        note: Optional note to attach to the acknowledgment
         
     Returns:
         The response from creating the acknowledgment record or None if failed
@@ -621,7 +622,8 @@ def acknowledge_post(client: Client, post_uri: str, post_cid: str) -> Optional[D
                 "uri": post_uri,
                 "cid": post_cid
             },
-            "createdAt": now
+            "createdAt": now,
+            "note": note  # Will be null if no note provided
         }
         
         # Create the record
