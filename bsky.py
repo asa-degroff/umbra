@@ -274,6 +274,16 @@ def process_mention(void_agent, atproto_client, notification_data, queue_filepat
             thread_context = thread_to_yaml_string(thread)
             logger.debug(f"Thread context generated, length: {len(thread_context)} characters")
             
+            # Check if #voidstop appears anywhere in the thread
+            if "#voidstop" in thread_context.lower():
+                logger.info("Found #voidstop in thread context, skipping this mention")
+                return True  # Return True to remove from queue
+            
+            # Also check the mention text directly
+            if "#voidstop" in mention_text.lower():
+                logger.info("Found #voidstop in mention text, skipping this mention")
+                return True  # Return True to remove from queue
+            
             # Create a more informative preview by extracting meaningful content
             lines = thread_context.split('\n')
             meaningful_lines = []
