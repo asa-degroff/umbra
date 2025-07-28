@@ -408,56 +408,62 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str, la
         if isinstance(notification, dict):
             post_uri = notification.get('uri')
             post_cid = notification.get('cid')
+            # Check if the notification record has reply info with root
+            record = notification.get('record', {})
+            reply_info = record.get('reply') if isinstance(record, dict) else None
         elif hasattr(notification, 'uri') and hasattr(notification, 'cid'):
             post_uri = notification.uri
             post_cid = notification.cid
+            # Check if the notification record has reply info with root
+            reply_info = None
+            if hasattr(notification, 'record') and hasattr(notification.record, 'reply'):
+                reply_info = notification.record.reply
         else:
             post_uri = None
             post_cid = None
+            reply_info = None
 
         if not post_uri or not post_cid:
             logger.error("Notification doesn't have required uri/cid fields")
             return None
 
-        # Get the thread to find the root post
-        thread_data = get_post_thread(client, post_uri)
-
-        if thread_data and hasattr(thread_data, 'thread'):
-            thread = thread_data.thread
-
-            # Find root post
+        # Determine root: if post has reply info, use its root; otherwise this post IS the root
+        if reply_info:
+            # Extract root from the notification's reply structure
+            if isinstance(reply_info, dict):
+                root_ref = reply_info.get('root')
+                if root_ref and isinstance(root_ref, dict):
+                    root_uri = root_ref.get('uri', post_uri)
+                    root_cid = root_ref.get('cid', post_cid)
+                else:
+                    # No root in reply info, use post as root
+                    root_uri = post_uri
+                    root_cid = post_cid
+            elif hasattr(reply_info, 'root'):
+                if hasattr(reply_info.root, 'uri') and hasattr(reply_info.root, 'cid'):
+                    root_uri = reply_info.root.uri
+                    root_cid = reply_info.root.cid
+                else:
+                    root_uri = post_uri
+                    root_cid = post_cid
+            else:
+                root_uri = post_uri
+                root_cid = post_cid
+        else:
+            # No reply info means this post IS the root
             root_uri = post_uri
             root_cid = post_cid
 
-            # If this has a parent, find the root
-            if hasattr(thread, 'parent') and thread.parent:
-                # Keep going up until we find the root
-                current = thread
-                while hasattr(current, 'parent') and current.parent:
-                    current = current.parent
-                    if hasattr(current, 'post') and hasattr(current.post, 'uri') and hasattr(current.post, 'cid'):
-                        root_uri = current.post.uri
-                        root_cid = current.post.cid
-
-            # Reply to the notification
-            return reply_to_post(
-                client=client,
-                text=reply_text,
-                reply_to_uri=post_uri,
-                reply_to_cid=post_cid,
-                root_uri=root_uri,
-                root_cid=root_cid,
-                lang=lang
-            )
-        else:
-            # If we can't get thread data, just reply directly
-            return reply_to_post(
-                client=client,
-                text=reply_text,
-                reply_to_uri=post_uri,
-                reply_to_cid=post_cid,
-                lang=lang
-            )
+        # Reply to the notification
+        return reply_to_post(
+            client=client,
+            text=reply_text,
+            reply_to_uri=post_uri,
+            reply_to_cid=post_cid,
+            root_uri=root_uri,
+            root_cid=root_cid,
+            lang=lang
+        )
 
     except Exception as e:
         logger.error(f"Error replying to notification: {e}")
@@ -490,34 +496,51 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         if isinstance(notification, dict):
             post_uri = notification.get('uri')
             post_cid = notification.get('cid')
+            # Check if the notification record has reply info with root
+            record = notification.get('record', {})
+            reply_info = record.get('reply') if isinstance(record, dict) else None
         elif hasattr(notification, 'uri') and hasattr(notification, 'cid'):
             post_uri = notification.uri
             post_cid = notification.cid
+            # Check if the notification record has reply info with root
+            reply_info = None
+            if hasattr(notification, 'record') and hasattr(notification.record, 'reply'):
+                reply_info = notification.record.reply
         else:
             post_uri = None
             post_cid = None
+            reply_info = None
 
         if not post_uri or not post_cid:
             logger.error("Notification doesn't have required uri/cid fields")
             return None
 
-        # Get the thread to find the root post
-        thread_data = get_post_thread(client, post_uri)
-        
-        root_uri = post_uri
-        root_cid = post_cid
-
-        if thread_data and hasattr(thread_data, 'thread'):
-            thread = thread_data.thread
-            # If this has a parent, find the root
-            if hasattr(thread, 'parent') and thread.parent:
-                # Keep going up until we find the root
-                current = thread
-                while hasattr(current, 'parent') and current.parent:
-                    current = current.parent
-                    if hasattr(current, 'post') and hasattr(current.post, 'uri') and hasattr(current.post, 'cid'):
-                        root_uri = current.post.uri
-                        root_cid = current.post.cid
+        # Determine root: if post has reply info, use its root; otherwise this post IS the root
+        if reply_info:
+            # Extract root from the notification's reply structure
+            if isinstance(reply_info, dict):
+                root_ref = reply_info.get('root')
+                if root_ref and isinstance(root_ref, dict):
+                    root_uri = root_ref.get('uri', post_uri)
+                    root_cid = root_ref.get('cid', post_cid)
+                else:
+                    # No root in reply info, use post as root
+                    root_uri = post_uri
+                    root_cid = post_cid
+            elif hasattr(reply_info, 'root'):
+                if hasattr(reply_info.root, 'uri') and hasattr(reply_info.root, 'cid'):
+                    root_uri = reply_info.root.uri
+                    root_cid = reply_info.root.cid
+                else:
+                    root_uri = post_uri
+                    root_cid = post_cid
+            else:
+                root_uri = post_uri
+                root_cid = post_cid
+        else:
+            # No reply info means this post IS the root
+            root_uri = post_uri
+            root_cid = post_cid
 
         # Send replies in sequence, creating a thread
         responses = []
