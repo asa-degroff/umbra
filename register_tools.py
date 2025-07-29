@@ -19,6 +19,7 @@ from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
 from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
 from tools.ack import annotate_ack, AnnotateAckArgs
+from tools.webpage import fetch_webpage, WebpageArgs
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -111,6 +112,12 @@ TOOL_CONFIGS = [
         "args_schema": AnnotateAckArgs,
         "description": "Add a note to the acknowledgment record for the current post interaction",
         "tags": ["acknowledgment", "note", "annotation", "metadata"]
+    },
+    {
+        "func": fetch_webpage,
+        "args_schema": WebpageArgs,
+        "description": "Fetch a webpage and convert it to markdown/text format using Jina AI reader",
+        "tags": ["web", "fetch", "webpage", "markdown", "jina"]
     },
 ]
 
