@@ -5,6 +5,7 @@ import yaml
 import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from requests_oauthlib import OAuth1
 
 # Configure logging
 logging.basicConfig(
@@ -15,30 +16,78 @@ logger = logging.getLogger("x_client")
 class XClient:
     """X (Twitter) API client for fetching mentions and managing interactions."""
     
-    def __init__(self, api_key: str, user_id: str):
+    def __init__(self, api_key: str, user_id: str, access_token: str = None, 
+                 consumer_key: str = None, consumer_secret: str = None, 
+                 access_token_secret: str = None):
         self.api_key = api_key
+        self.access_token = access_token
         self.user_id = user_id
         self.base_url = "https://api.x.com/2"
-        self.headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
+        
+        # Check if we have OAuth 1.0a credentials
+        if (consumer_key and consumer_secret and access_token and access_token_secret):
+            # Use OAuth 1.0a for User Context
+            self.oauth = OAuth1(
+                consumer_key,
+                client_secret=consumer_secret,
+                resource_owner_key=access_token,
+                resource_owner_secret=access_token_secret
+            )
+            self.headers = {"Content-Type": "application/json"}
+            self.auth_method = "oauth1a"
+            logger.info("Using OAuth 1.0a User Context authentication for X API")
+        elif access_token:
+            # Use OAuth 2.0 Bearer token for User Context
+            self.oauth = None
+            self.headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+            self.auth_method = "oauth2_user"
+            logger.info("Using OAuth 2.0 User Context access token for X API")
+        else:
+            # Use Application-Only Bearer token
+            self.oauth = None
+            self.headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            self.auth_method = "bearer"
+            logger.info("Using Application-Only Bearer token for X API")
     
-    def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    def _make_request(self, endpoint: str, params: Optional[Dict] = None, method: str = "GET", data: Optional[Dict] = None) -> Optional[Dict]:
         """Make a request to the X API with proper error handling."""
         url = f"{self.base_url}{endpoint}"
         
         try:
-            response = requests.get(url, headers=self.headers, params=params)
+            if method.upper() == "GET":
+                if self.oauth:
+                    response = requests.get(url, headers=self.headers, params=params, auth=self.oauth)
+                else:
+                    response = requests.get(url, headers=self.headers, params=params)
+            elif method.upper() == "POST":
+                if self.oauth:
+                    response = requests.post(url, headers=self.headers, json=data, auth=self.oauth)
+                else:
+                    response = requests.post(url, headers=self.headers, json=data)
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+                
             response.raise_for_status()
             return response.json()
         except requests.exceptions.HTTPError as e:
             if response.status_code == 401:
-                logger.error("X API authentication failed - check your bearer token")
+                logger.error(f"X API authentication failed with {self.auth_method} - check your credentials")
+                logger.error(f"Response: {response.text}")
+            elif response.status_code == 403:
+                logger.error(f"X API forbidden with {self.auth_method} - check app permissions")
+                logger.error(f"Response: {response.text}")
             elif response.status_code == 429:
                 logger.error("X API rate limit exceeded")
+                logger.error(f"Response: {response.text}")
             else:
                 logger.error(f"X API request failed: {e}")
+                logger.error(f"Response: {response.text}")
             return None
         except Exception as e:
             logger.error(f"Unexpected error making X API request: {e}")
@@ -113,32 +162,14 @@ class XClient:
             }
         }
         
-        try:
-            url = f"{self.base_url}{endpoint}"
-            response = requests.post(url, headers=self.headers, json=payload)
-            response.raise_for_status()
-            
-            result = response.json()
+        logger.info(f"Attempting to post reply with {self.auth_method} authentication")
+        result = self._make_request(endpoint, method="POST", data=payload)
+        
+        if result:
             logger.info(f"Successfully posted reply to tweet {in_reply_to_tweet_id}")
             return result
-            
-        except requests.exceptions.HTTPError as e:
-            if response.status_code == 401:
-                logger.error("X API authentication failed for posting - check your bearer token")
-                logger.error(f"Response: {response.text}")
-            elif response.status_code == 403:
-                logger.error("X API posting forbidden - likely app permissions issue")
-                logger.error("Check that your X app has 'Read and Write' permissions enabled")
-                logger.error(f"Response: {response.text}")
-            elif response.status_code == 429:
-                logger.error("X API rate limit exceeded for posting")
-                logger.error(f"Response: {response.text}")
-            else:
-                logger.error(f"X API post request failed: {e}")
-                logger.error(f"Response content: {response.text}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error posting to X: {e}")
+        else:
+            logger.error("Failed to post reply")
             return None
 
 def load_x_config(config_path: str = "config.yaml") -> Dict[str, str]:
@@ -159,7 +190,14 @@ def load_x_config(config_path: str = "config.yaml") -> Dict[str, str]:
 def create_x_client(config_path: str = "config.yaml") -> XClient:
     """Create and return an X client with configuration loaded from file."""
     config = load_x_config(config_path)
-    return XClient(config['api_key'], config['user_id'])
+    return XClient(
+        api_key=config['api_key'],
+        user_id=config['user_id'],
+        access_token=config.get('access_token'),
+        consumer_key=config.get('consumer_key'),
+        consumer_secret=config.get('consumer_secret'),
+        access_token_secret=config.get('access_token_secret')
+    )
 
 def mention_to_yaml_string(mention: Dict, users_data: Optional[Dict] = None) -> str:
     """
