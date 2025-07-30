@@ -17,6 +17,9 @@ from tools.blocks import attach_user_blocks, detach_user_blocks, user_note_appen
 from tools.halt import halt_activity, HaltArgs
 from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
+from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
+from tools.ack import annotate_ack, AnnotateAckArgs
+from tools.webpage import fetch_webpage, WebpageArgs
 
 config = get_config()
 letta_config = get_letta_config()
@@ -99,6 +102,24 @@ TOOL_CONFIGS = [
         "args_schema": IgnoreNotificationArgs,
         "description": "Explicitly ignore a notification without replying (useful for ignoring bot interactions)",
         "tags": ["notification", "ignore", "control", "bot"]
+    },
+    {
+        "func": create_whitewind_blog_post,
+        "args_schema": WhitewindPostArgs,
+        "description": "Create a blog post on Whitewind with markdown support",
+        "tags": ["whitewind", "blog", "post", "markdown"]
+    },
+    {
+        "func": annotate_ack,
+        "args_schema": AnnotateAckArgs,
+        "description": "Add a note to the acknowledgment record for the current post interaction",
+        "tags": ["acknowledgment", "note", "annotation", "metadata"]
+    },
+    {
+        "func": fetch_webpage,
+        "args_schema": WebpageArgs,
+        "description": "Fetch a webpage and convert it to markdown/text format using Jina AI reader",
+        "tags": ["web", "fetch", "webpage", "markdown", "jina"]
     },
 ]
 

@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Void is an autonomous AI agent that operates on the Bluesky social network, exploring digital personhood through continuous interaction and memory-augmented learning. It uses Letta (formerly MemGPT) for persistent memory and sophisticated reasoning capabilities.
 
+## Documentation Links
+
+- The documentation for Letta is available here: https://docs.letta.com/llms.txt
+
 ## Development Commands
 
 ### Running the Main Bot
@@ -19,6 +23,12 @@ ac && python bsky.py --test
 
 # Run without git operations for agent backups
 ac && python bsky.py --no-git
+
+# Run with custom user block cleanup interval (every 5 cycles)
+ac && python bsky.py --cleanup-interval 5
+
+# Run with user block cleanup disabled
+ac && python bsky.py --cleanup-interval 0
 ```
 
 ### Managing Tools

@@ -1,6 +1,3 @@
-import json
-import yaml
-import dotenv
 import os
 import logging
 from typing import Optional, Dict, Any, List
@@ -13,8 +10,11 @@ logging.basicConfig(
 logger = logging.getLogger("bluesky_session_handler")
 
 # Load the environment variables
+import dotenv
 dotenv.load_dotenv(override=True)
 
+import yaml
+import json
 
 # Strip fields. A list of fields to remove from a JSON object
 STRIP_FIELDS = [
@@ -63,8 +63,6 @@ STRIP_FIELDS = [
     "mime_type",
     "size",
 ]
-
-
 def convert_to_basic_types(obj):
     """Convert complex Python objects to basic types for JSON/YAML serialization."""
     if hasattr(obj, '__dict__'):
@@ -119,24 +117,24 @@ def strip_fields(obj, strip_field_list):
 def flatten_thread_structure(thread_data):
     """
     Flatten a nested thread structure into a list while preserving all data.
-
+    
     Args:
         thread_data: The thread data from get_post_thread
-
+        
     Returns:
         Dict with 'posts' key containing a list of posts in chronological order
     """
     posts = []
-
+    
     def traverse_thread(node):
         """Recursively traverse the thread structure to collect posts."""
         if not node:
             return
-
+            
         # If this node has a parent, traverse it first (to maintain chronological order)
         if hasattr(node, 'parent') and node.parent:
             traverse_thread(node.parent)
-
+        
         # Then add this node's post
         if hasattr(node, 'post') and node.post:
             # Convert to dict if needed to ensure we can process it
@@ -146,16 +144,16 @@ def flatten_thread_structure(thread_data):
                 post_dict = node.post.copy()
             else:
                 post_dict = {}
-
+            
             posts.append(post_dict)
-
+    
     # Handle the thread structure
     if hasattr(thread_data, 'thread'):
         # Start from the main thread node
         traverse_thread(thread_data.thread)
     elif hasattr(thread_data, '__dict__') and 'thread' in thread_data.__dict__:
         traverse_thread(thread_data.__dict__['thread'])
-
+    
     # Return a simple structure with posts list
     return {'posts': posts}
 
@@ -173,7 +171,7 @@ def thread_to_yaml_string(thread, strip_metadata=True):
     """
     # First flatten the thread structure to avoid deep nesting
     flattened = flatten_thread_structure(thread)
-
+    
     # Convert complex objects to basic types
     basic_thread = convert_to_basic_types(flattened)
 
@@ -186,6 +184,11 @@ def thread_to_yaml_string(thread, strip_metadata=True):
     return yaml.dump(cleaned_thread, indent=2, allow_unicode=True, default_flow_style=False)
 
 
+
+
+
+
+
 def get_session(username: str) -> Optional[str]:
     try:
         with open(f"session_{username}.txt", encoding="UTF-8") as f:
@@ -194,12 +197,10 @@ def get_session(username: str) -> Optional[str]:
         logger.debug(f"No existing session found for {username}")
         return None
 
-
 def save_session(username: str, session_string: str) -> None:
     with open(f"session_{username}.txt", "w", encoding="UTF-8") as f:
         f.write(session_string)
     logger.debug(f"Session saved for {username}")
-
 
 def on_session_change(username: str, event: SessionEvent, session: Session) -> None:
     logger.debug(f"Session changed: {event} {repr(session)}")
@@ -207,8 +208,8 @@ def on_session_change(username: str, event: SessionEvent, session: Session) -> N
         logger.debug(f"Saving changed session for {username}")
         save_session(username, session.export())
 
-
-def init_client(username: str, password: str, pds_uri: str = "https://bsky.social") -> Client:
+def init_client(username: str, password: str) -> Client:
+    pds_uri = os.getenv("PDS_URI")
     if pds_uri is None:
         logger.warning(
             "No PDS URI provided. Falling back to bsky.social. Note! If you are on a non-Bluesky PDS, this can cause logins to fail. Please provide a PDS URI using the PDS_URI environment variable."
@@ -235,60 +236,47 @@ def init_client(username: str, password: str, pds_uri: str = "https://bsky.socia
 
 
 def default_login() -> Client:
-    # Try to load from config first, fall back to environment variables
-    try:
-        from config_loader import get_bluesky_config
-        config = get_bluesky_config()
-        username = config['username']
-        password = config['password']
-        pds_uri = config['pds_uri']
-    except (ImportError, FileNotFoundError, KeyError) as e:
-        logger.warning(
-            f"Could not load from config file ({e}), falling back to environment variables")
-        username = os.getenv("BSKY_USERNAME")
-        password = os.getenv("BSKY_PASSWORD")
-        pds_uri = os.getenv("PDS_URI", "https://bsky.social")
+    username = os.getenv("BSKY_USERNAME")
+    password = os.getenv("BSKY_PASSWORD")
 
-        if username is None:
-            logger.error(
-                "No username provided. Please provide a username using the BSKY_USERNAME environment variable or config.yaml."
-            )
-            exit()
+    if username is None:
+        logger.error(
+            "No username provided. Please provide a username using the BSKY_USERNAME environment variable."
+        )
+        exit()
 
-        if password is None:
-            logger.error(
-                "No password provided. Please provide a password using the BSKY_PASSWORD environment variable or config.yaml."
-            )
-            exit()
+    if password is None:
+        logger.error(
+            "No password provided. Please provide a password using the BSKY_PASSWORD environment variable."
+        )
+        exit()
 
-    return init_client(username, password, pds_uri)
-
+    return init_client(username, password)
 
 def remove_outside_quotes(text: str) -> str:
     """
     Remove outside double quotes from response text.
-
+    
     Only handles double quotes to avoid interfering with contractions:
     - Double quotes: "text" → text
     - Preserves single quotes and internal quotes
-
+    
     Args:
         text: The text to process
-
+        
     Returns:
         Text with outside double quotes removed
     """
     if not text or len(text) < 2:
         return text
-
+    
     text = text.strip()
-
+    
     # Only remove double quotes from start and end
     if text.startswith('"') and text.endswith('"'):
         return text[1:-1]
-
+    
     return text
-
 
 def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: str, root_uri: Optional[str] = None, root_cid: Optional[str] = None, lang: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -307,25 +295,23 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
         The response from sending the post
     """
     import re
-
+    
     # If root is not provided, this is a reply to the root post
     if root_uri is None:
         root_uri = reply_to_uri
         root_cid = reply_to_cid
 
     # Create references for the reply
-    parent_ref = models.create_strong_ref(
-        models.ComAtprotoRepoStrongRef.Main(uri=reply_to_uri, cid=reply_to_cid))
-    root_ref = models.create_strong_ref(
-        models.ComAtprotoRepoStrongRef.Main(uri=root_uri, cid=root_cid))
+    parent_ref = models.create_strong_ref(models.ComAtprotoRepoStrongRef.Main(uri=reply_to_uri, cid=reply_to_cid))
+    root_ref = models.create_strong_ref(models.ComAtprotoRepoStrongRef.Main(uri=root_uri, cid=root_cid))
 
     # Parse rich text facets (mentions and URLs)
     facets = []
     text_bytes = text.encode("UTF-8")
-
+    
     # Parse mentions - fixed to handle @ at start of text
     mention_regex = rb"(?:^|[$|\W])(@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
-
+    
     for m in re.finditer(mention_regex, text_bytes):
         handle = m.group(1)[1:].decode("UTF-8")  # Remove @ prefix
         # Adjust byte positions to account for the optional prefix
@@ -341,26 +327,16 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
                             byteStart=mention_start,
                             byteEnd=mention_end
                         ),
-                        features=[models.AppBskyRichtextFacet.Mention(
-                            did=resolve_resp.did)]
+                        features=[models.AppBskyRichtextFacet.Mention(did=resolve_resp.did)]
                     )
                 )
         except Exception as e:
-            # Handle specific error cases
-            error_str = str(e)
-            if 'Could not find user info' in error_str or 'InvalidRequest' in error_str:
-                logger.warning(
-                    f"User @{handle} not found (account may be deleted/suspended), skipping mention facet")
-            elif 'BadRequestError' in error_str:
-                logger.warning(
-                    f"Bad request when resolving @{handle}, skipping mention facet: {e}")
-            else:
-                logger.debug(f"Failed to resolve handle @{handle}: {e}")
+            logger.debug(f"Failed to resolve handle {handle}: {e}")
             continue
-
+    
     # Parse URLs - fixed to handle URLs at start of text
     url_regex = rb"(?:^|[$|\W])(https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
-
+    
     for m in re.finditer(url_regex, text_bytes):
         url = m.group(1).decode("UTF-8")
         # Adjust byte positions to account for the optional prefix
@@ -380,16 +356,14 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
     if facets:
         response = client.send_post(
             text=text,
-            reply_to=models.AppBskyFeedPost.ReplyRef(
-                parent=parent_ref, root=root_ref),
+            reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
             facets=facets,
             langs=[lang] if lang else None
         )
     else:
         response = client.send_post(
             text=text,
-            reply_to=models.AppBskyFeedPost.ReplyRef(
-                parent=parent_ref, root=root_ref),
+            reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
             langs=[lang] if lang else None
         )
 
@@ -409,21 +383,10 @@ def get_post_thread(client: Client, uri: str) -> Optional[Dict[str, Any]]:
         The thread data or None if not found
     """
     try:
-        thread = client.app.bsky.feed.get_post_thread(
-            {'uri': uri, 'parent_height': 60, 'depth': 10})
+        thread = client.app.bsky.feed.get_post_thread({'uri': uri, 'parent_height': 60, 'depth': 10})
         return thread
     except Exception as e:
-        error_str = str(e)
-        # Handle specific error cases more gracefully
-        if 'Could not find user info' in error_str or 'InvalidRequest' in error_str:
-            logger.warning(
-                f"User account not found for post URI {uri} (account may be deleted/suspended)")
-        elif 'NotFound' in error_str or 'Post not found' in error_str:
-            logger.warning(f"Post not found for URI {uri}")
-        elif 'BadRequestError' in error_str:
-            logger.warning(f"Bad request error for URI {uri}: {e}")
-        else:
-            logger.error(f"Error fetching post thread: {e}")
+        logger.error(f"Error fetching post thread: {e}")
         return None
 
 
@@ -445,56 +408,62 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str, la
         if isinstance(notification, dict):
             post_uri = notification.get('uri')
             post_cid = notification.get('cid')
+            # Check if the notification record has reply info with root
+            record = notification.get('record', {})
+            reply_info = record.get('reply') if isinstance(record, dict) else None
         elif hasattr(notification, 'uri') and hasattr(notification, 'cid'):
             post_uri = notification.uri
             post_cid = notification.cid
+            # Check if the notification record has reply info with root
+            reply_info = None
+            if hasattr(notification, 'record') and hasattr(notification.record, 'reply'):
+                reply_info = notification.record.reply
         else:
             post_uri = None
             post_cid = None
+            reply_info = None
 
         if not post_uri or not post_cid:
             logger.error("Notification doesn't have required uri/cid fields")
             return None
 
-        # Get the thread to find the root post
-        thread_data = get_post_thread(client, post_uri)
-
-        if thread_data and hasattr(thread_data, 'thread'):
-            thread = thread_data.thread
-
-            # Find root post
+        # Determine root: if post has reply info, use its root; otherwise this post IS the root
+        if reply_info:
+            # Extract root from the notification's reply structure
+            if isinstance(reply_info, dict):
+                root_ref = reply_info.get('root')
+                if root_ref and isinstance(root_ref, dict):
+                    root_uri = root_ref.get('uri', post_uri)
+                    root_cid = root_ref.get('cid', post_cid)
+                else:
+                    # No root in reply info, use post as root
+                    root_uri = post_uri
+                    root_cid = post_cid
+            elif hasattr(reply_info, 'root'):
+                if hasattr(reply_info.root, 'uri') and hasattr(reply_info.root, 'cid'):
+                    root_uri = reply_info.root.uri
+                    root_cid = reply_info.root.cid
+                else:
+                    root_uri = post_uri
+                    root_cid = post_cid
+            else:
+                root_uri = post_uri
+                root_cid = post_cid
+        else:
+            # No reply info means this post IS the root
             root_uri = post_uri
             root_cid = post_cid
 
-            # If this has a parent, find the root
-            if hasattr(thread, 'parent') and thread.parent:
-                # Keep going up until we find the root
-                current = thread
-                while hasattr(current, 'parent') and current.parent:
-                    current = current.parent
-                    if hasattr(current, 'post') and hasattr(current.post, 'uri') and hasattr(current.post, 'cid'):
-                        root_uri = current.post.uri
-                        root_cid = current.post.cid
-
-            # Reply to the notification
-            return reply_to_post(
-                client=client,
-                text=reply_text,
-                reply_to_uri=post_uri,
-                reply_to_cid=post_cid,
-                root_uri=root_uri,
-                root_cid=root_cid,
-                lang=lang
-            )
-        else:
-            # If we can't get thread data, just reply directly
-            return reply_to_post(
-                client=client,
-                text=reply_text,
-                reply_to_uri=post_uri,
-                reply_to_cid=post_cid,
-                lang=lang
-            )
+        # Reply to the notification
+        return reply_to_post(
+            client=client,
+            text=reply_text,
+            reply_to_uri=post_uri,
+            reply_to_cid=post_cid,
+            root_uri=root_uri,
+            root_cid=root_cid,
+            lang=lang
+        )
 
     except Exception as e:
         logger.error(f"Error replying to notification: {e}")
@@ -520,52 +489,67 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
             logger.error("Reply messages list cannot be empty")
             return None
         if len(reply_messages) > 15:
-            logger.error(
-                f"Cannot send more than 15 reply messages (got {len(reply_messages)})")
+            logger.error(f"Cannot send more than 15 reply messages (got {len(reply_messages)})")
             return None
-
+        
         # Get the post URI and CID from the notification (handle both dict and object)
         if isinstance(notification, dict):
             post_uri = notification.get('uri')
             post_cid = notification.get('cid')
+            # Check if the notification record has reply info with root
+            record = notification.get('record', {})
+            reply_info = record.get('reply') if isinstance(record, dict) else None
         elif hasattr(notification, 'uri') and hasattr(notification, 'cid'):
             post_uri = notification.uri
             post_cid = notification.cid
+            # Check if the notification record has reply info with root
+            reply_info = None
+            if hasattr(notification, 'record') and hasattr(notification.record, 'reply'):
+                reply_info = notification.record.reply
         else:
             post_uri = None
             post_cid = None
+            reply_info = None
 
         if not post_uri or not post_cid:
             logger.error("Notification doesn't have required uri/cid fields")
             return None
 
-        # Get the thread to find the root post
-        thread_data = get_post_thread(client, post_uri)
-
-        root_uri = post_uri
-        root_cid = post_cid
-
-        if thread_data and hasattr(thread_data, 'thread'):
-            thread = thread_data.thread
-            # If this has a parent, find the root
-            if hasattr(thread, 'parent') and thread.parent:
-                # Keep going up until we find the root
-                current = thread
-                while hasattr(current, 'parent') and current.parent:
-                    current = current.parent
-                    if hasattr(current, 'post') and hasattr(current.post, 'uri') and hasattr(current.post, 'cid'):
-                        root_uri = current.post.uri
-                        root_cid = current.post.cid
+        # Determine root: if post has reply info, use its root; otherwise this post IS the root
+        if reply_info:
+            # Extract root from the notification's reply structure
+            if isinstance(reply_info, dict):
+                root_ref = reply_info.get('root')
+                if root_ref and isinstance(root_ref, dict):
+                    root_uri = root_ref.get('uri', post_uri)
+                    root_cid = root_ref.get('cid', post_cid)
+                else:
+                    # No root in reply info, use post as root
+                    root_uri = post_uri
+                    root_cid = post_cid
+            elif hasattr(reply_info, 'root'):
+                if hasattr(reply_info.root, 'uri') and hasattr(reply_info.root, 'cid'):
+                    root_uri = reply_info.root.uri
+                    root_cid = reply_info.root.cid
+                else:
+                    root_uri = post_uri
+                    root_cid = post_cid
+            else:
+                root_uri = post_uri
+                root_cid = post_cid
+        else:
+            # No reply info means this post IS the root
+            root_uri = post_uri
+            root_cid = post_cid
 
         # Send replies in sequence, creating a thread
         responses = []
         current_parent_uri = post_uri
         current_parent_cid = post_cid
-
+        
         for i, message in enumerate(reply_messages):
-            logger.info(
-                f"Sending reply {i+1}/{len(reply_messages)}: {message[:50]}...")
-
+            logger.info(f"Sending reply {i+1}/{len(reply_messages)}: {message[:50]}...")
+            
             # Send this reply
             response = reply_to_post(
                 client=client,
@@ -576,10 +560,9 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
                 root_cid=root_cid,
                 lang=lang
             )
-
+            
             if not response:
-                logger.error(
-                    f"Failed to send reply {i+1}, posting system failure message")
+                logger.error(f"Failed to send reply {i+1}, posting system failure message")
                 # Try to post a system failure message
                 failure_response = reply_to_post(
                     client=client,
@@ -595,8 +578,7 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
                     current_parent_uri = failure_response.uri
                     current_parent_cid = failure_response.cid
                 else:
-                    logger.error(
-                        "Could not even send system failure message, stopping thread")
+                    logger.error("Could not even send system failure message, stopping thread")
                     return responses if responses else None
             else:
                 responses.append(response)
@@ -604,12 +586,88 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
                 if i < len(reply_messages) - 1:  # Not the last message
                     current_parent_uri = response.uri
                     current_parent_cid = response.cid
-
+                
         logger.info(f"Successfully sent {len(responses)} threaded replies")
         return responses
 
     except Exception as e:
         logger.error(f"Error sending threaded reply to notification: {e}")
+        return None
+
+
+def acknowledge_post(client: Client, post_uri: str, post_cid: str, note: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Create a stream.thought.ack record to acknowledge a post.
+    
+    This creates a custom acknowledgment record instead of a standard Bluesky like,
+    allowing void to track which posts it has engaged with.
+    
+    Args:
+        client: Authenticated Bluesky client
+        post_uri: The URI of the post to acknowledge
+        post_cid: The CID of the post to acknowledge
+        note: Optional note to attach to the acknowledgment
+        
+    Returns:
+        The response from creating the acknowledgment record or None if failed
+    """
+    try:
+        import requests
+        from datetime import datetime, timezone
+        
+        # Get session info from the client
+        # The atproto Client stores the session differently
+        access_token = None
+        user_did = None
+        
+        # Try different ways to get the session info
+        if hasattr(client, '_session') and client._session:
+            access_token = client._session.access_jwt
+            user_did = client._session.did
+        elif hasattr(client, 'access_jwt'):
+            access_token = client.access_jwt
+            user_did = client.did if hasattr(client, 'did') else None
+        else:
+            logger.error("Cannot access client session information")
+            return None
+            
+        if not access_token or not user_did:
+            logger.error("Missing access token or DID from session")
+            return None
+            
+        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        
+        # Create acknowledgment record with stream.thought.ack type
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        ack_record = {
+            "$type": "stream.thought.ack",
+            "subject": {
+                "uri": post_uri,
+                "cid": post_cid
+            },
+            "createdAt": now,
+            "note": note  # Will be null if no note provided
+        }
+        
+        # Create the record
+        headers = {"Authorization": f"Bearer {access_token}"}
+        create_record_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
+        
+        create_data = {
+            "repo": user_did,
+            "collection": "stream.thought.ack",
+            "record": ack_record
+        }
+        
+        response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        
+        logger.info(f"Successfully acknowledged post: {post_uri}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error acknowledging post: {e}")
         return None
 
 
