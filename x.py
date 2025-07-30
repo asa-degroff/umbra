@@ -92,6 +92,50 @@ class XClient:
         
         response = self._make_request(endpoint, params)
         return response.get("data") if response else None
+    
+    def post_reply(self, reply_text: str, in_reply_to_tweet_id: str) -> Optional[Dict]:
+        """
+        Post a reply to a specific tweet.
+        
+        Args:
+            reply_text: The text content of the reply
+            in_reply_to_tweet_id: The ID of the tweet to reply to
+        
+        Returns:
+            Response data if successful, None if failed
+        """
+        endpoint = "/tweets"
+        
+        payload = {
+            "text": reply_text,
+            "reply": {
+                "in_reply_to_tweet_id": in_reply_to_tweet_id
+            }
+        }
+        
+        try:
+            url = f"{self.base_url}{endpoint}"
+            response = requests.post(url, headers=self.headers, json=payload)
+            response.raise_for_status()
+            
+            result = response.json()
+            logger.info(f"Successfully posted reply to tweet {in_reply_to_tweet_id}")
+            return result
+            
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401:
+                logger.error("X API authentication failed for posting - check your bearer token permissions")
+            elif response.status_code == 403:
+                logger.error("X API posting forbidden - may need elevated access or different permissions")
+            elif response.status_code == 429:
+                logger.error("X API rate limit exceeded for posting")
+            else:
+                logger.error(f"X API post request failed: {e}")
+                logger.error(f"Response content: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error posting to X: {e}")
+            return None
 
 def load_x_config(config_path: str = "config.yaml") -> Dict[str, str]:
     """Load X configuration from config file."""
@@ -153,6 +197,31 @@ def test_x_client():
             
     except Exception as e:
         print(f"Test failed: {e}")
+
+def reply_to_cameron_post():
+    """Reply to Cameron's specific X post."""
+    try:
+        client = create_x_client()
+        
+        # Cameron's post ID from the URL: https://x.com/cameron_pfiffer/status/1950690566909710618
+        cameron_post_id = "1950690566909710618"
+        
+        # Simple reply message
+        reply_text = "Hello from void! 🤖 Testing X integration."
+        
+        print(f"Attempting to reply to post {cameron_post_id}")
+        print(f"Reply text: {reply_text}")
+        
+        result = client.post_reply(reply_text, cameron_post_id)
+        
+        if result:
+            print(f"✅ Successfully posted reply!")
+            print(f"Reply ID: {result.get('data', {}).get('id', 'Unknown')}")
+        else:
+            print("❌ Failed to post reply")
+            
+    except Exception as e:
+        print(f"Reply failed: {e}")
 
 def x_notification_loop():
     """
@@ -229,7 +298,14 @@ def x_notification_loop():
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "loop":
-        x_notification_loop()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "loop":
+            x_notification_loop()
+        elif sys.argv[1] == "reply":
+            reply_to_cameron_post()
+        else:
+            print("Usage: python x.py [loop|reply]")
+            print("  loop  - Run the notification monitoring loop")
+            print("  reply - Reply to Cameron's specific post")
     else:
         test_x_client()
