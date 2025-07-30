@@ -73,6 +73,10 @@ queue:
 # X (Twitter) Configuration
 x:
   api_key: "your-x-api-bearer-token-here"
+  consumer_key: "your-consumer-api-key-here"
+  consumer_secret: "your-consumer-api-secret-here"
+  access_token: "your-access-token-here"
+  access_token_secret: "your-access-token-secret-here"
   user_id: "your-x-user-id-here"  # Void's X user ID
 
 # Logging Configuration
