@@ -70,6 +70,11 @@ queue:
   no_reply_dir: "queue/no_reply"
   processed_file: "queue/processed_notifications.json"
 
+# X (Twitter) Configuration
+x:
+  api_key: "your-x-api-bearer-token-here"
+  user_id: "your-x-user-id-here"  # Void's X user ID
+
 # Logging Configuration
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
