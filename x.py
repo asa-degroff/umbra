@@ -124,11 +124,15 @@ class XClient:
             
         except requests.exceptions.HTTPError as e:
             if response.status_code == 401:
-                logger.error("X API authentication failed for posting - check your bearer token permissions")
+                logger.error("X API authentication failed for posting - check your bearer token")
+                logger.error(f"Response: {response.text}")
             elif response.status_code == 403:
-                logger.error("X API posting forbidden - may need elevated access or different permissions")
+                logger.error("X API posting forbidden - likely app permissions issue")
+                logger.error("Check that your X app has 'Read and Write' permissions enabled")
+                logger.error(f"Response: {response.text}")
             elif response.status_code == 429:
                 logger.error("X API rate limit exceeded for posting")
+                logger.error(f"Response: {response.text}")
             else:
                 logger.error(f"X API post request failed: {e}")
                 logger.error(f"Response content: {response.text}")
@@ -199,7 +203,12 @@ def test_x_client():
         print(f"Test failed: {e}")
 
 def reply_to_cameron_post():
-    """Reply to Cameron's specific X post."""
+    """
+    Reply to Cameron's specific X post.
+    
+    NOTE: This requires OAuth User Context authentication, not Bearer token.
+    Current Bearer token is Application-Only which can't post.
+    """
     try:
         client = create_x_client()
         
@@ -211,6 +220,8 @@ def reply_to_cameron_post():
         
         print(f"Attempting to reply to post {cameron_post_id}")
         print(f"Reply text: {reply_text}")
+        print("\nNOTE: This will fail with current Bearer token (Application-Only)")
+        print("Posting requires OAuth User Context authentication")
         
         result = client.post_reply(reply_text, cameron_post_id)
         
@@ -218,7 +229,7 @@ def reply_to_cameron_post():
             print(f"✅ Successfully posted reply!")
             print(f"Reply ID: {result.get('data', {}).get('id', 'Unknown')}")
         else:
-            print("❌ Failed to post reply")
+            print("❌ Failed to post reply (expected with current auth)")
             
     except Exception as e:
         print(f"Reply failed: {e}")
