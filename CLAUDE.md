@@ -126,6 +126,7 @@ The X bot includes a downrank system to manage response frequency for specific u
 - **Cache Staleness**: Thread context caching is disabled during processing to ensure fresh data.
 - **Search API Limitations**: X API recent search only covers 7 days and may have indexing delays.
 - **Temporal Constraints**: Thread context uses `until_id` parameter to exclude tweets that occurred after the mention being processed, preventing "future knowledge" leakage.
+- **Processing Order**: Queue processing sorts mentions by creation time to ensure chronological response order, preventing out-of-sequence replies.
 
 ## Architecture Overview
 

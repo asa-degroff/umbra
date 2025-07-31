@@ -5,6 +5,7 @@ import yaml
 import json
 import hashlib
 import random
+import time
 from typing import Optional, Dict, Any, List, Set
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,10 @@ from rich.panel import Panel
 from rich.text import Text
 
 import bsky_utils
+
+class XRateLimitError(Exception):
+    """Exception raised when X API rate limit is exceeded"""
+    pass
 
 
 # Configure logging
@@ -99,8 +104,10 @@ class XClient:
                 logger.error(f"X API forbidden with {self.auth_method} - check app permissions")
                 logger.error(f"Response: {response.text}")
             elif response.status_code == 429:
-                logger.error("X API rate limit exceeded")
+                logger.error("X API rate limit exceeded - waiting 60 seconds before retry")
                 logger.error(f"Response: {response.text}")
+                time.sleep(60)
+                raise XRateLimitError("X API rate limit exceeded")
             else:
                 logger.error(f"X API request failed: {e}")
                 logger.error(f"Response: {response.text}")
@@ -1522,8 +1529,8 @@ To reply, use the add_post_to_x_thread tool:
                 logger.info(f"X mention from @{author_username} was explicitly ignored")
                 return "ignored"
             else:
-                logger.warning(f"No add_post_to_x_thread tool calls found for mention from @{author_username}")
-                return "no_reply"
+                logger.warning(f"No add_post_to_x_thread tool calls found for mention from @{author_username} - keeping in queue for next pass")
+                return False  # Keep in queue for retry instead of removing
                 
     except Exception as e:
         logger.error(f"Error processing X mention: {e}")
@@ -1608,15 +1615,32 @@ def load_and_process_queued_x_mentions(void_agent, x_client, testing_mode=False)
     """
     try:
         # Get all X mention files in queue directory
-        queue_files = sorted(X_QUEUE_DIR.glob("x_mention_*.json"))
+        queue_files = list(X_QUEUE_DIR.glob("x_mention_*.json"))
         
         if not queue_files:
             return
         
-        logger.info(f"Processing {len(queue_files)} queued X mentions")
+        # Load file metadata and sort by creation time (chronological order)
+        file_metadata = []
+        for filepath in queue_files:
+            try:
+                with open(filepath, 'r') as f:
+                    queue_data = json.load(f)
+                mention_data = queue_data.get('mention', queue_data)
+                created_at = mention_data.get('created_at', '1970-01-01T00:00:00.000Z')  # Default to epoch if missing
+                file_metadata.append((created_at, filepath))
+            except Exception as e:
+                logger.warning(f"Error reading queue file {filepath.name}: {e}")
+                # Add with default timestamp so it still gets processed
+                file_metadata.append(('1970-01-01T00:00:00.000Z', filepath))
         
-        for i, filepath in enumerate(queue_files, 1):
-            logger.info(f"Processing X queue file {i}/{len(queue_files)}: {filepath.name}")
+        # Sort by creation time (oldest first)
+        file_metadata.sort(key=lambda x: x[0])
+        
+        logger.info(f"Processing {len(file_metadata)} queued X mentions in chronological order")
+        
+        for i, (created_at, filepath) in enumerate(file_metadata, 1):
+            logger.info(f"Processing X queue file {i}/{len(file_metadata)}: {filepath.name} (created: {created_at})")
             
             try:
                 # Load mention data
@@ -1628,43 +1652,48 @@ def load_and_process_queued_x_mentions(void_agent, x_client, testing_mode=False)
                 # Process the mention
                 success = process_x_mention(void_agent, x_client, mention_data, 
                                           queue_filepath=filepath, testing_mode=testing_mode)
-                
-                # Handle file based on processing result
-                if success:
-                    if testing_mode:
-                        logger.info(f"TESTING MODE: Keeping X queue file: {filepath.name}")
-                    else:
-                        filepath.unlink()
-                        logger.info(f"Successfully processed and removed X file: {filepath.name}")
-                        
-                        # Mark as processed
-                        processed_mentions = load_processed_mentions()
-                        processed_mentions.add(mention_data.get('id'))
-                        save_processed_mentions(processed_mentions)
-                
-                elif success is None:  # Move to error directory
-                    error_dir = X_QUEUE_DIR / "errors"
-                    error_dir.mkdir(exist_ok=True)
-                    error_path = error_dir / filepath.name
-                    filepath.rename(error_path)
-                    logger.warning(f"Moved X file {filepath.name} to errors directory")
-                    
-                elif success == "no_reply":  # Move to no_reply directory
-                    no_reply_dir = X_QUEUE_DIR / "no_reply"
-                    no_reply_dir.mkdir(exist_ok=True)
-                    no_reply_path = no_reply_dir / filepath.name
-                    filepath.rename(no_reply_path)
-                    logger.info(f"Moved X file {filepath.name} to no_reply directory")
-                    
-                elif success == "ignored":  # Delete ignored notifications
-                    filepath.unlink()
-                    logger.info(f"🚫 Deleted ignored X notification: {filepath.name}")
-                    
-                else:
-                    logger.warning(f"⚠️  Failed to process X file {filepath.name}, keeping in queue for retry")
-                    
+            
+            except XRateLimitError:
+                logger.info("Rate limit hit - breaking out of queue processing to restart from beginning")
+                break
+            
             except Exception as e:
-                logger.error(f"💥 Error processing queued X mention {filepath.name}: {e}")
+                logger.error(f"Error processing X queue file {filepath.name}: {e}")
+                continue
+            
+            # Handle file based on processing result
+            if success:
+                if testing_mode:
+                    logger.info(f"TESTING MODE: Keeping X queue file: {filepath.name}")
+                else:
+                    filepath.unlink()
+                    logger.info(f"Successfully processed and removed X file: {filepath.name}")
+                    
+                    # Mark as processed
+                    processed_mentions = load_processed_mentions()
+                    processed_mentions.add(mention_data.get('id'))
+                    save_processed_mentions(processed_mentions)
+            
+            elif success is None:  # Move to error directory
+                error_dir = X_QUEUE_DIR / "errors"
+                error_dir.mkdir(exist_ok=True)
+                error_path = error_dir / filepath.name
+                filepath.rename(error_path)
+                logger.warning(f"Moved X file {filepath.name} to errors directory")
+                
+            elif success == "no_reply":  # Move to no_reply directory
+                no_reply_dir = X_QUEUE_DIR / "no_reply"
+                no_reply_dir.mkdir(exist_ok=True)
+                no_reply_path = no_reply_dir / filepath.name
+                filepath.rename(no_reply_path)
+                logger.info(f"Moved X file {filepath.name} to no_reply directory")
+                
+            elif success == "ignored":  # Delete ignored notifications
+                filepath.unlink()
+                logger.info(f"🚫 Deleted ignored X notification: {filepath.name}")
+                
+            else:
+                logger.warning(f"⚠️  Failed to process X file {filepath.name}, keeping in queue for retry")
     
     except Exception as e:
         logger.error(f"Error loading queued X mentions: {e}")
