@@ -395,12 +395,83 @@ def thread_to_yaml_string(thread_data: Dict) -> str:
         tweet_obj = {
             'text': tweet.get('text'),
             'created_at': tweet.get('created_at'),
-            'author': author_info
+            'author': author_info,
+            'author_id': author_id  # Include user ID for block management
         }
         
         simplified_thread["conversation"].append(tweet_obj)
     
     return yaml.dump(simplified_thread, default_flow_style=False, sort_keys=False)
+
+
+def ensure_x_user_blocks_attached(thread_data: Dict, agent_id: str) -> None:
+    """
+    Ensure all users in the thread have their X user blocks attached.
+    Creates blocks with initial content including their handle if they don't exist.
+    
+    Args:
+        thread_data: Dict with 'tweets' and 'users' keys from get_thread_context()
+        agent_id: The Letta agent ID to attach blocks to
+    """
+    if not thread_data or "users" not in thread_data:
+        return
+    
+    try:
+        from tools.blocks import attach_x_user_blocks, x_user_note_set
+        from config_loader import get_letta_config
+        from letta_client import Letta
+        
+        # Get Letta client
+        config = get_letta_config()
+        client = Letta(token=config['api_key'], timeout=config['timeout'])
+        
+        # Get agent info to create a mock agent_state for the functions
+        class MockAgentState:
+            def __init__(self, agent_id):
+                self.id = agent_id
+        
+        agent_state = MockAgentState(agent_id)
+        
+        users_data = thread_data["users"]
+        user_ids = list(users_data.keys())
+        
+        if not user_ids:
+            return
+        
+        logger.info(f"Ensuring X user blocks for {len(user_ids)} users: {user_ids}")
+        
+        # Get current blocks to check which users already have blocks with content
+        current_blocks = client.agents.blocks.list(agent_id=agent_id)
+        existing_user_blocks = {}
+        
+        for block in current_blocks:
+            if block.label.startswith("x_user_"):
+                user_id = block.label.replace("x_user_", "")
+                existing_user_blocks[user_id] = block
+        
+        # Attach all user blocks (this will create missing ones with basic content)
+        attach_result = attach_x_user_blocks(user_ids, agent_state)
+        logger.info(f"X user block attachment result: {attach_result}")
+        
+        # For newly created blocks, update with user handle information
+        for user_id in user_ids:
+            if user_id not in existing_user_blocks:
+                user_info = users_data[user_id]
+                username = user_info.get('username', 'unknown')
+                name = user_info.get('name', 'Unknown')
+                
+                # Set initial content with handle information
+                initial_content = f"# X User: {user_id}\n\n**Handle:** @{username}\n**Name:** {name}\n\nNo additional information about this user yet."
+                
+                try:
+                    x_user_note_set(user_id, initial_content, agent_state)
+                    logger.info(f"Set initial content for X user {user_id} (@{username})")
+                except Exception as e:
+                    logger.error(f"Failed to set initial content for X user {user_id}: {e}")
+        
+    except Exception as e:
+        logger.error(f"Error ensuring X user blocks: {e}")
+
 
 # X Caching and Queue System Functions
 
