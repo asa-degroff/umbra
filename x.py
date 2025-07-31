@@ -8,6 +8,10 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pathlib import Path
 from requests_oauthlib import OAuth1
+from rich import print as rprint
+from rich.panel import Panel
+from rich.text import Text
+
 
 # Configure logging
 logging.basicConfig(
@@ -17,6 +21,7 @@ logger = logging.getLogger("x_client")
 
 # X-specific file paths
 X_QUEUE_DIR = Path("x_queue")
+X_CACHE_DIR = Path("x_cache")
 X_PROCESSED_MENTIONS_FILE = Path("x_queue/processed_mentions.json")
 X_LAST_SEEN_FILE = Path("x_queue/last_seen_id.json")
 
@@ -192,16 +197,23 @@ class XClient:
                 logger.warning("Search request failed")
             return []
     
-    def get_thread_context(self, conversation_id: str) -> Optional[List[Dict]]:
+    def get_thread_context(self, conversation_id: str, use_cache: bool = True) -> Optional[List[Dict]]:
         """
         Get all tweets in a conversation thread.
         
         Args:
             conversation_id: The conversation ID to fetch (should be the original tweet ID)
+            use_cache: Whether to use cached data if available
             
         Returns:
             List of tweets in the conversation, ordered chronologically
         """
+        # Check cache first if enabled
+        if use_cache:
+            cached_data = get_cached_thread_context(conversation_id)
+            if cached_data:
+                return cached_data
+        
         # First, get the original tweet directly since it might not appear in conversation search
         original_tweet = None
         try:
@@ -254,7 +266,14 @@ class XClient:
             # Sort chronologically (oldest first)
             tweets.sort(key=lambda x: x.get('created_at', ''))
             logger.info(f"Retrieved {len(tweets)} tweets in thread")
-            return {"tweets": tweets, "users": users_data}
+            
+            thread_data = {"tweets": tweets, "users": users_data}
+            
+            # Cache the result
+            if use_cache:
+                save_cached_thread_context(conversation_id, thread_data)
+            
+            return thread_data
         else:
             logger.warning("No tweets found for thread context")
             return None
@@ -470,6 +489,43 @@ def save_mention_to_queue(mention: Dict):
     except Exception as e:
         logger.error(f"Error saving mention to queue: {e}")
 
+# X Cache Functions
+def get_cached_thread_context(conversation_id: str) -> Optional[Dict]:
+    """Load cached thread context if available."""
+    cache_file = X_CACHE_DIR / f"thread_{conversation_id}.json"
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'r') as f:
+                cached_data = json.load(f)
+                # Check if cache is recent (within 1 hour)
+                from datetime import datetime, timedelta
+                cached_time = datetime.fromisoformat(cached_data.get('cached_at', ''))
+                if datetime.now() - cached_time < timedelta(hours=1):
+                    logger.info(f"Using cached thread context for {conversation_id}")
+                    return cached_data.get('thread_data')
+        except Exception as e:
+            logger.warning(f"Error loading cached thread context: {e}")
+    return None
+
+def save_cached_thread_context(conversation_id: str, thread_data: Dict):
+    """Save thread context to cache."""
+    try:
+        X_CACHE_DIR.mkdir(exist_ok=True)
+        cache_file = X_CACHE_DIR / f"thread_{conversation_id}.json"
+        
+        cache_data = {
+            'conversation_id': conversation_id,
+            'thread_data': thread_data,
+            'cached_at': datetime.now().isoformat()
+        }
+        
+        with open(cache_file, 'w') as f:
+            json.dump(cache_data, f, indent=2)
+        
+        logger.debug(f"Cached thread context for {conversation_id}")
+    except Exception as e:
+        logger.error(f"Error caching thread context: {e}")
+
 def fetch_and_queue_mentions(username: str) -> int:
     """
     Single-pass function to fetch new mentions and queue them.
@@ -661,6 +717,136 @@ def test_thread_context():
     except Exception as e:
         print(f"Thread context test failed: {e}")
 
+def test_letta_integration(agent_id: str = "agent-94a01ee3-3023-46e9-baf8-6172f09bee99"):
+    """Test sending X thread context to Letta agent."""
+    try:
+        from letta_client import Letta
+        import json
+        import yaml
+        
+        # Load full config to access letta section
+        try:
+            with open("config.yaml", 'r') as f:
+                full_config = yaml.safe_load(f)
+            
+            letta_config = full_config.get('letta', {})
+            api_key = letta_config.get('api_key')
+            
+            if not api_key:
+                # Try loading from environment as fallback
+                import os
+                api_key = os.getenv('LETTA_API_KEY')
+                if not api_key:
+                    print("❌ LETTA_API_KEY not found in config.yaml or environment")
+                    print("Expected config structure:")
+                    print("  letta:")
+                    print("    api_key: your-letta-api-key")
+                    return
+                else:
+                    print("ℹ️ Using LETTA_API_KEY from environment")
+            else:
+                print("ℹ️ Using LETTA_API_KEY from config.yaml")
+                
+        except Exception as e:
+            print(f"❌ Error loading config: {e}")
+            return
+        
+        letta_client = Letta(token=api_key, timeout=600)
+        print(f"🤖 Connected to Letta, using agent: {agent_id}")
+        
+        # Find a queued mention file
+        queue_files = list(X_QUEUE_DIR.glob("x_mention_*.json"))
+        if not queue_files:
+            print("❌ No queued mentions found. Run 'python x.py queue' first.")
+            return
+        
+        # Read the first mention
+        mention_file = queue_files[0]
+        with open(mention_file, 'r') as f:
+            mention_data = json.load(f)
+        
+        mention = mention_data['mention']
+        conversation_id = mention.get('conversation_id')
+        
+        if not conversation_id:
+            print("❌ No conversation_id found in mention.")
+            return
+        
+        print(f"🧵 Getting thread context for conversation: {conversation_id}")
+        
+        # Get thread context
+        x_client = create_x_client()
+        thread_data = x_client.get_thread_context(conversation_id)
+        
+        if not thread_data:
+            print("❌ Failed to retrieve thread context")
+            return
+        
+        # Convert to YAML
+        yaml_thread = thread_to_yaml_string(thread_data)
+        
+        # Create prompt for the agent
+        prompt = f"""You are void, an AI agent operating on X (Twitter). You have received a mention and need to respond appropriately.
+
+Here is the thread context:
+
+{yaml_thread}
+
+Please craft a response that continues this conversation naturally. Keep responses conversational and authentic to your void persona."""
+        
+        print(f"📤 Sending thread context to Letta agent...")
+
+        # Print the prompt in a rich panel
+        rprint(Panel(prompt, title="Prompt", border_style="blue"))
+
+        # List out all available agents
+        try:
+            agents_response = letta_client.projects.list()
+            print("📋 Available projects:")
+            if isinstance(agents_response, tuple) and len(agents_response) > 1:
+                projects = agents_response[1]  # The actual projects list
+                for project in projects:
+                    print(f"  - {project.name} (ID: {project.id})")
+            else:
+                print("  No projects found or unexpected response format")
+        except Exception as e:
+            print(f"❌ Error listing projects: {e}")
+        
+        print(f"\n🤖 Using agent ID: {agent_id}")
+
+        # Send to Letta agent using streaming
+        message_stream = letta_client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": prompt}],
+            stream_tokens=False,
+            max_steps=10
+        )
+        
+        print("🔄 Streaming response from agent...")
+        response_text = ""
+        
+        for chunk in message_stream:
+            print(chunk)
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'assistant_message':
+                    print(f"🤖 Agent response: {chunk.content}")
+                    response_text = chunk.content
+                elif chunk.message_type == 'reasoning_message':
+                    print(f"💭 Agent reasoning: {chunk.reasoning[:100]}...")
+                elif chunk.message_type == 'tool_call_message':
+                    print(f"🔧 Agent tool call: {chunk.tool_call.name}")
+        
+        if response_text:
+            print(f"\n✅ Agent generated response:")
+            print(f"📝 Response: {response_text}")
+        else:
+            print("❌ No response generated by agent")
+            
+    except Exception as e:
+        print(f"Letta integration test failed: {e}")
+        import traceback
+        traceback.print_exc()
+
 def test_x_client():
     """Test the X client by fetching mentions."""
     try:
@@ -795,6 +981,7 @@ def x_notification_loop():
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1:
         if sys.argv[1] == "loop":
             x_notification_loop()
@@ -808,13 +995,19 @@ if __name__ == "__main__":
             test_fetch_and_queue()
         elif sys.argv[1] == "thread":
             test_thread_context()
+        elif sys.argv[1] == "letta":
+            # Use specific agent ID if provided, otherwise use default
+            agent_id = sys.argv[2] if len(sys.argv) > 2 else "agent-94a01ee3-3023-46e9-baf8-6172f09bee99"
+            test_letta_integration(agent_id)
         else:
-            print("Usage: python x.py [loop|reply|me|search|queue|thread]")
+            print("Usage: python x.py [loop|reply|me|search|queue|thread|letta]")
             print("  loop   - Run the notification monitoring loop")
             print("  reply  - Reply to Cameron's specific post")
             print("  me     - Get authenticated user info and correct user ID")
             print("  search - Test search-based mention detection")
             print("  queue  - Test fetch and queue mentions (single pass)")
             print("  thread - Test thread context retrieval from queued mention")
+            print("  letta  - Test sending thread context to Letta agent")
+            print("           Optional: python x.py letta <agent-id>")
     else:
         test_x_client()
