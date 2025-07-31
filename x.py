@@ -170,7 +170,7 @@ class XClient:
         params = {
             "query": query,
             "max_results": min(max(max_results, 10), 100),
-            "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets",
+            "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets,conversation_id",
             "user.fields": "id,name,username",
             "expansions": "author_id,in_reply_to_user_id,referenced_tweets.id"
         }
@@ -191,6 +191,73 @@ class XClient:
             else:
                 logger.warning("Search request failed")
             return []
+    
+    def get_thread_context(self, conversation_id: str) -> Optional[List[Dict]]:
+        """
+        Get all tweets in a conversation thread.
+        
+        Args:
+            conversation_id: The conversation ID to fetch (should be the original tweet ID)
+            
+        Returns:
+            List of tweets in the conversation, ordered chronologically
+        """
+        # First, get the original tweet directly since it might not appear in conversation search
+        original_tweet = None
+        try:
+            endpoint = f"/tweets/{conversation_id}"
+            params = {
+                "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets,conversation_id",
+                "user.fields": "id,name,username",
+                "expansions": "author_id"
+            }
+            response = self._make_request(endpoint, params)
+            if response and "data" in response:
+                original_tweet = response["data"]
+                logger.info(f"Retrieved original tweet: {original_tweet.get('id')}")
+        except Exception as e:
+            logger.warning(f"Could not fetch original tweet {conversation_id}: {e}")
+        
+        # Then search for all tweets in this conversation
+        endpoint = "/tweets/search/recent"
+        params = {
+            "query": f"conversation_id:{conversation_id}",
+            "max_results": 100,  # Get as many as possible
+            "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets,conversation_id",
+            "user.fields": "id,name,username", 
+            "expansions": "author_id,in_reply_to_user_id,referenced_tweets.id",
+            "sort_order": "recency"  # Get newest first, we'll reverse later
+        }
+        
+        logger.info(f"Fetching thread context for conversation {conversation_id}")
+        response = self._make_request(endpoint, params)
+        
+        tweets = []
+        users_data = {}
+        
+        # Collect tweets from search
+        if response and "data" in response:
+            tweets.extend(response["data"])
+            # Store user data for reference
+            if "includes" in response and "users" in response["includes"]:
+                for user in response["includes"]["users"]:
+                    users_data[user["id"]] = user
+        
+        # Add original tweet if we got it and it's not already in the list
+        if original_tweet:
+            tweet_ids = [t.get('id') for t in tweets]
+            if original_tweet.get('id') not in tweet_ids:
+                tweets.append(original_tweet)
+                logger.info("Added original tweet to thread context")
+        
+        if tweets:
+            # Sort chronologically (oldest first)
+            tweets.sort(key=lambda x: x.get('created_at', ''))
+            logger.info(f"Retrieved {len(tweets)} tweets in thread")
+            return {"tweets": tweets, "users": users_data}
+        else:
+            logger.warning("No tweets found for thread context")
+            return None
     
     def post_reply(self, reply_text: str, in_reply_to_tweet_id: str) -> Optional[Dict]:
         """
@@ -272,6 +339,49 @@ def mention_to_yaml_string(mention: Dict, users_data: Optional[Dict] = None) -> 
         }
     
     return yaml.dump(simplified_mention, default_flow_style=False, sort_keys=False)
+
+def thread_to_yaml_string(thread_data: Dict) -> str:
+    """
+    Convert X thread context to YAML string for AI comprehension.
+    Similar to Bluesky's thread_to_yaml_string function.
+    
+    Args:
+        thread_data: Dict with 'tweets' and 'users' keys from get_thread_context()
+        
+    Returns:
+        YAML string representation of the thread
+    """
+    if not thread_data or "tweets" not in thread_data:
+        return "conversation: []\n"
+    
+    tweets = thread_data["tweets"]
+    users_data = thread_data.get("users", {})
+    
+    simplified_thread = {
+        "conversation": []
+    }
+    
+    for tweet in tweets:
+        # Get user info
+        author_id = tweet.get('author_id')
+        author_info = {}
+        if author_id and author_id in users_data:
+            user = users_data[author_id]
+            author_info = {
+                'username': user.get('username'),
+                'name': user.get('name')
+            }
+        
+        # Build tweet object (simplified for AI consumption)
+        tweet_obj = {
+            'text': tweet.get('text'),
+            'created_at': tweet.get('created_at'),
+            'author': author_info
+        }
+        
+        simplified_thread["conversation"].append(tweet_obj)
+    
+    return yaml.dump(simplified_thread, default_flow_style=False, sort_keys=False)
 
 # X Caching and Queue System Functions
 
@@ -498,6 +608,59 @@ def test_fetch_and_queue():
     except Exception as e:
         print(f"Fetch and queue test failed: {e}")
 
+def test_thread_context():
+    """Test thread context retrieval from a queued mention."""
+    try:
+        import json
+        
+        # Find a queued mention file
+        queue_files = list(X_QUEUE_DIR.glob("x_mention_*.json"))
+        if not queue_files:
+            print("❌ No queued mentions found. Run 'python x.py queue' first.")
+            return
+        
+        # Read the first mention
+        mention_file = queue_files[0]
+        with open(mention_file, 'r') as f:
+            mention_data = json.load(f)
+        
+        mention = mention_data['mention']
+        print(f"📄 Using mention: {mention.get('id')}")
+        print(f"📝 Text: {mention.get('text')}")
+        
+        # Check if it has a conversation_id
+        conversation_id = mention.get('conversation_id')
+        if not conversation_id:
+            print("❌ No conversation_id found in mention. May need to re-queue with updated fetch.")
+            return
+        
+        print(f"🧵 Getting thread context for conversation: {conversation_id}")
+        
+        # Get thread context
+        client = create_x_client()
+        thread_data = client.get_thread_context(conversation_id)
+        
+        if thread_data:
+            tweets = thread_data.get('tweets', [])
+            print(f"✅ Retrieved thread with {len(tweets)} tweets")
+            
+            # Convert to YAML
+            yaml_thread = thread_to_yaml_string(thread_data)
+            
+            # Save thread context for inspection
+            thread_file = X_QUEUE_DIR / f"thread_context_{conversation_id}.yaml"
+            with open(thread_file, 'w') as f:
+                f.write(yaml_thread)
+            
+            print(f"💾 Saved thread context to: {thread_file}")
+            print("\n📋 Thread preview:")
+            print(yaml_thread)
+        else:
+            print("❌ Failed to retrieve thread context")
+            
+    except Exception as e:
+        print(f"Thread context test failed: {e}")
+
 def test_x_client():
     """Test the X client by fetching mentions."""
     try:
@@ -643,12 +806,15 @@ if __name__ == "__main__":
             test_search_mentions()
         elif sys.argv[1] == "queue":
             test_fetch_and_queue()
+        elif sys.argv[1] == "thread":
+            test_thread_context()
         else:
-            print("Usage: python x.py [loop|reply|me|search|queue]")
+            print("Usage: python x.py [loop|reply|me|search|queue|thread]")
             print("  loop   - Run the notification monitoring loop")
             print("  reply  - Reply to Cameron's specific post")
             print("  me     - Get authenticated user info and correct user ID")
             print("  search - Test search-based mention detection")
             print("  queue  - Test fetch and queue mentions (single pass)")
+            print("  thread - Test thread context retrieval from queued mention")
     else:
         test_x_client()

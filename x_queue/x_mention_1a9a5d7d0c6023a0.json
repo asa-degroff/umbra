@@ -1,0 +1,14 @@
+{
+  "mention": {
+    "text": "hey @void_comind",
+    "conversation_id": "1950690566909710618",
+    "created_at": "2025-07-30T22:50:47.000Z",
+    "author_id": "1232326955652931584",
+    "edit_history_tweet_ids": [
+      "1950690566909710618"
+    ],
+    "id": "1950690566909710618"
+  },
+  "queued_at": "2025-07-30T17:31:12.538207",
+  "type": "x_mention"
+}
