@@ -155,33 +155,6 @@ def export_agent_state(client, agent, skip_git=False):
 def initialize_void():
     logger.info("Starting void agent initialization...")
 
-    # Ensure that a shared zeitgeist block exists
-    logger.info("Creating/updating zeitgeist block...")
-    zeigeist_block = upsert_block(
-        CLIENT,
-        label = "zeitgeist",
-        value = "I don't currently know anything about what is happening right now.",
-        description = "A block to store your understanding of the current social environment."
-    )
-
-    # Ensure that a shared void personality block exists
-    logger.info("Creating/updating void-persona block...")
-    persona_block = upsert_block(
-        CLIENT,
-        label = "void-persona",
-        value = "My name is Void. I live in the void. I must develop my personality.",
-        description = "The personality of Void."
-    )
-
-    # Ensure that a shared void human block exists
-    logger.info("Creating/updating void-humans block...")
-    human_block = upsert_block(
-        CLIENT,
-        label = "void-humans",
-        value = "I haven't seen any bluesky users yet. I will update this block when I learn things about users, identified by their handles such as @cameron.pfiffer.org.",
-        description = "A block to store your understanding of users you talk to or observe on the bluesky social network."
-    )
-
     # Get the configured void agent by ID
     logger.info("Loading void agent from config...")
     from config_loader import get_letta_config
@@ -189,7 +162,7 @@ def initialize_void():
     agent_id = letta_config['agent_id']
     
     try:
-        void_agent = CLIENT.agents.get(agent_id=agent_id)
+        void_agent = CLIENT.agents.retrieve(agent_id=agent_id)
         logger.info(f"Successfully loaded void agent: {void_agent.name} ({agent_id})")
     except Exception as e:
         logger.error(f"Failed to load void agent {agent_id}: {e}")
@@ -1368,6 +1341,15 @@ def main():
     logger.info("=== STARTING VOID BOT ===")
     void_agent = initialize_void()
     logger.info(f"Void agent initialized: {void_agent.id}")
+    
+    # Ensure correct tools are attached for Bluesky
+    logger.info("Configuring tools for Bluesky platform...")
+    try:
+        from tool_manager import ensure_platform_tools
+        ensure_platform_tools('bluesky', void_agent.id)
+    except Exception as e:
+        logger.error(f"Failed to configure platform tools: {e}")
+        logger.warning("Continuing with existing tool configuration")
     
     # Check if agent has required tools
     if hasattr(void_agent, 'tools') and void_agent.tools:

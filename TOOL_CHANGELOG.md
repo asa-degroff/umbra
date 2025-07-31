@@ -1,67 +1,88 @@
-# Tool Changelog - Bluesky Reply Threading
+# Tool Changelog - Recent Updates
 
-## Summary
-The reply system has been simplified and improved with a new atomic approach for building reply threads.
+## Latest Changes (January 2025)
 
-## Changes Made
+### ✅ NEW: Platform-Specific Tool Management
+- **Purpose**: Automatically manage tools based on platform (Bluesky vs X)
+- **Implementation**: `tool_manager.py` handles tool switching
+- **Behavior**: 
+  - Running `bsky.py` activates Bluesky-specific tools
+  - Running `x.py` activates X-specific tools
+  - Common tools remain available on both platforms
+- **Tools Categories**:
+  - **Bluesky Tools**: `search_bluesky_posts`, `create_new_bluesky_post`, `get_bluesky_feed`, `add_post_to_bluesky_reply_thread`, user memory tools
+  - **X Tools**: `add_post_to_x_thread`, X-specific user memory tools
+  - **Common Tools**: `halt_activity`, `ignore_notification`, `annotate_ack`, `create_whitewind_blog_post`, `fetch_webpage`
 
-### ✅ NEW TOOL: `add_post_to_bluesky_reply_thread`
-- **Purpose**: Add a single post to the current Bluesky reply thread atomically
-- **Usage**: Call this tool multiple times to build a reply thread incrementally
+### ✅ NEW TOOL: `fetch_webpage`
+- **Purpose**: Fetch and convert web pages to markdown/text using Jina AI reader
 - **Parameters**:
-  - `text` (required): Text content for the post (max 300 characters)
-  - `lang` (optional): Language code (defaults to "en-US")
-- **Returns**: Confirmation that the post has been queued for the reply thread
-- **Error Handling**: If text exceeds 300 characters, the post will be omitted from the thread and you may try again with shorter text
+  - `url` (required): The URL to fetch and convert
+- **Returns**: Web page content in markdown/text format
+- **Usage**: Access and analyze web content for enhanced context
+
+### ✅ ENHANCED: Reply Structure Fix
+- **Issue**: Reply threading was broken due to incorrect root post references
+- **Fix**: Now properly extracts root URI/CID from notification reply structure
+- **Impact**: Bluesky replies now properly maintain thread context
+
+### ✅ ENHANCED: #voidstop Keyword Support
+- **Purpose**: Allow users to prevent void from replying to specific posts
+- **Usage**: Include `#voidstop` anywhere in a post or thread
+- **Behavior**: void will skip processing mentions in posts containing this keyword
+
+### ✅ NEW TOOL: `annotate_ack`
+- **Purpose**: Add notes to acknowledgment records for post interactions
+- **Parameters**:
+  - `note` (required): Note text to attach to acknowledgment
+- **Usage**: Track interaction metadata and reasoning
+
+### ✅ NEW TOOL: `create_whitewind_blog_post`
+- **Purpose**: Create blog posts on Whitewind platform with markdown support
+- **Parameters**:
+  - `title` (required): Blog post title
+  - `content` (required): Markdown content
+  - `visibility` (optional): Public/private visibility
+- **Usage**: Create longer-form content beyond social media posts
+
+## Previous Changes
+
+### ✅ ENHANCED: Atomic Reply Threading
+- **Tool**: `add_post_to_bluesky_reply_thread`
+- **Purpose**: Add single posts to reply threads atomically
+- **Benefits**: Better error recovery, flexible threading, clearer intent
 
 ### ❌ REMOVED TOOL: `bluesky_reply`
-- This tool has been removed to eliminate confusion
-- All reply functionality is now handled through the new atomic approach
+- Replaced by atomic `add_post_to_bluesky_reply_thread` approach
+- Migration: Replace single list call with multiple atomic calls
 
-## How to Use the New System
+## Migration Notes
 
-### Before (Old Way - NO LONGER AVAILABLE)
-```
-bluesky_reply(["First reply", "Second reply", "Third reply"])
-```
+### For Platform Switching
+- No action required - tools automatically switch based on platform
+- Use `python tool_manager.py --list` to check current tool configuration
 
-### After (New Way - USE THIS)
-```
-add_post_to_bluesky_reply_thread("First reply")
-add_post_to_bluesky_reply_thread("Second reply") 
-add_post_to_bluesky_reply_thread("Third reply")
-```
+### For Web Content Integration
+- Replace manual web scraping with `fetch_webpage` tool calls
+- Automatically handles conversion to markdown for AI processing
 
-## Benefits of the New Approach
+### For Enhanced Interaction Control
+- Use `#voidstop` in posts to prevent void responses
+- Use `annotate_ack` to add metadata to interactions
+- Use `ignore_notification` for bot-to-bot interaction control
 
-1. **Atomic Operations**: Each post is handled individually, reducing the risk of entire thread failures
-2. **Better Error Recovery**: If one post fails validation, others can still be posted
-3. **Flexible Threading**: Build reply threads of any length without list construction
-4. **Clearer Intent**: Each tool call has a single, clear purpose
-5. **Handler-Managed State**: The bsky.py handler manages thread state and proper AT Protocol threading
+## Tool Registration
 
-## Important Notes
+```bash
+# Register all Bluesky tools
+python register_tools.py
 
-- The actual posting to Bluesky is handled by the bsky.py handler, not the tool itself
-- Each call to `add_post_to_bluesky_reply_thread` queues a post for the current reply context
-- Posts are validated for the 300-character limit before being queued
-- Thread state and proper reply chaining is managed automatically by the handler
-- Language defaults to "en-US" but can be specified per post if needed
+# Register all X tools  
+python register_x_tools.py
 
-## Migration Guide
-
-If you were previously using `bluesky_reply`, simply replace it with multiple calls to `add_post_to_bluesky_reply_thread`:
-
-**Old approach:**
-```
-bluesky_reply(["Hello!", "This is a threaded reply.", "Thanks for the mention!"])
+# Manual tool management
+python tool_manager.py bluesky  # Configure for Bluesky
+python tool_manager.py x        # Configure for X
 ```
 
-**New approach:**
-```
-add_post_to_bluesky_reply_thread("Hello!")
-add_post_to_bluesky_reply_thread("This is a threaded reply.")
-add_post_to_bluesky_reply_thread("Thanks for the mention!")
-```
-
-This change makes the system more robust and easier to use while maintaining all the same functionality.
+See [`TOOL_MANAGEMENT.md`](/TOOL_MANAGEMENT.md) for detailed platform-specific tool management information.

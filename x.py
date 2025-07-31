@@ -1714,6 +1714,15 @@ def initialize_x_void():
         logger.error(f"Failed to load void agent {agent_id}: {e}")
         raise e
     
+    # Ensure correct tools are attached for X
+    logger.info("Configuring tools for X platform...")
+    try:
+        from tool_manager import ensure_platform_tools
+        ensure_platform_tools('x', void_agent.id)
+    except Exception as e:
+        logger.error(f"Failed to configure platform tools: {e}")
+        logger.warning("Continuing with existing tool configuration")
+    
     # Log agent details
     logger.info(f"X Void agent details - ID: {void_agent.id}")
     logger.info(f"Agent name: {void_agent.name}")
