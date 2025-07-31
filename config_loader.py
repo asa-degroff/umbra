@@ -172,7 +172,7 @@ def get_letta_config() -> Dict[str, Any]:
     """Get Letta configuration."""
     config = get_config()
     return {
-        'api_key': config.get_required('letta.api_key', 'LETTA_API_KEY'),
+        'api_key': config.get_required('letta.api_key'),
         'timeout': config.get('letta.timeout', 600),
         'project_id': config.get_required('letta.project_id'),
         'agent_id': config.get_required('letta.agent_id'),

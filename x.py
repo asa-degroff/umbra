@@ -792,7 +792,7 @@ def test_thread_context():
     except Exception as e:
         print(f"Thread context test failed: {e}")
 
-def test_letta_integration(agent_id: str = "agent-94a01ee3-3023-46e9-baf8-6172f09bee99"):
+def test_letta_integration(agent_id: str = None):
     """Test sending X thread context to Letta agent."""
     try:
         from letta_client import Letta
@@ -806,6 +806,21 @@ def test_letta_integration(agent_id: str = "agent-94a01ee3-3023-46e9-baf8-6172f0
             
             letta_config = full_config.get('letta', {})
             api_key = letta_config.get('api_key')
+            config_agent_id = letta_config.get('agent_id')
+            
+            # Use agent_id from config if not provided as parameter
+            if not agent_id:
+                if config_agent_id:
+                    agent_id = config_agent_id
+                    print(f"ℹ️ Using agent_id from config: {agent_id}")
+                else:
+                    print("❌ No agent_id found in config.yaml")
+                    print("Expected config structure:")
+                    print("  letta:")
+                    print("    agent_id: your-agent-id")
+                    return
+            else:
+                print(f"ℹ️ Using provided agent_id: {agent_id}")
             
             if not api_key:
                 # Try loading from environment as fallback
@@ -873,21 +888,6 @@ Please craft a response that continues this conversation naturally. Keep respons
 
         # Print the prompt in a rich panel
         rprint(Panel(prompt, title="Prompt", border_style="blue"))
-
-        # List out all available agents
-        try:
-            agents_response = letta_client.projects.list()
-            print("📋 Available projects:")
-            if isinstance(agents_response, tuple) and len(agents_response) > 1:
-                projects = agents_response[1]  # The actual projects list
-                for project in projects:
-                    print(f"  - {project.name} (ID: {project.id})")
-            else:
-                print("  No projects found or unexpected response format")
-        except Exception as e:
-            print(f"❌ Error listing projects: {e}")
-        
-        print(f"\n🤖 Using agent ID: {agent_id}")
 
         # Send to Letta agent using streaming
         message_stream = letta_client.agents.messages.create_stream(
@@ -970,95 +970,587 @@ def reply_to_cameron_post():
     except Exception as e:
         print(f"Reply failed: {e}")
 
-def x_notification_loop():
+def process_x_mention(void_agent, x_client, mention_data, queue_filepath=None, testing_mode=False):
     """
-    X notification loop using search-based mention detection.
-    Uses search endpoint instead of mentions endpoint for better rate limits.
+    Process an X mention and generate a reply using the Letta agent.
+    Similar to bsky.py process_mention but for X/Twitter.
+    
+    Args:
+        void_agent: The Letta agent instance
+        x_client: The X API client 
+        mention_data: The mention data dictionary
+        queue_filepath: Optional Path object to the queue file (for cleanup on halt)
+        testing_mode: If True, don't actually post to X
+    
+    Returns:
+        True: Successfully processed, remove from queue
+        False: Failed but retryable, keep in queue
+        None: Failed with non-retryable error, move to errors directory
+        "no_reply": No reply was generated, move to no_reply directory
     """
-    import time
-    import json
-    from pathlib import Path
-    
-    logger.info("=== STARTING X SEARCH-BASED NOTIFICATION LOOP ===")
-    
     try:
-        client = create_x_client()
-        logger.info("X client initialized")
+        logger.debug(f"Starting process_x_mention with mention_data type: {type(mention_data)}")
         
-        # Get our username for searching
-        user_info = client._make_request("/users/me", params={"user.fields": "username"})
+        # Extract mention details
+        if isinstance(mention_data, dict):
+            # Handle both raw mention and queued mention formats
+            if 'mention' in mention_data:
+                mention = mention_data['mention']
+            else:
+                mention = mention_data
+        else:
+            mention = mention_data
+            
+        mention_id = mention.get('id')
+        mention_text = mention.get('text', '')
+        author_id = mention.get('author_id')
+        conversation_id = mention.get('conversation_id')
+        
+        logger.debug(f"Extracted data - ID: {mention_id}, Author: {author_id}, Text: {mention_text[:50]}...")
+        
+        if not conversation_id:
+            logger.warning(f"No conversation_id found for mention {mention_id}")
+            return None
+        
+        # Get thread context
+        try:
+            thread_data = x_client.get_thread_context(conversation_id)
+            if not thread_data:
+                logger.error(f"Failed to get thread context for conversation {conversation_id}")
+                return False
+        except Exception as e:
+            logger.error(f"Error getting thread context: {e}")
+            return False
+        
+        # Convert to YAML string
+        thread_context = thread_to_yaml_string(thread_data)
+        logger.debug(f"Thread context generated, length: {len(thread_context)} characters")
+        
+        # Check for #voidstop
+        if "#voidstop" in thread_context.lower() or "#voidstop" in mention_text.lower():
+            logger.info("Found #voidstop, skipping this mention")
+            return True
+        
+        # Ensure X user blocks are attached
+        try:
+            ensure_x_user_blocks_attached(thread_data, void_agent.id)
+        except Exception as e:
+            logger.warning(f"Failed to ensure X user blocks: {e}")
+            # Continue without user blocks rather than failing completely
+        
+        # Create prompt for Letta agent
+        author_info = thread_data.get('users', {}).get(author_id, {})
+        author_username = author_info.get('username', 'unknown')
+        author_name = author_info.get('name', author_username)
+        
+        prompt = f"""You received a mention on X (Twitter) from @{author_username} ({author_name}).
+
+MOST RECENT POST (the mention you're responding to):
+"{mention_text}"
+
+FULL THREAD CONTEXT:
+```yaml
+{thread_context}
+```
+
+The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow.
+
+To reply, use the add_post_to_x_thread tool:
+- Each call creates one post (max 280 characters)
+- For most responses, a single call is sufficient
+- Only use multiple calls for threaded replies when:
+  * The topic requires extended explanation that cannot fit in 280 characters
+  * You're explicitly asked for a detailed/long response
+  * The conversation naturally benefits from a structured multi-part answer
+- Avoid unnecessary threads - be concise when possible"""
+
+        # Log mention processing
+        title = f"X MENTION FROM @{author_username}"
+        print(f"\n▶ {title}")
+        print(f"  {'═' * len(title)}")
+        for line in mention_text.split('\n'):
+            print(f"  {line}")
+        
+        # Send to Letta agent
+        from config_loader import get_letta_config
+        from letta_client import Letta
+        
+        config = get_letta_config()
+        letta_client = Letta(token=config['api_key'], timeout=config['timeout'])
+        
+        logger.debug(f"Sending to LLM: @{author_username} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars")
+        
+        try:
+            # Use streaming to avoid timeout errors
+            message_stream = letta_client.agents.messages.create_stream(
+                agent_id=void_agent.id,
+                messages=[{"role": "user", "content": prompt}],
+                stream_tokens=False,
+                max_steps=100
+            )
+            
+            # Collect streaming response (simplified version of bsky.py logic)
+            all_messages = []
+            for chunk in message_stream:
+                if hasattr(chunk, 'message_type'):
+                    if chunk.message_type == 'reasoning_message':
+                        print("\n◆ Reasoning")
+                        print("  ─────────")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                    elif chunk.message_type == 'tool_call_message':
+                        tool_name = chunk.tool_call.name
+                        if tool_name == 'add_post_to_x_thread':
+                            try:
+                                args = json.loads(chunk.tool_call.arguments)
+                                text = args.get('text', '')
+                                if text:
+                                    print("\n✎ X Post")
+                                    print("  ────────")
+                                    for line in text.split('\n'):
+                                        print(f"  {line}")
+                            except:
+                                pass
+                        elif tool_name == 'halt_activity':
+                            logger.info("🛑 HALT_ACTIVITY TOOL CALLED - TERMINATING X BOT")
+                            if queue_filepath and queue_filepath.exists():
+                                queue_filepath.unlink()
+                                logger.info(f"Deleted queue file: {queue_filepath.name}")
+                            logger.info("=== X BOT TERMINATED BY AGENT ===")
+                            exit(0)
+                    elif chunk.message_type == 'tool_return_message':
+                        tool_name = chunk.name
+                        status = chunk.status
+                        if status == 'success' and tool_name == 'add_post_to_x_thread':
+                            print("\n✓ X Post Queued")
+                            print("  ──────────────")
+                            print("  Post queued successfully")
+                    elif chunk.message_type == 'assistant_message':
+                        print("\n▶ Assistant Response")
+                        print("  ──────────────────")
+                        for line in chunk.content.split('\n'):
+                            print(f"  {line}")
+                
+                all_messages.append(chunk)
+                if str(chunk) == 'done':
+                    break
+            
+            # Convert streaming response for compatibility
+            message_response = type('StreamingResponse', (), {
+                'messages': [msg for msg in all_messages if hasattr(msg, 'message_type')]
+            })()
+            
+        except Exception as api_error:
+            logger.error(f"Letta API error: {api_error}")
+            raise
+
+        # Extract successful add_post_to_x_thread tool calls
+        reply_candidates = []
+        tool_call_results = {}
+        ignored_notification = False
+        ack_note = None  # Track any note from annotate_ack tool
+        
+        # First pass: collect tool return statuses
+        for message in message_response.messages:
+            if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
+                if message.name == 'add_post_to_x_thread':
+                    tool_call_results[message.tool_call_id] = message.status
+                elif message.name == 'ignore_notification':
+                    if message.status == 'success':
+                        ignored_notification = True
+                        logger.info("🚫 X notification ignored")
+        
+        # Second pass: collect successful tool calls
+        for message in message_response.messages:
+            if hasattr(message, 'tool_call') and message.tool_call:
+                # Collect annotate_ack tool calls
+                if message.tool_call.name == 'annotate_ack':
+                    try:
+                        args = json.loads(message.tool_call.arguments)
+                        note = args.get('note', '')
+                        if note:
+                            ack_note = note
+                            logger.debug(f"Found annotate_ack with note: {note[:50]}...")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse annotate_ack arguments: {e}")
+                
+                # Collect add_post_to_x_thread tool calls - only if they were successful
+                elif message.tool_call.name == 'add_post_to_x_thread':
+                    tool_call_id = message.tool_call.tool_call_id
+                    tool_status = tool_call_results.get(tool_call_id, 'unknown')
+                    
+                    if tool_status == 'success':
+                        try:
+                            args = json.loads(message.tool_call.arguments)
+                            reply_text = args.get('text', '')
+                            if reply_text:
+                                reply_candidates.append(reply_text)
+                                logger.debug(f"Found successful add_post_to_x_thread candidate: {reply_text[:50]}...")
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse tool call arguments: {e}")
+        
+        # Handle conflicts
+        if reply_candidates and ignored_notification:
+            logger.error("⚠️ CONFLICT: Agent called both add_post_to_x_thread and ignore_notification!")
+            return False
+        
+        if reply_candidates:
+            # Post replies to X
+            logger.debug(f"Found {len(reply_candidates)} add_post_to_x_thread calls, posting to X")
+            
+            if len(reply_candidates) == 1:
+                content = reply_candidates[0]
+                title = f"Reply to @{author_username}"
+            else:
+                content = "\n\n".join([f"{j}. {msg}" for j, msg in enumerate(reply_candidates, 1)])
+                title = f"Reply Thread to @{author_username} ({len(reply_candidates)} messages)"
+            
+            print(f"\n✎ {title}")
+            print(f"  {'─' * len(title)}")
+            for line in content.split('\n'):
+                print(f"  {line}")
+            
+            if testing_mode:
+                logger.info("TESTING MODE: Skipping actual X post")
+                return True
+            else:
+                # Post to X using thread approach
+                success = post_x_thread_replies(x_client, mention_id, reply_candidates)
+                if success:
+                    logger.info(f"Successfully replied to @{author_username} on X")
+                    
+                    # Acknowledge the post we're replying to
+                    try:
+                        ack_result = acknowledge_x_post(x_client, mention_id, ack_note)
+                        if ack_result:
+                            if ack_note:
+                                logger.info(f"Successfully acknowledged X post from @{author_username} (note: \"{ack_note[:50]}...\")")
+                            else:
+                                logger.info(f"Successfully acknowledged X post from @{author_username}")
+                        else:
+                            logger.warning(f"Failed to acknowledge X post from @{author_username}")
+                    except Exception as e:
+                        logger.error(f"Error acknowledging X post from @{author_username}: {e}")
+                        # Don't fail the entire operation if acknowledgment fails
+                    
+                    return True
+                else:
+                    logger.error(f"Failed to send reply to @{author_username} on X")
+                    return False
+        else:
+            if ignored_notification:
+                logger.info(f"X mention from @{author_username} was explicitly ignored")
+                return "ignored"
+            else:
+                logger.warning(f"No add_post_to_x_thread tool calls found for mention from @{author_username}")
+                return "no_reply"
+                
+    except Exception as e:
+        logger.error(f"Error processing X mention: {e}")
+        return False
+
+def acknowledge_x_post(x_client, post_id, note=None):
+    """
+    Acknowledge an X post that we replied to.
+    For X, we could implement this as a private note/database entry since X doesn't have
+    a built-in acknowledgment system like Bluesky's stream.thought.ack.
+    
+    Args:
+        x_client: XClient instance (reserved for future X API acknowledgment features)
+        post_id: The X post ID we're acknowledging
+        note: Optional note to include with the acknowledgment
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # x_client reserved for future X API acknowledgment features
+        # For now, implement as a simple log entry
+        # In the future, this could write to a database or file system
+        ack_dir = X_QUEUE_DIR / "acknowledgments"
+        ack_dir.mkdir(exist_ok=True)
+        
+        ack_data = {
+            'post_id': post_id,
+            'acknowledged_at': datetime.now().isoformat(),
+            'note': note
+        }
+        
+        ack_file = ack_dir / f"ack_{post_id}.json"
+        with open(ack_file, 'w') as f:
+            json.dump(ack_data, f, indent=2)
+        
+        logger.debug(f"Acknowledged X post {post_id}" + (f" with note: {note[:50]}..." if note else ""))
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error acknowledging X post {post_id}: {e}")
+        return False
+
+def post_x_thread_replies(x_client, in_reply_to_tweet_id, reply_messages):
+    """
+    Post a series of replies to X, threading them properly.
+    
+    Args:
+        x_client: XClient instance
+        in_reply_to_tweet_id: The original tweet ID to reply to
+        reply_messages: List of reply text strings
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        current_reply_id = in_reply_to_tweet_id
+        
+        for i, reply_text in enumerate(reply_messages):
+            logger.info(f"Posting X reply {i+1}/{len(reply_messages)}: {reply_text[:50]}...")
+            
+            result = x_client.post_reply(reply_text, current_reply_id)
+            
+            if result and 'data' in result:
+                new_tweet_id = result['data']['id']
+                logger.info(f"Successfully posted X reply {i+1}, ID: {new_tweet_id}")
+                # For threading, the next reply should reply to this one
+                current_reply_id = new_tweet_id
+            else:
+                logger.error(f"Failed to post X reply {i+1}")
+                return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error posting X thread replies: {e}")
+        return False
+
+def load_and_process_queued_x_mentions(void_agent, x_client, testing_mode=False):
+    """
+    Load and process all X mentions from the queue.
+    Similar to bsky.py load_and_process_queued_notifications but for X.
+    """
+    try:
+        # Get all X mention files in queue directory
+        queue_files = sorted(X_QUEUE_DIR.glob("x_mention_*.json"))
+        
+        if not queue_files:
+            return
+        
+        logger.info(f"Processing {len(queue_files)} queued X mentions")
+        
+        for i, filepath in enumerate(queue_files, 1):
+            logger.info(f"Processing X queue file {i}/{len(queue_files)}: {filepath.name}")
+            
+            try:
+                # Load mention data
+                with open(filepath, 'r') as f:
+                    queue_data = json.load(f)
+                
+                mention_data = queue_data.get('mention', queue_data)
+                
+                # Process the mention
+                success = process_x_mention(void_agent, x_client, mention_data, 
+                                          queue_filepath=filepath, testing_mode=testing_mode)
+                
+                # Handle file based on processing result
+                if success:
+                    if testing_mode:
+                        logger.info(f"TESTING MODE: Keeping X queue file: {filepath.name}")
+                    else:
+                        filepath.unlink()
+                        logger.info(f"Successfully processed and removed X file: {filepath.name}")
+                        
+                        # Mark as processed
+                        processed_mentions = load_processed_mentions()
+                        processed_mentions.add(mention_data.get('id'))
+                        save_processed_mentions(processed_mentions)
+                
+                elif success is None:  # Move to error directory
+                    error_dir = X_QUEUE_DIR / "errors"
+                    error_dir.mkdir(exist_ok=True)
+                    error_path = error_dir / filepath.name
+                    filepath.rename(error_path)
+                    logger.warning(f"Moved X file {filepath.name} to errors directory")
+                    
+                elif success == "no_reply":  # Move to no_reply directory
+                    no_reply_dir = X_QUEUE_DIR / "no_reply"
+                    no_reply_dir.mkdir(exist_ok=True)
+                    no_reply_path = no_reply_dir / filepath.name
+                    filepath.rename(no_reply_path)
+                    logger.info(f"Moved X file {filepath.name} to no_reply directory")
+                    
+                elif success == "ignored":  # Delete ignored notifications
+                    filepath.unlink()
+                    logger.info(f"🚫 Deleted ignored X notification: {filepath.name}")
+                    
+                else:
+                    logger.warning(f"⚠️  Failed to process X file {filepath.name}, keeping in queue for retry")
+                    
+            except Exception as e:
+                logger.error(f"💥 Error processing queued X mention {filepath.name}: {e}")
+    
+    except Exception as e:
+        logger.error(f"Error loading queued X mentions: {e}")
+
+def process_x_notifications(void_agent, x_client, testing_mode=False):
+    """
+    Fetch new X mentions, queue them, and process the queue.
+    Similar to bsky.py process_notifications but for X.
+    """
+    try:
+        # Get username for fetching mentions
+        user_info = x_client._make_request("/users/me", params={"user.fields": "username"})
         if not user_info or "data" not in user_info:
-            logger.error("Could not get username for search")
+            logger.error("Could not get username for X mentions")
             return
         
         username = user_info["data"]["username"]
-        logger.info(f"Monitoring mentions of @{username}")
+        
+        # Fetch and queue new mentions
+        new_count = fetch_and_queue_mentions(username)
+        
+        if new_count > 0:
+            logger.info(f"Found {new_count} new X mentions to process")
+        
+        # Process the entire queue
+        load_and_process_queued_x_mentions(void_agent, x_client, testing_mode)
         
     except Exception as e:
-        logger.error(f"Failed to initialize X client: {e}")
-        return
+        logger.error(f"Error processing X notifications: {e}")
+
+def initialize_x_void():
+    """Initialize the void agent for X operations."""
+    logger.info("Starting void agent initialization for X...")
     
-    # Track the last seen mention ID to avoid duplicates
-    last_mention_id = None
+    from config_loader import get_letta_config
+    from letta_client import Letta
+    
+    # Get config
+    config = get_letta_config()
+    client = Letta(token=config['api_key'], timeout=config['timeout'])
+    agent_id = config['agent_id']
+    
+    try:
+        void_agent = client.agents.retrieve(agent_id=agent_id)
+        logger.info(f"Successfully loaded void agent for X: {void_agent.name} ({agent_id})")
+    except Exception as e:
+        logger.error(f"Failed to load void agent {agent_id}: {e}")
+        raise e
+    
+    # Log agent details
+    logger.info(f"X Void agent details - ID: {void_agent.id}")
+    logger.info(f"Agent name: {void_agent.name}")
+    
+    return void_agent
+
+def x_main_loop(testing_mode=False):
+    """
+    Main X bot loop that continuously monitors for mentions and processes them.
+    Similar to bsky.py main() but for X/Twitter.
+    """
+    import time
+    from time import sleep
+    
+    logger.info("=== STARTING X VOID BOT ===")
+    
+    # Initialize void agent
+    void_agent = initialize_x_void()
+    logger.info(f"X void agent initialized: {void_agent.id}")
+    
+    # Initialize X client
+    x_client = create_x_client()
+    logger.info("Connected to X API")
+    
+    # Main loop
+    FETCH_DELAY_SEC = 60  # Check every minute for X mentions
+    logger.info(f"Starting X mention monitoring, checking every {FETCH_DELAY_SEC} seconds")
+    
+    if testing_mode:
+        logger.info("=== RUNNING IN X TESTING MODE ===")
+        logger.info("   - No messages will be sent to X")
+        logger.info("   - Queue files will not be deleted")
+    
     cycle_count = 0
+    start_time = time.time()
     
-    # Search-based loop with better rate limits
     while True:
         try:
             cycle_count += 1
-            logger.info(f"=== X SEARCH CYCLE {cycle_count} ===")
+            logger.info(f"=== X CYCLE {cycle_count} ===")
             
-            # Search for mentions using search endpoint
-            mentions = client.search_mentions(
-                username=username,
-                since_id=last_mention_id,
-                max_results=10
-            )
+            # Process X notifications (fetch, queue, and process)
+            process_x_notifications(void_agent, x_client, testing_mode)
             
-            if mentions:
-                logger.info(f"Found {len(mentions)} new mentions via search")
-                
-                # Update last seen ID
-                if mentions:
-                    last_mention_id = mentions[0]['id']  # Most recent first
-                
-                # Process each mention (just log for now)
-                for mention in mentions:
-                    logger.info(f"Mention from {mention.get('author_id')}: {mention.get('text', '')[:100]}...")
-                    
-                    # Convert to YAML for inspection
-                    yaml_mention = mention_to_yaml_string(mention)
-                    
-                    # Save to file for inspection (temporary)
-                    debug_dir = Path("x_debug")
-                    debug_dir.mkdir(exist_ok=True)
-                    
-                    mention_file = debug_dir / f"mention_{mention['id']}.yaml"
-                    with open(mention_file, 'w') as f:
-                        f.write(yaml_mention)
-                    
-                    logger.info(f"Saved mention debug info to {mention_file}")
-            else:
-                logger.info("No new mentions found via search")
+            # Log cycle completion
+            elapsed_time = time.time() - start_time
+            logger.info(f"X Cycle {cycle_count} complete. Elapsed: {elapsed_time/60:.1f} minutes")
             
-            # Sleep between cycles - search might have better rate limits
-            logger.info("Sleeping for 60 seconds...")
-            time.sleep(60)
+            sleep(FETCH_DELAY_SEC)
             
         except KeyboardInterrupt:
-            logger.info("=== X SEARCH LOOP STOPPED BY USER ===")
-            logger.info(f"Processed {cycle_count} cycles") 
+            elapsed_time = time.time() - start_time
+            logger.info("=== X BOT STOPPED BY USER ===")
+            logger.info(f"Final X session: {cycle_count} cycles in {elapsed_time/60:.1f} minutes")
             break
         except Exception as e:
-            logger.error(f"Error in X search cycle {cycle_count}: {e}")
-            logger.info("Sleeping for 120 seconds due to error...")
-            time.sleep(120)
+            logger.error(f"=== ERROR IN X MAIN LOOP CYCLE {cycle_count} ===")
+            logger.error(f"Error details: {e}")
+            logger.info(f"Sleeping for {FETCH_DELAY_SEC * 2} seconds due to error...")
+            sleep(FETCH_DELAY_SEC * 2)
+
+def process_queue_only(testing_mode=False):
+    """
+    Process all queued X mentions without fetching new ones.
+    Useful for rate limit management - queue first, then process separately.
+    
+    Args:
+        testing_mode: If True, don't actually post to X and keep queue files
+    """
+    logger.info("=== PROCESSING X QUEUE ONLY ===")
+    
+    if testing_mode:
+        logger.info("=== RUNNING IN X TESTING MODE ===")
+        logger.info("   - No messages will be sent to X")
+        logger.info("   - Queue files will not be deleted")
+    
+    try:
+        # Initialize void agent
+        void_agent = initialize_x_void()
+        logger.info(f"X void agent initialized: {void_agent.id}")
+        
+        # Initialize X client
+        x_client = create_x_client()
+        logger.info("Connected to X API")
+        
+        # Process the queue without fetching new mentions
+        logger.info("Processing existing X queue...")
+        load_and_process_queued_x_mentions(void_agent, x_client, testing_mode)
+        
+        logger.info("=== X QUEUE PROCESSING COMPLETE ===")
+        
+    except Exception as e:
+        logger.error(f"Error processing X queue: {e}")
+        raise
+
+def x_notification_loop():
+    """
+    DEPRECATED: Old X notification loop using search-based mention detection.
+    Use x_main_loop() instead for the full bot experience.
+    """
+    logger.warning("x_notification_loop() is deprecated. Use x_main_loop() instead.")
+    x_main_loop()
 
 if __name__ == "__main__":
     import sys
+    import argparse
 
     if len(sys.argv) > 1:
-        if sys.argv[1] == "loop":
+        if sys.argv[1] == "bot":
+            # Main bot with optional --test flag
+            parser = argparse.ArgumentParser(description='X Void Bot')
+            parser.add_argument('command', choices=['bot'])
+            parser.add_argument('--test', action='store_true', help='Run in testing mode (no actual posts)')
+            args = parser.parse_args()
+            x_main_loop(testing_mode=args.test)
+        elif sys.argv[1] == "loop":
             x_notification_loop()
         elif sys.argv[1] == "reply":
             reply_to_cameron_post()
@@ -1070,19 +1562,27 @@ if __name__ == "__main__":
             test_fetch_and_queue()
         elif sys.argv[1] == "thread":
             test_thread_context()
+        elif sys.argv[1] == "process":
+            # Process all queued mentions with optional --test flag
+            testing_mode = "--test" in sys.argv
+            process_queue_only(testing_mode=testing_mode)
         elif sys.argv[1] == "letta":
-            # Use specific agent ID if provided, otherwise use default
-            agent_id = sys.argv[2] if len(sys.argv) > 2 else "agent-94a01ee3-3023-46e9-baf8-6172f09bee99"
+            # Use specific agent ID if provided, otherwise use from config
+            agent_id = sys.argv[2] if len(sys.argv) > 2 else None
             test_letta_integration(agent_id)
         else:
-            print("Usage: python x.py [loop|reply|me|search|queue|thread|letta]")
-            print("  loop   - Run the notification monitoring loop")
-            print("  reply  - Reply to Cameron's specific post")
-            print("  me     - Get authenticated user info and correct user ID")
-            print("  search - Test search-based mention detection")
-            print("  queue  - Test fetch and queue mentions (single pass)")
-            print("  thread - Test thread context retrieval from queued mention")
-            print("  letta  - Test sending thread context to Letta agent")
-            print("           Optional: python x.py letta <agent-id>")
+            print("Usage: python x.py [bot|loop|reply|me|search|queue|process|thread|letta]")
+            print("  bot     - Run the main X bot (use --test for testing mode)")
+            print("            Example: python x.py bot --test")
+            print("  queue   - Fetch and queue mentions only (no processing)")
+            print("  process - Process all queued mentions only (no fetching)")
+            print("            Example: python x.py process --test")
+            print("  loop    - Run the old notification monitoring loop (deprecated)")
+            print("  reply   - Reply to Cameron's specific post")
+            print("  me      - Get authenticated user info and correct user ID")
+            print("  search  - Test search-based mention detection")
+            print("  thread  - Test thread context retrieval from queued mention")
+            print("  letta   - Test sending thread context to Letta agent")
+            print("            Optional: python x.py letta <agent-id>")
     else:
         test_x_client()
