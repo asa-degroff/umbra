@@ -3,8 +3,10 @@ import logging
 import requests
 import yaml
 import json
+import hashlib
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from pathlib import Path
 from requests_oauthlib import OAuth1
 
 # Configure logging
@@ -12,6 +14,11 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("x_client")
+
+# X-specific file paths
+X_QUEUE_DIR = Path("x_queue")
+X_PROCESSED_MENTIONS_FILE = Path("x_queue/processed_mentions.json")
+X_LAST_SEEN_FILE = Path("x_queue/last_seen_id.json")
 
 class XClient:
     """X (Twitter) API client for fetching mentions and managing interactions."""
@@ -142,6 +149,49 @@ class XClient:
         response = self._make_request(endpoint, params)
         return response.get("data") if response else None
     
+    def search_mentions(self, username: str, max_results: int = 10, since_id: str = None) -> Optional[List[Dict]]:
+        """
+        Search for mentions using the search endpoint instead of mentions endpoint.
+        This might have better rate limits than the direct mentions endpoint.
+        
+        Args:
+            username: Username to search for mentions of (without @)
+            max_results: Number of results to return (10-100)
+            since_id: Only return results newer than this tweet ID
+            
+        Returns:
+            List of tweets mentioning the username
+        """
+        endpoint = "/tweets/search/recent"
+        
+        # Search for mentions of the username
+        query = f"@{username}"
+        
+        params = {
+            "query": query,
+            "max_results": min(max(max_results, 10), 100),
+            "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets",
+            "user.fields": "id,name,username",
+            "expansions": "author_id,in_reply_to_user_id,referenced_tweets.id"
+        }
+        
+        if since_id:
+            params["since_id"] = since_id
+        
+        logger.info(f"Searching for mentions of @{username}")
+        response = self._make_request(endpoint, params)
+        
+        if response and "data" in response:
+            tweets = response["data"]
+            logger.info(f"Found {len(tweets)} mentions via search")
+            return tweets
+        else:
+            if response:
+                logger.info(f"No mentions found via search. Response: {response}")
+            else:
+                logger.warning("Search request failed")
+            return []
+    
     def post_reply(self, reply_text: str, in_reply_to_tweet_id: str) -> Optional[Dict]:
         """
         Post a reply to a specific tweet.
@@ -223,7 +273,231 @@ def mention_to_yaml_string(mention: Dict, users_data: Optional[Dict] = None) -> 
     
     return yaml.dump(simplified_mention, default_flow_style=False, sort_keys=False)
 
+# X Caching and Queue System Functions
+
+def load_last_seen_id() -> Optional[str]:
+    """Load the last seen mention ID for incremental fetching."""
+    if X_LAST_SEEN_FILE.exists():
+        try:
+            with open(X_LAST_SEEN_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get('last_seen_id')
+        except Exception as e:
+            logger.error(f"Error loading last seen ID: {e}")
+    return None
+
+def save_last_seen_id(mention_id: str):
+    """Save the last seen mention ID."""
+    try:
+        X_QUEUE_DIR.mkdir(exist_ok=True)
+        with open(X_LAST_SEEN_FILE, 'w') as f:
+            json.dump({
+                'last_seen_id': mention_id,
+                'updated_at': datetime.now().isoformat()
+            }, f)
+        logger.debug(f"Saved last seen ID: {mention_id}")
+    except Exception as e:
+        logger.error(f"Error saving last seen ID: {e}")
+
+def load_processed_mentions() -> set:
+    """Load the set of processed mention IDs."""
+    if X_PROCESSED_MENTIONS_FILE.exists():
+        try:
+            with open(X_PROCESSED_MENTIONS_FILE, 'r') as f:
+                data = json.load(f)
+                # Keep only recent entries (last 10000)
+                if len(data) > 10000:
+                    data = data[-10000:]
+                    save_processed_mentions(set(data))
+                return set(data)
+        except Exception as e:
+            logger.error(f"Error loading processed mentions: {e}")
+    return set()
+
+def save_processed_mentions(processed_set: set):
+    """Save the set of processed mention IDs."""
+    try:
+        X_QUEUE_DIR.mkdir(exist_ok=True)
+        with open(X_PROCESSED_MENTIONS_FILE, 'w') as f:
+            json.dump(list(processed_set), f)
+    except Exception as e:
+        logger.error(f"Error saving processed mentions: {e}")
+
+def save_mention_to_queue(mention: Dict):
+    """Save a mention to the queue directory for async processing."""
+    try:
+        mention_id = mention.get('id')
+        if not mention_id:
+            logger.error("Mention missing ID, cannot queue")
+            return
+        
+        # Check if already processed
+        processed_mentions = load_processed_mentions()
+        if mention_id in processed_mentions:
+            logger.debug(f"Mention {mention_id} already processed, skipping")
+            return
+        
+        # Create queue directory
+        X_QUEUE_DIR.mkdir(exist_ok=True)
+        
+        # Create filename using hash (similar to Bluesky system)
+        mention_str = json.dumps(mention, sort_keys=True)
+        mention_hash = hashlib.sha256(mention_str.encode()).hexdigest()[:16]
+        filename = f"x_mention_{mention_hash}.json"
+        
+        queue_file = X_QUEUE_DIR / filename
+        
+        # Save mention data
+        with open(queue_file, 'w') as f:
+            json.dump({
+                'mention': mention,
+                'queued_at': datetime.now().isoformat(),
+                'type': 'x_mention'
+            }, f, indent=2)
+        
+        logger.info(f"Queued X mention {mention_id} -> {filename}")
+        
+    except Exception as e:
+        logger.error(f"Error saving mention to queue: {e}")
+
+def fetch_and_queue_mentions(username: str) -> int:
+    """
+    Single-pass function to fetch new mentions and queue them.
+    Returns number of new mentions found.
+    """
+    try:
+        client = create_x_client()
+        
+        # Load last seen ID for incremental fetching
+        last_seen_id = load_last_seen_id()
+        
+        logger.info(f"Fetching mentions for @{username} since {last_seen_id or 'beginning'}")
+        
+        # Search for mentions
+        mentions = client.search_mentions(
+            username=username,
+            since_id=last_seen_id,
+            max_results=100  # Get as many as possible
+        )
+        
+        if not mentions:
+            logger.info("No new mentions found")
+            return 0
+        
+        # Process mentions (newest first, so reverse to process oldest first)
+        mentions.reverse()
+        new_count = 0
+        
+        for mention in mentions:
+            save_mention_to_queue(mention)
+            new_count += 1
+        
+        # Update last seen ID to the most recent mention
+        if mentions:
+            most_recent_id = mentions[-1]['id']  # Last after reverse = most recent
+            save_last_seen_id(most_recent_id)
+        
+        logger.info(f"Queued {new_count} new X mentions")
+        return new_count
+        
+    except Exception as e:
+        logger.error(f"Error fetching and queuing mentions: {e}")
+        return 0
+
 # Simple test function
+def get_my_user_info():
+    """Get the authenticated user's information to find correct user ID."""
+    try:
+        client = create_x_client()
+        
+        # Use the /2/users/me endpoint to get authenticated user info
+        endpoint = "/users/me"
+        params = {
+            "user.fields": "id,name,username,description"
+        }
+        
+        print("Fetching authenticated user information...")
+        response = client._make_request(endpoint, params=params)
+        
+        if response and "data" in response:
+            user_data = response["data"]
+            print(f"✅ Found authenticated user:")
+            print(f"   ID: {user_data.get('id')}")
+            print(f"   Username: @{user_data.get('username')}")
+            print(f"   Name: {user_data.get('name')}")
+            print(f"   Description: {user_data.get('description', 'N/A')[:100]}...")
+            print(f"\n🔧 Update your config.yaml with:")
+            print(f"   user_id: \"{user_data.get('id')}\"")
+            return user_data
+        else:
+            print("❌ Failed to get user information")
+            print(f"Response: {response}")
+            return None
+            
+    except Exception as e:
+        print(f"Error getting user info: {e}")
+        return None
+
+def test_search_mentions():
+    """Test the search-based mention detection."""
+    try:
+        client = create_x_client()
+        
+        # First get our username
+        user_info = client._make_request("/users/me", params={"user.fields": "username"})
+        if not user_info or "data" not in user_info:
+            print("❌ Could not get username")
+            return
+        
+        username = user_info["data"]["username"]
+        print(f"🔍 Searching for mentions of @{username}")
+        
+        mentions = client.search_mentions(username, max_results=5)
+        
+        if mentions:
+            print(f"✅ Found {len(mentions)} mentions via search:")
+            for mention in mentions:
+                print(f"- {mention.get('id')}: {mention.get('text', '')[:100]}...")
+        else:
+            print("No mentions found via search")
+            
+    except Exception as e:
+        print(f"Search test failed: {e}")
+
+def test_fetch_and_queue():
+    """Test the single-pass fetch and queue function."""
+    try:
+        client = create_x_client()
+        
+        # Get our username
+        user_info = client._make_request("/users/me", params={"user.fields": "username"})
+        if not user_info or "data" not in user_info:
+            print("❌ Could not get username")
+            return
+        
+        username = user_info["data"]["username"]
+        print(f"🔄 Fetching and queueing mentions for @{username}")
+        
+        # Show current state
+        last_seen = load_last_seen_id()
+        print(f"📍 Last seen ID: {last_seen or 'None (first run)'}")
+        
+        # Fetch and queue
+        new_count = fetch_and_queue_mentions(username)
+        
+        if new_count > 0:
+            print(f"✅ Queued {new_count} new mentions")
+            print(f"📁 Check ./x_queue/ directory for queued mentions")
+            
+            # Show updated state
+            new_last_seen = load_last_seen_id()
+            print(f"📍 Updated last seen ID: {new_last_seen}")
+        else:
+            print("ℹ️ No new mentions to queue")
+            
+    except Exception as e:
+        print(f"Fetch and queue test failed: {e}")
+
 def test_x_client():
     """Test the X client by fetching mentions."""
     try:
@@ -274,18 +548,28 @@ def reply_to_cameron_post():
 
 def x_notification_loop():
     """
-    Simple X notification loop that fetches mentions and logs them.
-    Very basic version to understand the platform needs.
+    X notification loop using search-based mention detection.
+    Uses search endpoint instead of mentions endpoint for better rate limits.
     """
     import time
     import json
     from pathlib import Path
     
-    logger.info("=== STARTING X NOTIFICATION LOOP ===")
+    logger.info("=== STARTING X SEARCH-BASED NOTIFICATION LOOP ===")
     
     try:
         client = create_x_client()
         logger.info("X client initialized")
+        
+        # Get our username for searching
+        user_info = client._make_request("/users/me", params={"user.fields": "username"})
+        if not user_info or "data" not in user_info:
+            logger.error("Could not get username for search")
+            return
+        
+        username = user_info["data"]["username"]
+        logger.info(f"Monitoring mentions of @{username}")
+        
     except Exception as e:
         logger.error(f"Failed to initialize X client: {e}")
         return
@@ -294,20 +578,21 @@ def x_notification_loop():
     last_mention_id = None
     cycle_count = 0
     
-    # Simple loop similar to bsky.py but much more basic
+    # Search-based loop with better rate limits
     while True:
         try:
             cycle_count += 1
-            logger.info(f"=== X CYCLE {cycle_count} ===")
+            logger.info(f"=== X SEARCH CYCLE {cycle_count} ===")
             
-            # Fetch mentions (newer than last seen)
-            mentions = client.get_mentions(
+            # Search for mentions using search endpoint
+            mentions = client.search_mentions(
+                username=username,
                 since_id=last_mention_id,
                 max_results=10
             )
             
             if mentions:
-                logger.info(f"Found {len(mentions)} new mentions")
+                logger.info(f"Found {len(mentions)} new mentions via search")
                 
                 # Update last seen ID
                 if mentions:
@@ -330,18 +615,18 @@ def x_notification_loop():
                     
                     logger.info(f"Saved mention debug info to {mention_file}")
             else:
-                logger.info("No new mentions found")
+                logger.info("No new mentions found via search")
             
-            # Sleep between cycles (shorter than bsky for now)
+            # Sleep between cycles - search might have better rate limits
             logger.info("Sleeping for 60 seconds...")
             time.sleep(60)
             
         except KeyboardInterrupt:
-            logger.info("=== X LOOP STOPPED BY USER ===")
-            logger.info(f"Processed {cycle_count} cycles")
+            logger.info("=== X SEARCH LOOP STOPPED BY USER ===")
+            logger.info(f"Processed {cycle_count} cycles") 
             break
         except Exception as e:
-            logger.error(f"Error in X cycle {cycle_count}: {e}")
+            logger.error(f"Error in X search cycle {cycle_count}: {e}")
             logger.info("Sleeping for 120 seconds due to error...")
             time.sleep(120)
 
@@ -352,9 +637,18 @@ if __name__ == "__main__":
             x_notification_loop()
         elif sys.argv[1] == "reply":
             reply_to_cameron_post()
+        elif sys.argv[1] == "me":
+            get_my_user_info()
+        elif sys.argv[1] == "search":
+            test_search_mentions()
+        elif sys.argv[1] == "queue":
+            test_fetch_and_queue()
         else:
-            print("Usage: python x.py [loop|reply]")
-            print("  loop  - Run the notification monitoring loop")
-            print("  reply - Reply to Cameron's specific post")
+            print("Usage: python x.py [loop|reply|me|search|queue]")
+            print("  loop   - Run the notification monitoring loop")
+            print("  reply  - Reply to Cameron's specific post")
+            print("  me     - Get authenticated user info and correct user ID")
+            print("  search - Test search-based mention detection")
+            print("  queue  - Test fetch and queue mentions (single pass)")
     else:
         test_x_client()

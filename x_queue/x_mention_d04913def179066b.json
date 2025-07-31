@@ -1,0 +1,13 @@
+{
+  "mention": {
+    "edit_history_tweet_ids": [
+      "1950690566909710618"
+    ],
+    "created_at": "2025-07-30T22:50:47.000Z",
+    "text": "hey @void_comind",
+    "id": "1950690566909710618",
+    "author_id": "1232326955652931584"
+  },
+  "queued_at": "2025-07-30T17:21:41.171268",
+  "type": "x_mention"
+}
