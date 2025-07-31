@@ -12,6 +12,8 @@ from rich import print as rprint
 from rich.panel import Panel
 from rich.text import Text
 
+import bsky_utils
+
 
 # Configure logging
 logging.basicConfig(
@@ -197,13 +199,14 @@ class XClient:
                 logger.warning("Search request failed")
             return []
     
-    def get_thread_context(self, conversation_id: str, use_cache: bool = True) -> Optional[List[Dict]]:
+    def get_thread_context(self, conversation_id: str, use_cache: bool = True, until_id: Optional[str] = None) -> Optional[List[Dict]]:
         """
-        Get all tweets in a conversation thread.
+        Get all tweets in a conversation thread up to a specific tweet ID.
         
         Args:
             conversation_id: The conversation ID to fetch (should be the original tweet ID)
             use_cache: Whether to use cached data if available
+            until_id: Optional tweet ID to use as upper bound (excludes posts after this ID)
             
         Returns:
             List of tweets in the conversation, ordered chronologically
@@ -241,6 +244,11 @@ class XClient:
             "sort_order": "recency"  # Get newest first, we'll reverse later
         }
         
+        # Add until_id parameter to exclude tweets after the mention being processed
+        if until_id:
+            params["until_id"] = until_id
+            logger.info(f"Using until_id={until_id} to exclude future tweets")
+        
         logger.info(f"Fetching thread context for conversation {conversation_id}")
         response = self._make_request(endpoint, params)
         
@@ -262,7 +270,55 @@ class XClient:
                 tweets.append(original_tweet)
                 logger.info("Added original tweet to thread context")
         
+        # Attempt to fill gaps by fetching referenced tweets that are missing
+        # This helps with X API's incomplete conversation search results
+        tweet_ids = set(t.get('id') for t in tweets)
+        missing_tweet_ids = set()
+        
+        # Collect all referenced tweet IDs that aren't in our current set
+        for tweet in tweets:
+            referenced_tweets = tweet.get('referenced_tweets', [])
+            for ref in referenced_tweets:
+                ref_id = ref.get('id')
+                if ref_id and ref_id not in tweet_ids:
+                    missing_tweet_ids.add(ref_id)
+        
+        # Fetch missing referenced tweets individually
+        for missing_id in missing_tweet_ids:
+            try:
+                endpoint = f"/tweets/{missing_id}"
+                params = {
+                    "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets,conversation_id",
+                    "user.fields": "id,name,username",
+                    "expansions": "author_id"
+                }
+                response = self._make_request(endpoint, params)
+                if response and "data" in response:
+                    missing_tweet = response["data"]
+                    # Only add if it's actually part of this conversation
+                    if missing_tweet.get('conversation_id') == conversation_id:
+                        tweets.append(missing_tweet)
+                        tweet_ids.add(missing_id)
+                        logger.info(f"Retrieved missing referenced tweet: {missing_id}")
+                        
+                        # Also add user data if available
+                        if "includes" in response and "users" in response["includes"]:
+                            for user in response["includes"]["users"]:
+                                users_data[user["id"]] = user
+            except Exception as e:
+                logger.warning(f"Could not fetch missing tweet {missing_id}: {e}")
+        
         if tweets:
+            # Filter out tweets that occur after until_id (if specified)
+            if until_id:
+                original_count = len(tweets)
+                # Convert until_id to int for comparison (Twitter IDs are sequential)
+                until_id_int = int(until_id)
+                tweets = [t for t in tweets if int(t.get('id', '0')) <= until_id_int]
+                filtered_count = len(tweets)
+                if original_count != filtered_count:
+                    logger.info(f"Filtered out {original_count - filtered_count} tweets after until_id {until_id}")
+            
             # Sort chronologically (oldest first)
             tweets.sort(key=lambda x: x.get('created_at', ''))
             logger.info(f"Retrieved {len(tweets)} tweets in thread")
@@ -551,13 +607,27 @@ def save_mention_to_queue(mention: Dict):
         
         queue_file = X_QUEUE_DIR / filename
         
-        # Save mention data
+        # Save mention data with enhanced debugging information
+        mention_data = {
+            'mention': mention,
+            'queued_at': datetime.now().isoformat(),
+            'type': 'x_mention',
+            # Debug info for conversation tracking
+            'debug_info': {
+                'mention_id': mention.get('id'),
+                'author_id': mention.get('author_id'),
+                'conversation_id': mention.get('conversation_id'),
+                'in_reply_to_user_id': mention.get('in_reply_to_user_id'),
+                'referenced_tweets': mention.get('referenced_tweets', []),
+                'text_preview': mention.get('text', '')[:200],
+                'created_at': mention.get('created_at'),
+                'public_metrics': mention.get('public_metrics', {}),
+                'context_annotations': mention.get('context_annotations', [])
+            }
+        }
+        
         with open(queue_file, 'w') as f:
-            json.dump({
-                'mention': mention,
-                'queued_at': datetime.now().isoformat(),
-                'type': 'x_mention'
-            }, f, indent=2)
+            json.dump(mention_data, f, indent=2)
         
         logger.info(f"Queued X mention {mention_id} -> {filename}")
         
@@ -1005,26 +1075,149 @@ def process_x_mention(void_agent, x_client, mention_data, queue_filepath=None, t
         mention_text = mention.get('text', '')
         author_id = mention.get('author_id')
         conversation_id = mention.get('conversation_id')
+        in_reply_to_user_id = mention.get('in_reply_to_user_id')
+        referenced_tweets = mention.get('referenced_tweets', [])
         
-        logger.debug(f"Extracted data - ID: {mention_id}, Author: {author_id}, Text: {mention_text[:50]}...")
+        # Enhanced conversation tracking for debug - especially important for Grok handling
+        logger.info(f"🔍 CONVERSATION DEBUG - Mention ID: {mention_id}")
+        logger.info(f"   Author ID: {author_id}")
+        logger.info(f"   Conversation ID: {conversation_id}")
+        logger.info(f"   In Reply To User ID: {in_reply_to_user_id}")
+        logger.info(f"   Referenced Tweets: {len(referenced_tweets)} items")
+        for i, ref in enumerate(referenced_tweets[:3]):  # Log first 3 referenced tweets
+            logger.info(f"     Reference {i+1}: {ref.get('type')} -> {ref.get('id')}")
+        logger.info(f"   Text preview: {mention_text[:100]}...")
         
         if not conversation_id:
-            logger.warning(f"No conversation_id found for mention {mention_id}")
+            logger.warning(f"❌ No conversation_id found for mention {mention_id} - this may cause thread context issues")
             return None
         
-        # Get thread context
+        # Get thread context (disable cache for missing context issues)
+        # Use mention_id as until_id to exclude tweets that occurred after this mention
         try:
-            thread_data = x_client.get_thread_context(conversation_id)
+            thread_data = x_client.get_thread_context(conversation_id, use_cache=False, until_id=mention_id)
             if not thread_data:
-                logger.error(f"Failed to get thread context for conversation {conversation_id}")
+                logger.error(f"❌ Failed to get thread context for conversation {conversation_id}")
                 return False
+            
+            # If this mention references a specific tweet, ensure we have that tweet in context
+            if referenced_tweets:
+                for ref in referenced_tweets:
+                    if ref.get('type') == 'replied_to':
+                        ref_id = ref.get('id')
+                        # Check if the referenced tweet is in our thread data
+                        thread_tweet_ids = [t.get('id') for t in thread_data.get('tweets', [])]
+                        if ref_id and ref_id not in thread_tweet_ids:
+                            logger.warning(f"Missing referenced tweet {ref_id} in thread context, attempting to fetch")
+                            try:
+                                # Fetch the missing referenced tweet directly
+                                endpoint = f"/tweets/{ref_id}"
+                                params = {
+                                    "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets,conversation_id",
+                                    "user.fields": "id,name,username",
+                                    "expansions": "author_id"
+                                }
+                                response = x_client._make_request(endpoint, params)
+                                if response and "data" in response:
+                                    missing_tweet = response["data"]
+                                    if missing_tweet.get('conversation_id') == conversation_id:
+                                        # Add to thread data
+                                        if 'tweets' not in thread_data:
+                                            thread_data['tweets'] = []
+                                        thread_data['tweets'].append(missing_tweet)
+                                        
+                                        # Add user data if available
+                                        if "includes" in response and "users" in response["includes"]:
+                                            if 'users' not in thread_data:
+                                                thread_data['users'] = {}
+                                            for user in response["includes"]["users"]:
+                                                thread_data['users'][user["id"]] = user
+                                        
+                                        logger.info(f"✅ Added missing referenced tweet {ref_id} to thread context")
+                                    else:
+                                        logger.warning(f"Referenced tweet {ref_id} belongs to different conversation {missing_tweet.get('conversation_id')}")
+                            except Exception as e:
+                                logger.error(f"Failed to fetch referenced tweet {ref_id}: {e}")
+            
+            # Enhanced thread context debugging
+            logger.info(f"🧵 THREAD CONTEXT DEBUG - Conversation ID: {conversation_id}")
+            thread_posts = thread_data.get('tweets', [])
+            thread_users = thread_data.get('users', {})
+            logger.info(f"   Posts in thread: {len(thread_posts)}")
+            logger.info(f"   Users in thread: {len(thread_users)}")
+            
+            # Log thread participants for Grok detection
+            for user_id, user_info in thread_users.items():
+                username = user_info.get('username', 'unknown')
+                name = user_info.get('name', 'Unknown')
+                is_verified = user_info.get('verified', False)
+                logger.info(f"   User {user_id}: @{username} ({name}) verified={is_verified}")
+                
+                # Special logging for Grok or AI-related users
+                if 'grok' in username.lower() or 'grok' in name.lower():
+                    logger.info(f"   🤖 DETECTED GROK USER: @{username} ({name})")
+            
+            # Log conversation structure
+            for i, post in enumerate(thread_posts[:5]):  # Log first 5 posts
+                post_id = post.get('id')
+                post_author = post.get('author_id')
+                post_text = post.get('text', '')[:50]
+                is_reply = 'in_reply_to_user_id' in post
+                logger.info(f"   Post {i+1}: {post_id} by {post_author} (reply={is_reply}) - {post_text}...")
+                
         except Exception as e:
-            logger.error(f"Error getting thread context: {e}")
+            logger.error(f"❌ Error getting thread context: {e}")
             return False
         
         # Convert to YAML string
         thread_context = thread_to_yaml_string(thread_data)
-        logger.debug(f"Thread context generated, length: {len(thread_context)} characters")
+        logger.info(f"📄 Thread context generated, length: {len(thread_context)} characters")
+        
+        # Save comprehensive conversation data for debugging
+        try:
+            debug_dir = X_QUEUE_DIR / "debug" / f"conversation_{conversation_id}"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save raw thread data (JSON)
+            with open(debug_dir / f"thread_data_{mention_id}.json", 'w') as f:
+                json.dump(thread_data, f, indent=2)
+            
+            # Save YAML thread context
+            with open(debug_dir / f"thread_context_{mention_id}.yaml", 'w') as f:
+                f.write(thread_context)
+            
+            # Save mention processing debug info
+            debug_info = {
+                'processed_at': datetime.now().isoformat(),
+                'mention_id': mention_id,
+                'conversation_id': conversation_id,
+                'author_id': author_id,
+                'in_reply_to_user_id': in_reply_to_user_id,
+                'referenced_tweets': referenced_tweets,
+                'thread_stats': {
+                    'total_posts': len(thread_posts),
+                    'total_users': len(thread_users),
+                    'yaml_length': len(thread_context)
+                },
+                'users_in_conversation': {
+                    user_id: {
+                        'username': user_info.get('username'),
+                        'name': user_info.get('name'),
+                        'verified': user_info.get('verified', False),
+                        'is_grok': 'grok' in user_info.get('username', '').lower() or 'grok' in user_info.get('name', '').lower()
+                    }
+                    for user_id, user_info in thread_users.items()
+                }
+            }
+            
+            with open(debug_dir / f"debug_info_{mention_id}.json", 'w') as f:
+                json.dump(debug_info, f, indent=2)
+                
+            logger.info(f"💾 Saved conversation debug data to: {debug_dir}")
+            
+        except Exception as debug_error:
+            logger.warning(f"Failed to save debug data: {debug_error}")
+            # Continue processing even if debug save fails
         
         # Check for #voidstop
         if "#voidstop" in thread_context.lower() or "#voidstop" in mention_text.lower():
@@ -1054,6 +1247,8 @@ FULL THREAD CONTEXT:
 ```
 
 The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow.
+
+If you need to update user information, use the x_user_* tools.
 
 To reply, use the add_post_to_x_thread tool:
 - Each call creates one post (max 280 characters)
@@ -1189,6 +1384,50 @@ To reply, use the add_post_to_x_thread tool:
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to parse tool call arguments: {e}")
         
+        # Save agent response data to debug folder
+        try:
+            debug_dir = X_QUEUE_DIR / "debug" / f"conversation_{conversation_id}"
+            
+            # Save complete agent interaction
+            agent_response_data = {
+                'processed_at': datetime.now().isoformat(),
+                'mention_id': mention_id,
+                'conversation_id': conversation_id,
+                'prompt_sent': prompt,
+                'reply_candidates': reply_candidates,
+                'ignored_notification': ignored_notification,
+                'ack_note': ack_note,
+                'tool_call_results': tool_call_results,
+                'all_messages': []
+            }
+            
+            # Convert messages to serializable format
+            for message in message_response.messages:
+                msg_data = {
+                    'message_type': getattr(message, 'message_type', 'unknown'),
+                    'content': getattr(message, 'content', ''),
+                    'reasoning': getattr(message, 'reasoning', ''),
+                    'status': getattr(message, 'status', ''),
+                    'name': getattr(message, 'name', ''),
+                }
+                
+                if hasattr(message, 'tool_call') and message.tool_call:
+                    msg_data['tool_call'] = {
+                        'name': message.tool_call.name,
+                        'arguments': message.tool_call.arguments,
+                        'tool_call_id': getattr(message.tool_call, 'tool_call_id', '')
+                    }
+                
+                agent_response_data['all_messages'].append(msg_data)
+            
+            with open(debug_dir / f"agent_response_{mention_id}.json", 'w') as f:
+                json.dump(agent_response_data, f, indent=2)
+                
+            logger.info(f"💾 Saved agent response debug data")
+            
+        except Exception as debug_error:
+            logger.warning(f"Failed to save agent response debug data: {debug_error}")
+        
         # Handle conflicts
         if reply_candidates and ignored_notification:
             logger.error("⚠️ CONFLICT: Agent called both add_post_to_x_thread and ignore_notification!")
@@ -1252,11 +1491,11 @@ To reply, use the add_post_to_x_thread tool:
 def acknowledge_x_post(x_client, post_id, note=None):
     """
     Acknowledge an X post that we replied to.
-    For X, we could implement this as a private note/database entry since X doesn't have
-    a built-in acknowledgment system like Bluesky's stream.thought.ack.
+    Uses the same Bluesky client and uploads to the void data repository on atproto,
+    just like Bluesky acknowledgments.
     
     Args:
-        x_client: XClient instance (reserved for future X API acknowledgment features)
+        x_client: XClient instance (not used, kept for compatibility)
         post_id: The X post ID we're acknowledging
         note: Optional note to include with the acknowledgment
         
@@ -1264,25 +1503,24 @@ def acknowledge_x_post(x_client, post_id, note=None):
         True if successful, False otherwise
     """
     try:
-        # x_client reserved for future X API acknowledgment features
-        # For now, implement as a simple log entry
-        # In the future, this could write to a database or file system
-        ack_dir = X_QUEUE_DIR / "acknowledgments"
-        ack_dir.mkdir(exist_ok=True)
+        # Use Bluesky client to upload acks to the void data repository on atproto
+        bsky_client = bsky_utils.default_login()
         
-        ack_data = {
-            'post_id': post_id,
-            'acknowledged_at': datetime.now().isoformat(),
-            'note': note
-        }
+        # Create a synthetic URI and CID for the X post
+        # X posts don't have atproto URIs/CIDs, so we create identifiers
+        post_uri = f"x://twitter.com/post/{post_id}"
+        post_cid = f"x_{post_id}_cid"  # Synthetic CID for X posts
         
-        ack_file = ack_dir / f"ack_{post_id}.json"
-        with open(ack_file, 'w') as f:
-            json.dump(ack_data, f, indent=2)
+        # Use the same acknowledge_post function as Bluesky
+        ack_result = bsky_utils.acknowledge_post(bsky_client, post_uri, post_cid, note)
         
-        logger.debug(f"Acknowledged X post {post_id}" + (f" with note: {note[:50]}..." if note else ""))
-        return True
-        
+        if ack_result:
+            logger.debug(f"Acknowledged X post {post_id} via atproto" + (f" with note: {note[:50]}..." if note else ""))
+            return True
+        else:
+            logger.error(f"Failed to acknowledge X post {post_id}")
+            return False
+            
     except Exception as e:
         logger.error(f"Error acknowledging X post {post_id}: {e}")
         return False

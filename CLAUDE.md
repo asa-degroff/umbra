@@ -81,6 +81,23 @@ python queue_manager.py delete @example.bsky.social
 python queue_manager.py delete @example.bsky.social --force
 ```
 
+### X Debug Data Structure
+
+The X bot saves comprehensive debugging data to `x_queue/debug/conversation_{conversation_id}/` for each processed mention:
+
+- `thread_data_{mention_id}.json` - Raw thread data from X API
+- `thread_context_{mention_id}.yaml` - Processed YAML thread context sent to agent  
+- `debug_info_{mention_id}.json` - Conversation metadata and user analysis
+- `agent_response_{mention_id}.json` - Complete agent interaction including prompt, reasoning, tool calls, and responses
+
+This debug data is especially useful for analyzing how different conversation types (including Grok interactions) are handled.
+
+**Common Issues:**
+- **Incomplete Thread Context**: X API's conversation search may miss recent tweets in long conversations. The bot attempts to fetch missing referenced tweets directly.
+- **Cache Staleness**: Thread context caching is disabled during processing to ensure fresh data.
+- **Search API Limitations**: X API recent search only covers 7 days and may have indexing delays.
+- **Temporal Constraints**: Thread context uses `until_id` parameter to exclude tweets that occurred after the mention being processed, preventing "future knowledge" leakage.
+
 ## Architecture Overview
 
 ### Core Components
@@ -151,6 +168,12 @@ Main packages (install with `uv pip install`):
 ## Key Coding Principles
 
 - All errors in tools must be thrown, not returned as strings.
+- **Tool Self-Containment**: Tools executed in the cloud (like user block management tools) must be completely self-contained:
+  - Cannot use shared functions like `get_letta_client()` 
+  - Must create Letta client inline using environment variables: `Letta(token=os.environ["LETTA_API_KEY"])`
+  - Cannot use config.yaml (only environment variables)
+  - Cannot use logging (cloud execution doesn't support it)
+  - Must include all necessary imports within the function
 
 ## Memory: Python Environment Commands
 

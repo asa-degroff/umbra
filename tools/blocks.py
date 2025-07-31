@@ -548,10 +548,11 @@ def x_user_note_append(user_id: str, note: str, agent_state: "AgentState") -> st
     Returns:
         String confirming the note was appended
     """
-    logger = logging.getLogger(__name__)
-    
     try:
-        client = get_letta_client()
+        # Create Letta client inline - cloud tools must be self-contained
+        import os
+        from letta_client import Letta
+        client = Letta(token=os.environ["LETTA_API_KEY"])
         
         block_label = f"x_user_{user_id}"
         
@@ -569,7 +570,6 @@ def x_user_note_append(user_id: str, note: str, agent_state: "AgentState") -> st
                 block_id=str(block.id),
                 value=new_value
             )
-            logger.info(f"Appended note to existing block: {block_label}")
             return f"✓ Appended note to X user {user_id}'s memory block"
             
         else:
@@ -580,7 +580,6 @@ def x_user_note_append(user_id: str, note: str, agent_state: "AgentState") -> st
                 value=initial_value,
                 limit=5000
             )
-            logger.info(f"Created new block with note: {block_label}")
             
             # Check if block needs to be attached to agent
             current_blocks = client.agents.blocks.list(agent_id=str(agent_state.id))
@@ -592,13 +591,11 @@ def x_user_note_append(user_id: str, note: str, agent_state: "AgentState") -> st
                     agent_id=str(agent_state.id),
                     block_id=str(block.id)
                 )
-                logger.info(f"Attached new block to agent: {block_label}")
                 return f"✓ Created and attached X user {user_id}'s memory block with note"
             else:
                 return f"✓ Created X user {user_id}'s memory block with note"
                 
     except Exception as e:
-        logger.error(f"Error appending note to X user block: {e}")
         raise Exception(f"Error appending note to X user block: {str(e)}")
 
 
@@ -615,10 +612,11 @@ def x_user_note_replace(user_id: str, old_text: str, new_text: str, agent_state:
     Returns:
         String confirming the text was replaced
     """
-    logger = logging.getLogger(__name__)
-    
     try:
-        client = get_letta_client()
+        # Create Letta client inline - cloud tools must be self-contained
+        import os
+        from letta_client import Letta
+        client = Letta(token=os.environ["LETTA_API_KEY"])
         
         block_label = f"x_user_{user_id}"
         
@@ -643,11 +641,9 @@ def x_user_note_replace(user_id: str, old_text: str, new_text: str, agent_state:
             block_id=str(block.id),
             value=new_value
         )
-        logger.info(f"Replaced text in block: {block_label}")
         return f"✓ Replaced text in X user {user_id}'s memory block"
         
     except Exception as e:
-        logger.error(f"Error replacing text in X user block: {e}")
         raise Exception(f"Error replacing text in X user block: {str(e)}")
 
 
@@ -663,10 +659,11 @@ def x_user_note_set(user_id: str, content: str, agent_state: "AgentState") -> st
     Returns:
         String confirming the content was set
     """
-    logger = logging.getLogger(__name__)
-    
     try:
-        client = get_letta_client()
+        # Create Letta client inline - cloud tools must be self-contained
+        import os
+        from letta_client import Letta
+        client = Letta(token=os.environ["LETTA_API_KEY"])
         
         block_label = f"x_user_{user_id}"
         
@@ -680,7 +677,6 @@ def x_user_note_set(user_id: str, content: str, agent_state: "AgentState") -> st
                 block_id=str(block.id),
                 value=content
             )
-            logger.info(f"Set content for existing block: {block_label}")
             return f"✓ Set content for X user {user_id}'s memory block"
             
         else:
@@ -690,7 +686,6 @@ def x_user_note_set(user_id: str, content: str, agent_state: "AgentState") -> st
                 value=content,
                 limit=5000
             )
-            logger.info(f"Created new block with content: {block_label}")
             
             # Check if block needs to be attached to agent
             current_blocks = client.agents.blocks.list(agent_id=str(agent_state.id))
@@ -702,13 +697,11 @@ def x_user_note_set(user_id: str, content: str, agent_state: "AgentState") -> st
                     agent_id=str(agent_state.id),
                     block_id=str(block.id)
                 )
-                logger.info(f"Attached new block to agent: {block_label}")
                 return f"✓ Created and attached X user {user_id}'s memory block"
             else:
                 return f"✓ Created X user {user_id}'s memory block"
                 
     except Exception as e:
-        logger.error(f"Error setting X user block content: {e}")
         raise Exception(f"Error setting X user block content: {str(e)}")
 
 
@@ -723,10 +716,11 @@ def x_user_note_view(user_id: str, agent_state: "AgentState") -> str:
     Returns:
         String containing the user's memory block content
     """
-    logger = logging.getLogger(__name__)
-    
     try:
-        client = get_letta_client()
+        # Create Letta client inline - cloud tools must be self-contained
+        import os
+        from letta_client import Letta
+        client = Letta(token=os.environ["LETTA_API_KEY"])
         
         block_label = f"x_user_{user_id}"
         
@@ -737,12 +731,10 @@ def x_user_note_view(user_id: str, agent_state: "AgentState") -> str:
             return f"No memory block found for X user: {user_id}"
             
         block = blocks[0]
-        logger.info(f"Retrieved content for block: {block_label}")
         
         return f"Memory block for X user {user_id}:\n\n{block.value}"
         
     except Exception as e:
-        logger.error(f"Error viewing X user block: {e}")
         raise Exception(f"Error viewing X user block: {str(e)}")
 
 
