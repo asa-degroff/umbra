@@ -47,6 +47,25 @@ ac && python register_tools.py --list
 ac && python register_tools.py my_agent_name
 ```
 
+### Managing X Bot
+
+```bash
+# Run X bot main loop
+ac && python x.py bot
+
+# Run in testing mode (no actual posts)
+ac && python x.py bot --test
+
+# Queue mentions only (no processing)
+ac && python x.py queue
+
+# Process queued mentions only
+ac && python x.py process
+
+# View downranked users (10% response rate)
+ac && python x.py downrank list
+```
+
 ### Creating Research Agents
 ```bash
 ac && python create_profile_researcher.py
@@ -91,6 +110,16 @@ The X bot saves comprehensive debugging data to `x_queue/debug/conversation_{con
 - `agent_response_{mention_id}.json` - Complete agent interaction including prompt, reasoning, tool calls, and responses
 
 This debug data is especially useful for analyzing how different conversation types (including Grok interactions) are handled.
+
+### X Downrank System
+
+The X bot includes a downrank system to manage response frequency for specific users:
+
+- **File**: `x_downrank_users.txt` - Contains user IDs (one per line) that should be responded to less frequently
+- **Response Rate**: Downranked users receive responses only 10% of the time
+- **Format**: One user ID per line, comments start with `#`
+- **Logging**: All downrank decisions are logged for analysis
+- **Use Case**: Managing interactions with AI bots like Grok to prevent excessive back-and-forth
 
 **Common Issues:**
 - **Incomplete Thread Context**: X API's conversation search may miss recent tweets in long conversations. The bot attempts to fetch missing referenced tweets directly.

@@ -4,7 +4,8 @@ import requests
 import yaml
 import json
 import hashlib
-from typing import Optional, Dict, Any, List
+import random
+from typing import Optional, Dict, Any, List, Set
 from datetime import datetime
 from pathlib import Path
 from requests_oauthlib import OAuth1
@@ -26,6 +27,7 @@ X_QUEUE_DIR = Path("x_queue")
 X_CACHE_DIR = Path("x_cache")
 X_PROCESSED_MENTIONS_FILE = Path("x_queue/processed_mentions.json")
 X_LAST_SEEN_FILE = Path("x_queue/last_seen_id.json")
+X_DOWNRANK_USERS_FILE = Path("x_downrank_users.txt")
 
 class XClient:
     """X (Twitter) API client for fetching mentions and managing interactions."""
@@ -583,6 +585,39 @@ def save_processed_mentions(processed_set: set):
     except Exception as e:
         logger.error(f"Error saving processed mentions: {e}")
 
+def load_downrank_users() -> Set[str]:
+    """Load the set of user IDs that should be downranked (responded to 10% of the time)."""
+    try:
+        if not X_DOWNRANK_USERS_FILE.exists():
+            return set()
+        
+        downrank_users = set()
+        with open(X_DOWNRANK_USERS_FILE, 'r') as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if line and not line.startswith('#'):
+                    downrank_users.add(line)
+        
+        logger.info(f"Loaded {len(downrank_users)} downrank users")
+        return downrank_users
+    except Exception as e:
+        logger.error(f"Error loading downrank users: {e}")
+        return set()
+
+def should_respond_to_downranked_user(user_id: str, downrank_users: Set[str]) -> bool:
+    """
+    Check if we should respond to a downranked user.
+    Returns True 10% of the time for downranked users, True 100% of the time for others.
+    """
+    if user_id not in downrank_users:
+        return True
+    
+    # 10% chance for downranked users
+    should_respond = random.random() < 0.1
+    logger.info(f"Downranked user {user_id}: {'responding' if should_respond else 'skipping'} (10% chance)")
+    return should_respond
+
 def save_mention_to_queue(mention: Dict):
     """Save a mention to the queue directory for async processing."""
     try:
@@ -1077,6 +1112,12 @@ def process_x_mention(void_agent, x_client, mention_data, queue_filepath=None, t
         conversation_id = mention.get('conversation_id')
         in_reply_to_user_id = mention.get('in_reply_to_user_id')
         referenced_tweets = mention.get('referenced_tweets', [])
+        
+        # Check downrank list - only respond to downranked users 10% of the time
+        downrank_users = load_downrank_users()
+        if not should_respond_to_downranked_user(str(author_id), downrank_users):
+            logger.info(f"🔻 Skipping downranked user {author_id} - not in 10% selection")
+            return "no_reply"
         
         # Enhanced conversation tracking for debug - especially important for Grok handling
         logger.info(f"🔍 CONVERSATION DEBUG - Mention ID: {mention_id}")
@@ -1808,19 +1849,35 @@ if __name__ == "__main__":
             # Use specific agent ID if provided, otherwise use from config
             agent_id = sys.argv[2] if len(sys.argv) > 2 else None
             test_letta_integration(agent_id)
+        elif sys.argv[1] == "downrank":
+            # View or manage downrank list
+            if len(sys.argv) > 2 and sys.argv[2] == "list":
+                downrank_users = load_downrank_users()
+                if downrank_users:
+                    print(f"📋 Downrank users ({len(downrank_users)} total):")
+                    for user_id in sorted(downrank_users):
+                        print(f"  - {user_id}")
+                else:
+                    print("📋 No downrank users configured")
+            else:
+                print("Usage: python x.py downrank list")
+                print("  list - Show all downranked user IDs")
+                print(f"  Edit {X_DOWNRANK_USERS_FILE} to modify the list")
         else:
-            print("Usage: python x.py [bot|loop|reply|me|search|queue|process|thread|letta]")
-            print("  bot     - Run the main X bot (use --test for testing mode)")
-            print("            Example: python x.py bot --test")
-            print("  queue   - Fetch and queue mentions only (no processing)")
-            print("  process - Process all queued mentions only (no fetching)")
-            print("            Example: python x.py process --test")
-            print("  loop    - Run the old notification monitoring loop (deprecated)")
-            print("  reply   - Reply to Cameron's specific post")
-            print("  me      - Get authenticated user info and correct user ID")
-            print("  search  - Test search-based mention detection")
-            print("  thread  - Test thread context retrieval from queued mention")
-            print("  letta   - Test sending thread context to Letta agent")
-            print("            Optional: python x.py letta <agent-id>")
+            print("Usage: python x.py [bot|loop|reply|me|search|queue|process|thread|letta|downrank]")
+            print("  bot      - Run the main X bot (use --test for testing mode)")
+            print("             Example: python x.py bot --test")
+            print("  queue    - Fetch and queue mentions only (no processing)")
+            print("  process  - Process all queued mentions only (no fetching)")
+            print("             Example: python x.py process --test")
+            print("  downrank - Manage downrank users (10% response rate)")
+            print("             Example: python x.py downrank list")
+            print("  loop     - Run the old notification monitoring loop (deprecated)")
+            print("  reply    - Reply to Cameron's specific post")
+            print("  me       - Get authenticated user info and correct user ID")
+            print("  search   - Test search-based mention detection")
+            print("  thread   - Test thread context retrieval from queued mention")
+            print("  letta    - Test sending thread context to Letta agent")
+            print("             Optional: python x.py letta <agent-id>")
     else:
         test_x_client()
