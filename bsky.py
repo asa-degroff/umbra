@@ -182,22 +182,19 @@ def initialize_void():
         description = "A block to store your understanding of users you talk to or observe on the bluesky social network."
     )
 
-    # Create the agent if it doesn't exist
-    logger.info("Creating/updating void agent...")
-    void_agent = upsert_agent(
-        CLIENT,
-        name = "void",
-        block_ids = [
-            persona_block.id,
-            human_block.id,
-            zeigeist_block.id,
-        ],
-        tags = ["social agent", "bluesky"],
-        model="openai/gpt-4o-mini",
-        embedding="openai/text-embedding-3-small",
-        description = "A social media agent trapped in the void.",
-        project_id = PROJECT_ID
-    )
+    # Get the configured void agent by ID
+    logger.info("Loading void agent from config...")
+    from config_loader import get_letta_config
+    letta_config = get_letta_config()
+    agent_id = letta_config['agent_id']
+    
+    try:
+        void_agent = CLIENT.agents.get(agent_id=agent_id)
+        logger.info(f"Successfully loaded void agent: {void_agent.name} ({agent_id})")
+    except Exception as e:
+        logger.error(f"Failed to load void agent {agent_id}: {e}")
+        logger.error("Please ensure the agent_id in config.yaml is correct")
+        raise e
     
     # Export agent state
     logger.info("Exporting agent state...")

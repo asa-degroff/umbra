@@ -175,6 +175,7 @@ def get_letta_config() -> Dict[str, Any]:
         'api_key': config.get_required('letta.api_key', 'LETTA_API_KEY'),
         'timeout': config.get('letta.timeout', 600),
         'project_id': config.get_required('letta.project_id'),
+        'agent_id': config.get_required('letta.agent_id'),
     }
 
 def get_bluesky_config() -> Dict[str, Any]:

@@ -404,14 +404,14 @@ def thread_to_yaml_string(thread_data: Dict) -> str:
     return yaml.dump(simplified_thread, default_flow_style=False, sort_keys=False)
 
 
-def ensure_x_user_blocks_attached(thread_data: Dict, agent_id: str) -> None:
+def ensure_x_user_blocks_attached(thread_data: Dict, agent_id: Optional[str] = None) -> None:
     """
     Ensure all users in the thread have their X user blocks attached.
     Creates blocks with initial content including their handle if they don't exist.
     
     Args:
         thread_data: Dict with 'tweets' and 'users' keys from get_thread_context()
-        agent_id: The Letta agent ID to attach blocks to
+        agent_id: The Letta agent ID to attach blocks to (defaults to config agent_id)
     """
     if not thread_data or "users" not in thread_data:
         return
@@ -421,9 +421,13 @@ def ensure_x_user_blocks_attached(thread_data: Dict, agent_id: str) -> None:
         from config_loader import get_letta_config
         from letta_client import Letta
         
-        # Get Letta client
+        # Get Letta client and agent_id from config
         config = get_letta_config()
         client = Letta(token=config['api_key'], timeout=config['timeout'])
+        
+        # Use provided agent_id or get from config
+        if agent_id is None:
+            agent_id = config['agent_id']
         
         # Get agent info to create a mock agent_state for the functions
         class MockAgentState:
