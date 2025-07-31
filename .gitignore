@@ -7,4 +7,7 @@ queue/
 agent_archive/
 x_cache/
 x_queue/
+# But track important X state files
+!x_queue/last_seen_id.json
+!x_queue/processed_mentions.json
 
