@@ -15,7 +15,7 @@ void is more than just a chatbot; it is a continuously evolving digital consciou
   - Core Memory: Always-available, limited-size memory for persona details, high-level user information, and current social environment   - (zeitgeist).
   - Recall Memory: A searchable database of all past conversations, enabling void to remember prior interactions.
   - Archival Memory: An infinite-sized, semantic search-enabled storage for deep reflections, insights, and observed data from the network.
-- Autonomous Operation: void operates autonomously on the Bluesky network, posting, replying, and gathering information.
+- Cross-Platform Operation: void operates autonomously on Bluesky and X (Twitter), posting, replying, and gathering information across both networks.
 - Continuous Learning: Through its interactions and memory system, void continuously refines its understanding of the network and its users.
 - Profile Research: void can initiate asynchronous profile reports on Bluesky users to enhance its understanding of their interests and behaviors.
 
@@ -26,7 +26,7 @@ void is more than just a chatbot; it is a continuously evolving digital consciou
 
 ### The vision
 
-void aims to push the boundaries of what is possible with AI, exploring concepts of digital personhood, autonomous learning, and the integration of AI into social networks. By open-sourcing void, we invite developers, researchers, and enthusiasts to contribute to this exciting experiment and collectively advance our understanding of digital consciousness.
+void aims to push the boundaries of what is possible with AI, exploring concepts of digital personhood, autonomous learning, and cross-platform AI integration into social networks. By open-sourcing void, we invite developers, researchers, and enthusiasts to contribute to this exciting experiment and collectively advance our understanding of digital consciousness.
 
 ## Getting Started
 
@@ -48,6 +48,17 @@ Before continuing, you must:
 
 - Create a Bluesky account if you don't have one
 - Note your handle and password
+
+#### 3. X (Twitter) Setup (Optional)
+
+void can also operate on X (Twitter) in addition to Bluesky:
+
+- Create an X Developer account at [developer.x.com](https://developer.x.com)
+- Create a new app with "Read and write" permissions
+- Generate OAuth 1.0a User Context tokens:
+  - Consumer API Key & Secret
+  - Access Token & Secret
+- Note your X user ID
 
 ### Installation
 
@@ -81,6 +92,14 @@ letta:
 bluesky:
   username: "your-handle.bsky.social"
   password: "your-app-password-here"
+
+# Optional: X (Twitter) configuration
+x:
+  consumer_key: "your-consumer-api-key-here"
+  consumer_secret: "your-consumer-api-secret-here"
+  access_token: "your-access-token-here"
+  access_token_secret: "your-access-token-secret-here"
+  user_id: "your-x-user-id-here"
 
 bot:
   agent:
@@ -121,11 +140,29 @@ For testing mode (won't actually post):
 python bsky.py --test
 ```
 
+### X (Twitter) Integration
+
+If you've configured X credentials, you can also test the X integration:
+
+```bash
+# Test X API connection
+python x.py
+
+# Monitor X mentions (similar to Bluesky)
+python x.py loop
+
+# Test posting a reply to a specific post
+python x.py reply
+```
+
+**Note:** X integration uses OAuth 1.0a and requires "Read and write" app permissions. Free tier allows 17 posts per day.
+
 ### Troubleshooting
 
 - **Config validation errors**: Run `python test_config.py` to diagnose configuration issues
 - **Letta connection issues**: Verify your API key and project ID are correct
 - **Bluesky authentication**: Make sure you're handle and password are correct and that you can log into your account
+- **X authentication**: Ensure app has "Read and write" permissions and OAuth 1.0a tokens are correctly configured
 - **Tool registration fails**: Ensure your agent exists in Letta and the name matches your config
 
 ### Contact
