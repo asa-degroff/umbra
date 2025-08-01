@@ -34,17 +34,17 @@ ac && python bsky.py --cleanup-interval 0
 ### Managing Tools
 
 ```bash
-# Register all tools with void agent
+# Register all tools with void agent (uses agent_id from config)
 ac && python register_tools.py
 
 # Register specific tools
-ac && python register_tools.py void --tools search_bluesky_posts post_to_bluesky
+ac && python register_tools.py --tools search_bluesky_posts post_to_bluesky
 
 # List available tools
 ac && python register_tools.py --list
 
-# Register tools with a different agent
-ac && python register_tools.py my_agent_name
+# Register tools with a different agent by ID
+ac && python register_tools.py --agent-id <agent-id>
 ```
 
 ### Managing X Bot

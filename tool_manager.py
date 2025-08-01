@@ -23,6 +23,7 @@ BLUESKY_TOOLS = {
 
 X_TOOLS = {
     'add_post_to_x_thread',
+    'search_x_posts',
     'attach_x_user_blocks',
     'detach_x_user_blocks',
     'x_user_note_append',

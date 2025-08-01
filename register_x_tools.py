@@ -23,6 +23,9 @@ from tools.webpage import fetch_webpage, WebpageArgs
 # Import X thread tool
 from tools.x_thread import add_post_to_x_thread, XThreadPostArgs
 
+# Import X search tool
+from tools.search_x import search_x_posts, SearchXArgs
+
 letta_config = get_letta_config()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -106,6 +109,14 @@ X_TOOL_CONFIGS = [
         "args_schema": XThreadPostArgs,
         "description": "Add a single post to the current X reply thread atomically",
         "tags": ["x", "twitter", "reply", "thread", "atomic"]
+    },
+    
+    # X search tool
+    {
+        "func": search_x_posts,
+        "args_schema": SearchXArgs,
+        "description": "Get recent posts from a specific X (Twitter) user",
+        "tags": ["x", "twitter", "search", "posts", "user"]
     }
 ]
 

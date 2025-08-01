@@ -97,9 +97,11 @@ def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
         # Get current blocks using the API
         current_blocks = client.agents.blocks.list(agent_id=str(agent_state.id))
         current_block_labels = set()
+        current_block_ids = set()
         
         for block in current_blocks:
             current_block_labels.add(block.label)
+            current_block_ids.add(str(block.id))
 
         for handle in handles:
             # Sanitize handle for block label - completely self-contained
@@ -117,6 +119,11 @@ def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
                 if blocks and len(blocks) > 0:
                     block = blocks[0]
                     logger.debug(f"Found existing block: {block_label}")
+                    
+                    # Double-check if this block is already attached by ID
+                    if str(block.id) in current_block_ids:
+                        results.append(f"✓ {handle}: Already attached (by ID)")
+                        continue
                 else:
                     block = client.blocks.create(
                         label=block_label,
@@ -126,13 +133,23 @@ def attach_user_blocks(handles: list, agent_state: "AgentState") -> str:
                     logger.info(f"Created new block: {block_label}")
 
                 # Attach block atomically
-                client.agents.blocks.attach(
-                    agent_id=str(agent_state.id),
-                    block_id=str(block.id)
-                )
-                              
-                results.append(f"✓ {handle}: Block attached")
-                logger.debug(f"Successfully attached block {block_label} to agent")
+                try:
+                    client.agents.blocks.attach(
+                        agent_id=str(agent_state.id),
+                        block_id=str(block.id)
+                    )
+                    results.append(f"✓ {handle}: Block attached")
+                    logger.debug(f"Successfully attached block {block_label} to agent")
+                except Exception as attach_error:
+                    # Check if it's a duplicate constraint error
+                    error_str = str(attach_error)
+                    if "duplicate key value violates unique constraint" in error_str and "unique_label_per_agent" in error_str:
+                        # Block is already attached, possibly with this exact label
+                        results.append(f"✓ {handle}: Already attached (verified)")
+                        logger.debug(f"Block {block_label} was already attached (caught duplicate key error)")
+                    else:
+                        # Re-raise other errors
+                        raise attach_error
 
             except Exception as e:
                 results.append(f"✗ {handle}: Error - {str(e)}")

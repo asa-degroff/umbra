@@ -76,45 +76,73 @@ class XClient:
             self.auth_method = "bearer"
             logger.info("Using Application-Only Bearer token for X API")
     
-    def _make_request(self, endpoint: str, params: Optional[Dict] = None, method: str = "GET", data: Optional[Dict] = None) -> Optional[Dict]:
-        """Make a request to the X API with proper error handling."""
+    def _make_request(self, endpoint: str, params: Optional[Dict] = None, method: str = "GET", data: Optional[Dict] = None, max_retries: int = 3) -> Optional[Dict]:
+        """Make a request to the X API with proper error handling and exponential backoff."""
         url = f"{self.base_url}{endpoint}"
         
-        try:
-            if method.upper() == "GET":
-                if self.oauth:
-                    response = requests.get(url, headers=self.headers, params=params, auth=self.oauth)
+        for attempt in range(max_retries):
+            try:
+                if method.upper() == "GET":
+                    if self.oauth:
+                        response = requests.get(url, headers=self.headers, params=params, auth=self.oauth)
+                    else:
+                        response = requests.get(url, headers=self.headers, params=params)
+                elif method.upper() == "POST":
+                    if self.oauth:
+                        response = requests.post(url, headers=self.headers, json=data, auth=self.oauth)
+                    else:
+                        response = requests.post(url, headers=self.headers, json=data)
                 else:
-                    response = requests.get(url, headers=self.headers, params=params)
-            elif method.upper() == "POST":
-                if self.oauth:
-                    response = requests.post(url, headers=self.headers, json=data, auth=self.oauth)
-                else:
-                    response = requests.post(url, headers=self.headers, json=data)
-            else:
-                raise ValueError(f"Unsupported HTTP method: {method}")
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+                    
+                response.raise_for_status()
+                return response.json()
                 
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.HTTPError as e:
-            if response.status_code == 401:
-                logger.error(f"X API authentication failed with {self.auth_method} - check your credentials")
-                logger.error(f"Response: {response.text}")
-            elif response.status_code == 403:
-                logger.error(f"X API forbidden with {self.auth_method} - check app permissions")
-                logger.error(f"Response: {response.text}")
-            elif response.status_code == 429:
-                logger.error("X API rate limit exceeded - waiting 60 seconds before retry")
-                logger.error(f"Response: {response.text}")
-                time.sleep(60)
-                raise XRateLimitError("X API rate limit exceeded")
-            else:
-                logger.error(f"X API request failed: {e}")
-                logger.error(f"Response: {response.text}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error making X API request: {e}")
-            return None
+            except requests.exceptions.HTTPError as e:
+                if response.status_code == 401:
+                    logger.error(f"X API authentication failed with {self.auth_method} - check your credentials")
+                    logger.error(f"Response: {response.text}")
+                    return None  # Don't retry auth failures
+                elif response.status_code == 403:
+                    logger.error(f"X API forbidden with {self.auth_method} - check app permissions")
+                    logger.error(f"Response: {response.text}")
+                    return None  # Don't retry permission failures
+                elif response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 60s, 120s, 240s
+                        backoff_time = 60 * (2 ** attempt)
+                        logger.warning(f"X API rate limit exceeded (attempt {attempt + 1}/{max_retries}) - waiting {backoff_time}s before retry")
+                        logger.error(f"Response: {response.text}")
+                        time.sleep(backoff_time)
+                        continue
+                    else:
+                        logger.error("X API rate limit exceeded - max retries reached")
+                        logger.error(f"Response: {response.text}")
+                        raise XRateLimitError("X API rate limit exceeded")
+                else:
+                    if attempt < max_retries - 1:
+                        # Exponential backoff for other HTTP errors too
+                        backoff_time = 30 * (2 ** attempt)
+                        logger.warning(f"X API request failed (attempt {attempt + 1}/{max_retries}): {e} - retrying in {backoff_time}s")
+                        logger.error(f"Response: {response.text}")
+                        time.sleep(backoff_time)
+                        continue
+                    else:
+                        logger.error(f"X API request failed after {max_retries} attempts: {e}")
+                        logger.error(f"Response: {response.text}")
+                        return None
+                        
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    backoff_time = 15 * (2 ** attempt)
+                    logger.warning(f"Unexpected error making X API request (attempt {attempt + 1}/{max_retries}): {e} - retrying in {backoff_time}s")
+                    time.sleep(backoff_time)
+                    continue
+                else:
+                    logger.error(f"Unexpected error making X API request after {max_retries} attempts: {e}")
+                    return None
+        
+        return None
     
     def get_mentions(self, since_id: Optional[str] = None, max_results: int = 10) -> Optional[List[Dict]]:
         """
@@ -283,39 +311,99 @@ class XClient:
         # This helps with X API's incomplete conversation search results
         tweet_ids = set(t.get('id') for t in tweets)
         missing_tweet_ids = set()
+        critical_missing_ids = set()
         
-        # Collect all referenced tweet IDs that aren't in our current set
+        # Collect referenced tweet IDs, prioritizing critical ones
         for tweet in tweets:
             referenced_tweets = tweet.get('referenced_tweets', [])
             for ref in referenced_tweets:
                 ref_id = ref.get('id')
+                ref_type = ref.get('type')
                 if ref_id and ref_id not in tweet_ids:
                     missing_tweet_ids.add(ref_id)
+                    # Prioritize direct replies and quoted tweets over retweets
+                    if ref_type in ['replied_to', 'quoted']:
+                        critical_missing_ids.add(ref_id)
         
-        # Fetch missing referenced tweets individually
-        for missing_id in missing_tweet_ids:
-            try:
-                endpoint = f"/tweets/{missing_id}"
-                params = {
-                    "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets,conversation_id",
-                    "user.fields": "id,name,username",
-                    "expansions": "author_id"
-                }
-                response = self._make_request(endpoint, params)
-                if response and "data" in response:
-                    missing_tweet = response["data"]
-                    # Only add if it's actually part of this conversation
-                    if missing_tweet.get('conversation_id') == conversation_id:
-                        tweets.append(missing_tweet)
-                        tweet_ids.add(missing_id)
-                        logger.info(f"Retrieved missing referenced tweet: {missing_id}")
+        # For rate limit efficiency, only fetch critical missing tweets if we have many
+        if len(missing_tweet_ids) > 10:
+            logger.info(f"Many missing tweets ({len(missing_tweet_ids)}), prioritizing {len(critical_missing_ids)} critical ones")
+            missing_tweet_ids = critical_missing_ids
+        
+        # Context sufficiency check - skip backfill if we already have enough context
+        if has_sufficient_context(tweets, missing_tweet_ids):
+            logger.info("Thread has sufficient context, skipping missing tweet backfill")
+            missing_tweet_ids = set()
+        
+        # Fetch missing referenced tweets in batches (more rate-limit friendly)
+        if missing_tweet_ids:
+            missing_list = list(missing_tweet_ids)
+            
+            # First, check cache for missing tweets
+            cached_tweets = get_cached_tweets(missing_list)
+            for tweet_id, cached_tweet in cached_tweets.items():
+                if cached_tweet.get('conversation_id') == conversation_id:
+                    tweets.append(cached_tweet)
+                    tweet_ids.add(tweet_id)
+                    logger.info(f"Retrieved missing tweet from cache: {tweet_id}")
+                    
+                    # Add user data if available in cache
+                    if cached_tweet.get('author_info'):
+                        author_id = cached_tweet.get('author_id')
+                        if author_id:
+                            users_data[author_id] = cached_tweet['author_info']
+            
+            # Only fetch tweets that weren't found in cache
+            uncached_ids = [tid for tid in missing_list if tid not in cached_tweets]
+            
+            if uncached_ids:
+                batch_size = 100  # X API limit for bulk tweet lookup
+                
+                for i in range(0, len(uncached_ids), batch_size):
+                    batch_ids = uncached_ids[i:i + batch_size]
+                    try:
+                        endpoint = "/tweets"
+                        params = {
+                            "ids": ",".join(batch_ids),
+                            "tweet.fields": "id,text,author_id,created_at,in_reply_to_user_id,referenced_tweets,conversation_id",
+                            "user.fields": "id,name,username",
+                            "expansions": "author_id"
+                        }
+                        response = self._make_request(endpoint, params)
                         
-                        # Also add user data if available
-                        if "includes" in response and "users" in response["includes"]:
-                            for user in response["includes"]["users"]:
-                                users_data[user["id"]] = user
-            except Exception as e:
-                logger.warning(f"Could not fetch missing tweet {missing_id}: {e}")
+                        if response and "data" in response:
+                            fetched_tweets = []
+                            batch_users_data = {}
+                            
+                            for missing_tweet in response["data"]:
+                                # Only add if it's actually part of this conversation
+                                if missing_tweet.get('conversation_id') == conversation_id:
+                                    tweets.append(missing_tweet)
+                                    tweet_ids.add(missing_tweet.get('id'))
+                                    fetched_tweets.append(missing_tweet)
+                                    logger.info(f"Retrieved missing referenced tweet: {missing_tweet.get('id')}")
+                            
+                            # Add user data if available
+                            if "includes" in response and "users" in response["includes"]:
+                                for user in response["includes"]["users"]:
+                                    users_data[user["id"]] = user
+                                    batch_users_data[user["id"]] = user
+                            
+                            # Cache the newly fetched tweets
+                            if fetched_tweets:
+                                save_cached_tweets(fetched_tweets, batch_users_data)
+                            
+                            logger.info(f"Batch fetched {len(response['data'])} missing tweets from {len(batch_ids)} requested")
+                        
+                        # Handle partial success - log any missing tweets that weren't found
+                        if response and "errors" in response:
+                            for error in response["errors"]:
+                                logger.warning(f"Could not fetch tweet {error.get('resource_id')}: {error.get('title')}")
+                                
+                    except Exception as e:
+                        logger.warning(f"Could not fetch batch of missing tweets {batch_ids[:3]}...: {e}")
+            else:
+                logger.info(f"All {len(missing_list)} missing tweets found in cache")
         
         if tweets:
             # Filter out tweets that occur after until_id (if specified)
@@ -333,6 +421,9 @@ class XClient:
             logger.info(f"Retrieved {len(tweets)} tweets in thread")
             
             thread_data = {"tweets": tweets, "users": users_data}
+            
+            # Cache individual tweets from the thread for future backfill
+            save_cached_tweets(tweets, users_data)
             
             # Cache the result
             if use_cache:
@@ -712,6 +803,116 @@ def save_cached_thread_context(conversation_id: str, thread_data: Dict):
         logger.debug(f"Cached thread context for {conversation_id}")
     except Exception as e:
         logger.error(f"Error caching thread context: {e}")
+
+def get_cached_tweets(tweet_ids: List[str]) -> Dict[str, Dict]:
+    """
+    Load cached individual tweets if available.
+    Returns dict mapping tweet_id -> tweet_data for found tweets.
+    """
+    cached_tweets = {}
+    
+    for tweet_id in tweet_ids:
+        cache_file = X_CACHE_DIR / f"tweet_{tweet_id}.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                    
+                # Use longer cache times for older tweets (24 hours vs 1 hour)
+                from datetime import datetime, timedelta
+                cached_time = datetime.fromisoformat(cached_data.get('cached_at', ''))
+                tweet_created = cached_data.get('tweet_data', {}).get('created_at', '')
+                
+                # Parse tweet creation time to determine age
+                try:
+                    from dateutil.parser import parse
+                    tweet_age = datetime.now() - parse(tweet_created)
+                    cache_duration = timedelta(hours=24) if tweet_age > timedelta(hours=24) else timedelta(hours=1)
+                except:
+                    cache_duration = timedelta(hours=1)  # Default to 1 hour if parsing fails
+                
+                if datetime.now() - cached_time < cache_duration:
+                    cached_tweets[tweet_id] = cached_data.get('tweet_data')
+                    logger.debug(f"Using cached tweet {tweet_id}")
+                    
+            except Exception as e:
+                logger.warning(f"Error loading cached tweet {tweet_id}: {e}")
+    
+    return cached_tweets
+
+def save_cached_tweets(tweets_data: List[Dict], users_data: Dict[str, Dict] = None):
+    """Save individual tweets to cache for future reuse."""
+    try:
+        X_CACHE_DIR.mkdir(exist_ok=True)
+        
+        for tweet in tweets_data:
+            tweet_id = tweet.get('id')
+            if not tweet_id:
+                continue
+                
+            cache_file = X_CACHE_DIR / f"tweet_{tweet_id}.json"
+            
+            # Include user data if available
+            tweet_with_user = tweet.copy()
+            if users_data and tweet.get('author_id') in users_data:
+                tweet_with_user['author_info'] = users_data[tweet.get('author_id')]
+            
+            cache_data = {
+                'tweet_id': tweet_id,
+                'tweet_data': tweet_with_user,
+                'cached_at': datetime.now().isoformat()
+            }
+            
+            with open(cache_file, 'w') as f:
+                json.dump(cache_data, f, indent=2)
+            
+            logger.debug(f"Cached individual tweet {tweet_id}")
+            
+    except Exception as e:
+        logger.error(f"Error caching individual tweets: {e}")
+
+def has_sufficient_context(tweets: List[Dict], missing_tweet_ids: Set[str]) -> bool:
+    """
+    Determine if we have sufficient context to skip backfilling missing tweets.
+    
+    Args:
+        tweets: List of tweets already in the thread
+        missing_tweet_ids: Set of missing tweet IDs we'd like to fetch
+    
+    Returns:
+        True if context is sufficient, False if backfill is needed
+    """
+    # If no missing tweets, context is sufficient
+    if not missing_tweet_ids:
+        return True
+    
+    # If we have a substantial conversation (5+ tweets), likely sufficient
+    if len(tweets) >= 5:
+        logger.debug(f"Thread has {len(tweets)} tweets, considering sufficient")
+        return True
+    
+    # If only a few missing tweets and we have some context, might be enough
+    if len(missing_tweet_ids) <= 2 and len(tweets) >= 3:
+        logger.debug(f"Only {len(missing_tweet_ids)} missing tweets with {len(tweets)} existing, considering sufficient")
+        return True
+    
+    # Check if we have conversational flow (mentions between users)
+    has_conversation_flow = False
+    for tweet in tweets:
+        text = tweet.get('text', '').lower()
+        # Look for mentions, replies, or conversational indicators
+        if '@' in text or 'reply' in text or len([t for t in tweets if t.get('author_id') != tweet.get('author_id')]) > 1:
+            has_conversation_flow = True
+            break
+    
+    # If we have clear conversational flow and reasonable length, sufficient
+    if has_conversation_flow and len(tweets) >= 2:
+        logger.debug("Thread has conversational flow, considering sufficient")
+        return True
+    
+    # Otherwise, we need to backfill
+    logger.debug(f"Context insufficient: {len(tweets)} tweets, {len(missing_tweet_ids)} missing, no clear flow")
+    return False
 
 def fetch_and_queue_mentions(username: str) -> int:
     """
