@@ -1341,10 +1341,10 @@ def process_x_mention(void_agent, x_client, mention_data, queue_filepath=None, t
             logger.warning(f"❌ No conversation_id found for mention {mention_id} - this may cause thread context issues")
             return None
         
-        # Get thread context (disable cache for missing context issues)
+        # Get thread context with caching enabled for efficiency
         # Use mention_id as until_id to exclude tweets that occurred after this mention
         try:
-            thread_data = x_client.get_thread_context(conversation_id, use_cache=False, until_id=mention_id)
+            thread_data = x_client.get_thread_context(conversation_id, use_cache=True, until_id=mention_id)
             if not thread_data:
                 logger.error(f"❌ Failed to get thread context for conversation {conversation_id}")
                 return False
@@ -1978,7 +1978,7 @@ def x_main_loop(testing_mode=False):
     logger.info("Connected to X API")
     
     # Main loop
-    FETCH_DELAY_SEC = 60  # Check every minute for X mentions
+    FETCH_DELAY_SEC = 120  # Check every 2 minutes for X mentions (reduced from 60s to conserve API calls)
     logger.info(f"Starting X mention monitoring, checking every {FETCH_DELAY_SEC} seconds")
     
     if testing_mode:
