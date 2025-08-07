@@ -5,7 +5,7 @@ from letta_client.core.http_client import re
 from rich import print
 
 client = Letta(
-    token="sk-let-NmYyZTZmMzQtZDYxNC00MDg0LTllMGQtYjFmMDRjNDA1YTEwOjM4YWJiYmJlLWNiNTQtNDIxZi1hOTZjLWNiYmU4NDA1ZDUwOA=="
+    token="woops"
 )
 
 #
