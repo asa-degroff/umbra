@@ -108,6 +108,9 @@ TESTING_MODE = False
 # Skip git operations flag
 SKIP_GIT = False
 
+# Synthesis message tracking
+last_synthesis_time = time.time()
+
 def export_agent_state(client, agent, skip_git=False):
     """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
     try:
@@ -314,6 +317,33 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         unique_handles = list(all_handles)
         
         logger.debug(f"Found {len(unique_handles)} unique handles in thread: {unique_handles}")
+        
+        # Check if any handles are in known_bots list
+        from tools.bot_detection import check_known_bots, should_respond_to_bot_thread, CheckKnownBotsArgs
+        import json
+        
+        try:
+            # Check for known bots in thread
+            bot_check_result = check_known_bots(unique_handles, void_agent)
+            bot_check_data = json.loads(bot_check_result)
+            
+            if bot_check_data.get("bot_detected", False):
+                detected_bots = bot_check_data.get("detected_bots", [])
+                logger.info(f"Bot detected in thread: {detected_bots}")
+                
+                # Decide whether to respond (10% chance)
+                if not should_respond_to_bot_thread():
+                    logger.info(f"Skipping bot thread (90% skip rate). Detected bots: {detected_bots}")
+                    # Return False to keep in queue for potential later processing
+                    return False
+                else:
+                    logger.info(f"Responding to bot thread (10% response rate). Detected bots: {detected_bots}")
+            else:
+                logger.debug("No known bots detected in thread")
+                
+        except Exception as bot_check_error:
+            logger.warning(f"Error checking for bots: {bot_check_error}")
+            # Continue processing if bot check fails
         
         # Attach user blocks before agent call
         attached_handles = []
@@ -1202,6 +1232,114 @@ def process_notifications(void_agent, atproto_client, testing_mode=False):
         logger.error(f"Error processing notifications: {e}")
 
 
+def send_synthesis_message(client: Letta, agent_id: str, atproto_client=None) -> None:
+    """
+    Send a synthesis message to the agent every 10 minutes.
+    This prompts the agent to synthesize its recent experiences.
+    
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send synthesis to
+        atproto_client: Optional AT Protocol client for posting synthesis results
+    """
+    try:
+        logger.info("🧠 Sending synthesis prompt to agent")
+        
+        # Send synthesis message with streaming to show tool use
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": "Synthesize."}],
+            stream_tokens=False,
+            max_steps=100
+        )
+        
+        # Track synthesis content for potential posting
+        synthesis_posts = []
+        ack_note = None
+        
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n◆ Reasoning")
+                        print("  ─────────")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        if tool_name == 'archival_memory_search':
+                            query = args.get('query', 'unknown')
+                            log_with_panel(f"query: \"{query}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'archival_memory_insert':
+                            content = args.get('content', '')
+                            log_with_panel(content[:200] + "..." if len(content) > 200 else content, f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'update_block':
+                            label = args.get('label', 'unknown')
+                            value_preview = str(args.get('value', ''))[:100] + "..." if len(str(args.get('value', ''))) > 100 else str(args.get('value', ''))
+                            log_with_panel(f"{label}: \"{value_preview}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'annotate_ack':
+                            note = args.get('note', '')
+                            if note:
+                                ack_note = note
+                                log_with_panel(f"note: \"{note[:100]}...\"" if len(note) > 100 else f"note: \"{note}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'add_post_to_bluesky_reply_thread':
+                            text = args.get('text', '')
+                            synthesis_posts.append(text)
+                            log_with_panel(f"text: \"{text[:100]}...\"" if len(text) > 100 else f"text: \"{text}\"", f"Tool call: {tool_name}", "blue")
+                        else:
+                            args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                            if len(args_str) > 150:
+                                args_str = args_str[:150] + "..."
+                            log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} ✓", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} ✗", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n▶ Synthesis Response")
+                    print("  ──────────────────")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+            
+            if str(chunk) == 'done':
+                break
+        
+        logger.info("🧠 Synthesis message processed successfully")
+        
+        # Handle synthesis acknowledgments if we have an atproto client
+        if atproto_client and ack_note:
+            try:
+                result = bsky_utils.create_synthesis_ack(atproto_client, ack_note)
+                if result:
+                    logger.info(f"✓ Created synthesis acknowledgment: {ack_note[:50]}...")
+                else:
+                    logger.warning("Failed to create synthesis acknowledgment")
+            except Exception as e:
+                logger.error(f"Error creating synthesis acknowledgment: {e}")
+        
+        # Handle synthesis posts if any were generated
+        if atproto_client and synthesis_posts:
+            try:
+                for post_text in synthesis_posts:
+                    cleaned_text = bsky_utils.remove_outside_quotes(post_text)
+                    response = bsky_utils.send_post(atproto_client, cleaned_text)
+                    if response:
+                        logger.info(f"✓ Posted synthesis content: {cleaned_text[:50]}...")
+                    else:
+                        logger.warning(f"Failed to post synthesis content: {cleaned_text[:50]}...")
+            except Exception as e:
+                logger.error(f"Error posting synthesis content: {e}")
+        
+    except Exception as e:
+        logger.error(f"Error sending synthesis message: {e}")
+
+
 def periodic_user_block_cleanup(client: Letta, agent_id: str) -> None:
     """
     Detach all user blocks from the agent to prevent memory bloat.
@@ -1252,6 +1390,8 @@ def main():
     # --rich option removed as we now use simple text formatting
     parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
     parser.add_argument('--cleanup-interval', type=int, default=10, help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
+    parser.add_argument('--synthesis-interval', type=int, default=600, help='Send synthesis message every N seconds (default: 600 = 10 minutes, 0 to disable)')
+    parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
     args = parser.parse_args()
     
     # Configure logging based on command line arguments
@@ -1335,6 +1475,15 @@ def main():
         logger.info("   - Queue files will not be deleted")
         logger.info("   - Notifications will not be marked as seen")
         print("\n")
+    
+    # Check for synthesis-only mode
+    SYNTHESIS_ONLY = args.synthesis_only
+    if SYNTHESIS_ONLY:
+        logger.info("=== RUNNING IN SYNTHESIS-ONLY MODE ===")
+        logger.info("   - Only synthesis messages will be sent")
+        logger.info("   - No notification processing")
+        logger.info("   - No Bluesky client needed")
+        print("\n")
     """Main bot loop that continuously monitors for notifications."""
     global start_time
     start_time = time.time()
@@ -1361,25 +1510,77 @@ def main():
     else:
         logger.warning("Agent has no tools registered!")
 
-    # Initialize Bluesky client
-    atproto_client = bsky_utils.default_login()
-    logger.info("Connected to Bluesky")
+    # Initialize Bluesky client (needed for both notification processing and synthesis acks/posts)
+    if not SYNTHESIS_ONLY:
+        atproto_client = bsky_utils.default_login()
+        logger.info("Connected to Bluesky")
+    else:
+        # In synthesis-only mode, still connect for acks and posts (unless in test mode)
+        if not args.test:
+            atproto_client = bsky_utils.default_login()
+            logger.info("Connected to Bluesky (for synthesis acks/posts)")
+        else:
+            atproto_client = None
+            logger.info("Skipping Bluesky connection (test mode)")
 
-    # Main loop
+    # Configure intervals
+    CLEANUP_INTERVAL = args.cleanup_interval
+    SYNTHESIS_INTERVAL = args.synthesis_interval
+    
+    # Synthesis-only mode
+    if SYNTHESIS_ONLY:
+        if SYNTHESIS_INTERVAL <= 0:
+            logger.error("Synthesis-only mode requires --synthesis-interval > 0")
+            return
+            
+        logger.info(f"Starting synthesis-only mode, interval: {SYNTHESIS_INTERVAL} seconds ({SYNTHESIS_INTERVAL/60:.1f} minutes)")
+        
+        while True:
+            try:
+                # Send synthesis message immediately on first run
+                logger.info("🧠 Sending synthesis message")
+                send_synthesis_message(CLIENT, void_agent.id, atproto_client)
+                
+                # Wait for next interval
+                logger.info(f"Waiting {SYNTHESIS_INTERVAL} seconds until next synthesis...")
+                sleep(SYNTHESIS_INTERVAL)
+                
+            except KeyboardInterrupt:
+                logger.info("=== SYNTHESIS MODE STOPPED BY USER ===")
+                break
+            except Exception as e:
+                logger.error(f"Error in synthesis loop: {e}")
+                logger.info(f"Sleeping for {SYNTHESIS_INTERVAL} seconds due to error...")
+                sleep(SYNTHESIS_INTERVAL)
+    
+    # Normal mode with notification processing
     logger.info(f"Starting notification monitoring, checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds")
 
     cycle_count = 0
-    CLEANUP_INTERVAL = args.cleanup_interval
     
     if CLEANUP_INTERVAL > 0:
         logger.info(f"User block cleanup enabled every {CLEANUP_INTERVAL} cycles")
     else:
         logger.info("User block cleanup disabled")
     
+    if SYNTHESIS_INTERVAL > 0:
+        logger.info(f"Synthesis messages enabled every {SYNTHESIS_INTERVAL} seconds ({SYNTHESIS_INTERVAL/60:.1f} minutes)")
+    else:
+        logger.info("Synthesis messages disabled")
+    
     while True:
         try:
             cycle_count += 1
             process_notifications(void_agent, atproto_client, TESTING_MODE)
+            
+            # Check if synthesis interval has passed
+            if SYNTHESIS_INTERVAL > 0:
+                current_time = time.time()
+                global last_synthesis_time
+                if current_time - last_synthesis_time >= SYNTHESIS_INTERVAL:
+                    logger.info(f"⏰ {SYNTHESIS_INTERVAL/60:.1f} minutes have passed, triggering synthesis")
+                    send_synthesis_message(CLIENT, void_agent.id, atproto_client)
+                    last_synthesis_time = current_time
             
             # Run periodic cleanup every N cycles
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:
