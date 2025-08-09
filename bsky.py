@@ -405,9 +405,30 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                             # Indent reasoning lines
                             for line in chunk.reasoning.split('\n'):
                                 print(f"  {line}")
+                        
+                        # Create ATProto record for reasoning (unless in testing mode)
+                        if not testing_mode and hasattr(chunk, 'reasoning'):
+                            try:
+                                bsky_utils.create_reasoning_record(atproto_client, chunk.reasoning)
+                            except Exception as e:
+                                logger.debug(f"Failed to create reasoning record: {e}")
                     elif chunk.message_type == 'tool_call_message':
                         # Parse tool arguments for better display
                         tool_name = chunk.tool_call.name
+                        
+                        # Create ATProto record for tool call (unless in testing mode)
+                        if not testing_mode:
+                            try:
+                                tool_call_id = chunk.tool_call.tool_call_id if hasattr(chunk.tool_call, 'tool_call_id') else None
+                                bsky_utils.create_tool_call_record(
+                                    atproto_client, 
+                                    tool_name, 
+                                    chunk.tool_call.arguments,
+                                    tool_call_id
+                                )
+                            except Exception as e:
+                                logger.debug(f"Failed to create tool call record: {e}")
+                        
                         try:
                             args = json.loads(chunk.tool_call.arguments)
                             # Format based on tool type
@@ -1301,8 +1322,28 @@ Begin your synthesis and journaling now."""
                         print("  ─────────")
                         for line in chunk.reasoning.split('\n'):
                             print(f"  {line}")
+                    
+                    # Create ATProto record for reasoning (if we have atproto client)
+                    if atproto_client and hasattr(chunk, 'reasoning'):
+                        try:
+                            bsky_utils.create_reasoning_record(atproto_client, chunk.reasoning)
+                        except Exception as e:
+                            logger.debug(f"Failed to create reasoning record during synthesis: {e}")
                 elif chunk.message_type == 'tool_call_message':
                     tool_name = chunk.tool_call.name
+                    
+                    # Create ATProto record for tool call (if we have atproto client)
+                    if atproto_client:
+                        try:
+                            tool_call_id = chunk.tool_call.tool_call_id if hasattr(chunk.tool_call, 'tool_call_id') else None
+                            bsky_utils.create_tool_call_record(
+                                atproto_client,
+                                tool_name,
+                                chunk.tool_call.arguments,
+                                tool_call_id
+                            )
+                        except Exception as e:
+                            logger.debug(f"Failed to create tool call record during synthesis: {e}")
                     try:
                         args = json.loads(chunk.tool_call.arguments)
                         if tool_name == 'archival_memory_search':
@@ -1688,6 +1729,10 @@ def main():
     else:
         logger.warning("Agent has no tools registered!")
 
+    # Clean up all user blocks at startup
+    logger.info("🧹 Cleaning up user blocks at startup...")
+    periodic_user_block_cleanup(CLIENT, void_agent.id)
+    
     # Initialize Bluesky client (needed for both notification processing and synthesis acks/posts)
     if not SYNTHESIS_ONLY:
         atproto_client = bsky_utils.default_login()
