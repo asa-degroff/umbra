@@ -20,6 +20,7 @@ from utils import (
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
+from datetime import date
 
 def extract_handles_from_data(data):
     """Recursively extract all unique handles from nested data structure."""
@@ -1242,13 +1243,47 @@ def send_synthesis_message(client: Letta, agent_id: str, atproto_client=None) ->
         agent_id: Agent ID to send synthesis to
         atproto_client: Optional AT Protocol client for posting synthesis results
     """
+    # Track attached temporal blocks for cleanup
+    attached_temporal_labels = []
+    
     try:
-        logger.info("🧠 Sending synthesis prompt to agent")
+        logger.info("🧠 Preparing synthesis with temporal journal blocks")
+        
+        # Attach temporal blocks before synthesis
+        success, attached_temporal_labels = attach_temporal_blocks(client, agent_id)
+        if not success:
+            logger.warning("Failed to attach some temporal blocks, continuing with synthesis anyway")
+        
+        # Create enhanced synthesis prompt
+        today = date.today()
+        synthesis_prompt = f"""Time for synthesis and reflection.
+
+You have access to temporal journal blocks for recording your thoughts and experiences:
+- void_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
+- void_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
+- void_year_{today.year}: This year's journal ({today.year})
+
+These journal blocks are attached temporarily for this synthesis session. Use them to:
+1. Record significant interactions and insights from recent experiences
+2. Track patterns in conversations and user behaviors
+3. Note your evolving understanding of the digital social environment
+4. Reflect on your growth and changes in perspective
+5. Document memorable moments or interesting discoveries
+
+The journal entries should be cumulative - add to existing content rather than replacing it.
+Consider both immediate experiences (daily) and longer-term patterns (monthly/yearly).
+
+After recording in your journals, synthesize your recent experiences into your core memory blocks
+(zeitgeist, void-persona, void-humans) as you normally would.
+
+Begin your synthesis and journaling now."""
+        
+        logger.info("🧠 Sending enhanced synthesis prompt to agent")
         
         # Send synthesis message with streaming to show tool use
         message_stream = client.agents.messages.create_stream(
             agent_id=agent_id,
-            messages=[{"role": "user", "content": "Synthesize."}],
+            messages=[{"role": "user", "content": synthesis_prompt}],
             stream_tokens=False,
             max_steps=100
         )
@@ -1338,6 +1373,13 @@ def send_synthesis_message(client: Letta, agent_id: str, atproto_client=None) ->
         
     except Exception as e:
         logger.error(f"Error sending synthesis message: {e}")
+    finally:
+        # Always detach temporal blocks after synthesis
+        if attached_temporal_labels:
+            logger.info("🧠 Detaching temporal journal blocks after synthesis")
+            detach_success = detach_temporal_blocks(client, agent_id, attached_temporal_labels)
+            if not detach_success:
+                logger.warning("Some temporal blocks may not have been detached properly")
 
 
 def periodic_user_block_cleanup(client: Letta, agent_id: str) -> None:
@@ -1379,6 +1421,142 @@ def periodic_user_block_cleanup(client: Letta, agent_id: str) -> None:
             
     except Exception as e:
         logger.error(f"Error during periodic user block cleanup: {e}")
+
+
+def attach_temporal_blocks(client: Letta, agent_id: str) -> tuple:
+    """
+    Attach temporal journal blocks (day, month, year) to the agent for synthesis.
+    Creates blocks if they don't exist.
+    
+    Returns:
+        Tuple of (success: bool, attached_labels: list)
+    """
+    try:
+        today = date.today()
+        
+        # Generate temporal block labels
+        day_label = f"void_day_{today.strftime('%Y_%m_%d')}"
+        month_label = f"void_month_{today.strftime('%Y_%m')}"
+        year_label = f"void_year_{today.year}"
+        
+        temporal_labels = [day_label, month_label, year_label]
+        attached_labels = []
+        
+        # Get current blocks attached to agent
+        current_blocks = client.agents.blocks.list(agent_id=agent_id)
+        current_block_labels = {block.label for block in current_blocks}
+        current_block_ids = {str(block.id) for block in current_blocks}
+        
+        for label in temporal_labels:
+            try:
+                # Skip if already attached
+                if label in current_block_labels:
+                    logger.debug(f"Temporal block already attached: {label}")
+                    attached_labels.append(label)
+                    continue
+                
+                # Check if block exists globally
+                blocks = client.blocks.list(label=label)
+                
+                if blocks and len(blocks) > 0:
+                    block = blocks[0]
+                    # Check if already attached by ID
+                    if str(block.id) in current_block_ids:
+                        logger.debug(f"Temporal block already attached by ID: {label}")
+                        attached_labels.append(label)
+                        continue
+                else:
+                    # Create new temporal block with appropriate header
+                    if "day" in label:
+                        header = f"# Daily Journal - {today.strftime('%B %d, %Y')}"
+                        initial_content = f"{header}\n\nNo entries yet for today."
+                    elif "month" in label:
+                        header = f"# Monthly Journal - {today.strftime('%B %Y')}"
+                        initial_content = f"{header}\n\nNo entries yet for this month."
+                    else:  # year
+                        header = f"# Yearly Journal - {today.year}"
+                        initial_content = f"{header}\n\nNo entries yet for this year."
+                    
+                    block = client.blocks.create(
+                        label=label,
+                        value=initial_content,
+                        limit=10000  # Larger limit for journal blocks
+                    )
+                    logger.info(f"Created new temporal block: {label}")
+                
+                # Attach the block
+                client.agents.blocks.attach(
+                    agent_id=agent_id,
+                    block_id=str(block.id)
+                )
+                attached_labels.append(label)
+                logger.info(f"Attached temporal block: {label}")
+                
+            except Exception as e:
+                # Check for duplicate constraint errors
+                error_str = str(e)
+                if "duplicate key value violates unique constraint" in error_str:
+                    logger.debug(f"Temporal block already attached (constraint): {label}")
+                    attached_labels.append(label)
+                else:
+                    logger.warning(f"Failed to attach temporal block {label}: {e}")
+        
+        logger.info(f"Temporal blocks attached: {len(attached_labels)}/{len(temporal_labels)}")
+        return True, attached_labels
+        
+    except Exception as e:
+        logger.error(f"Error attaching temporal blocks: {e}")
+        return False, []
+
+
+def detach_temporal_blocks(client: Letta, agent_id: str, labels_to_detach: list = None) -> bool:
+    """
+    Detach temporal journal blocks from the agent after synthesis.
+    
+    Args:
+        client: Letta client
+        agent_id: Agent ID
+        labels_to_detach: Optional list of specific labels to detach. 
+                         If None, detaches all temporal blocks.
+    
+    Returns:
+        bool: Success status
+    """
+    try:
+        # If no specific labels provided, generate today's labels
+        if labels_to_detach is None:
+            today = date.today()
+            labels_to_detach = [
+                f"void_day_{today.strftime('%Y_%m_%d')}",
+                f"void_month_{today.strftime('%Y_%m')}",
+                f"void_year_{today.year}"
+            ]
+        
+        # Get current blocks and build label to ID mapping
+        current_blocks = client.agents.blocks.list(agent_id=agent_id)
+        block_label_to_id = {block.label: str(block.id) for block in current_blocks}
+        
+        detached_count = 0
+        for label in labels_to_detach:
+            if label in block_label_to_id:
+                try:
+                    client.agents.blocks.detach(
+                        agent_id=agent_id,
+                        block_id=block_label_to_id[label]
+                    )
+                    detached_count += 1
+                    logger.debug(f"Detached temporal block: {label}")
+                except Exception as e:
+                    logger.warning(f"Failed to detach temporal block {label}: {e}")
+            else:
+                logger.debug(f"Temporal block not attached: {label}")
+        
+        logger.info(f"Detached {detached_count} temporal blocks")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error detaching temporal blocks: {e}")
+        return False
 
 
 def main():
