@@ -609,6 +609,7 @@ def create_synthesis_ack(client: Client, note: str) -> Optional[Dict[str, Any]]:
     """
     try:
         import requests
+        import json
         from datetime import datetime, timezone
         
         # Get session info from the client
@@ -681,6 +682,7 @@ def acknowledge_post(client: Client, post_uri: str, post_cid: str, note: Optiona
     """
     try:
         import requests
+        import json
         from datetime import datetime, timezone
         
         # Get session info from the client
@@ -757,6 +759,7 @@ def create_tool_call_record(client: Client, tool_name: str, arguments: str, tool
     """
     try:
         import requests
+        import json
         from datetime import datetime, timezone
         
         # Get session info from the client
@@ -783,7 +786,7 @@ def create_tool_call_record(client: Client, tool_name: str, arguments: str, tool
         # Create tool call record
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         tool_record = {
-            "$type": "stream.thought.tool_call",
+            "$type": "stream.thought.tool.call",
             "tool_name": tool_name,
             "arguments": arguments,  # Store as string to avoid parsing issues
             "createdAt": now
@@ -799,11 +802,13 @@ def create_tool_call_record(client: Client, tool_name: str, arguments: str, tool
         
         create_data = {
             "repo": user_did,
-            "collection": "stream.thought.tool_call",
+            "collection": "stream.thought.tool.call",
             "record": tool_record
         }
         
         response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+        if response.status_code != 200:
+            logger.error(f"Tool call record creation failed: {response.status_code} - {response.text}")
         response.raise_for_status()
         result = response.json()
         
@@ -831,6 +836,7 @@ def create_reasoning_record(client: Client, reasoning_text: str) -> Optional[Dic
     """
     try:
         import requests
+        import json
         from datetime import datetime, timezone
         
         # Get session info from the client
