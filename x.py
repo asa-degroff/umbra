@@ -463,6 +463,37 @@ class XClient:
         else:
             logger.error("Failed to post reply")
             return None
+    
+    def post_tweet(self, tweet_text: str) -> Optional[Dict]:
+        """
+        Post a standalone tweet (not a reply).
+        
+        Args:
+            tweet_text: The text content of the tweet (max 280 characters)
+        
+        Returns:
+            Response data if successful, None if failed
+        """
+        endpoint = "/tweets"
+        
+        # Validate tweet length
+        if len(tweet_text) > 280:
+            logger.error(f"Tweet text too long: {len(tweet_text)} characters (max 280)")
+            return None
+        
+        payload = {
+            "text": tweet_text
+        }
+        
+        logger.info(f"Attempting to post tweet with {self.auth_method} authentication")
+        result = self._make_request(endpoint, method="POST", data=payload)
+        
+        if result:
+            logger.info(f"Successfully posted tweet")
+            return result
+        else:
+            logger.error("Failed to post tweet")
+            return None
 
 def load_x_config(config_path: str = "config.yaml") -> Dict[str, str]:
     """Load X configuration from config file."""
@@ -1197,10 +1228,11 @@ Here is the thread context:
 
 Please craft a response that continues this conversation naturally. Keep responses conversational and authentic to your void persona."""
         
-        print(f"📤 Sending thread context to Letta agent...")
+        prompt_char_count = len(prompt)
+        print(f"📤 Sending thread context to Letta agent... | prompt: {prompt_char_count} chars")
 
         # Print the prompt in a rich panel
-        rprint(Panel(prompt, title="Prompt", border_style="blue"))
+        rprint(Panel(prompt, title=f"Prompt ({prompt_char_count} chars)", border_style="blue"))
 
         # Send to Letta agent using streaming
         message_stream = letta_client.agents.messages.create_stream(
@@ -1522,7 +1554,8 @@ To reply, use the add_post_to_x_thread tool:
         config = get_letta_config()
         letta_client = Letta(token=config['api_key'], timeout=config['timeout'])
         
-        logger.debug(f"Sending to LLM: @{author_username} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars")
+        prompt_char_count = len(prompt)
+        logger.debug(f"Sending to LLM: @{author_username} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars | prompt: {prompt_char_count} chars")
         
         try:
             # Use streaming to avoid timeout errors
@@ -1925,6 +1958,45 @@ def process_x_notifications(void_agent, x_client, testing_mode=False):
     except Exception as e:
         logger.error(f"Error processing X notifications: {e}")
 
+def periodic_user_block_cleanup(client, agent_id: str) -> None:
+    """
+    Detach all user blocks from the agent to prevent memory bloat.
+    This should be called periodically to ensure clean state.
+    """
+    try:
+        # Get all blocks attached to the agent
+        attached_blocks = client.agents.blocks.list(agent_id=agent_id)
+        
+        user_blocks_to_detach = []
+        for block in attached_blocks:
+            if hasattr(block, 'label') and block.label.startswith('user_'):
+                user_blocks_to_detach.append({
+                    'label': block.label,
+                    'id': block.id
+                })
+        
+        if not user_blocks_to_detach:
+            logger.debug("No user blocks found to detach during periodic cleanup")
+            return
+            
+        logger.info(f"Found {len(user_blocks_to_detach)} user blocks to detach")
+        
+        # Detach each user block
+        for block in user_blocks_to_detach:
+            try:
+                client.agents.blocks.detach(
+                    agent_id=agent_id,
+                    block_id=block['id']
+                )
+                logger.debug(f"Detached user block: {block['label']}")
+            except Exception as e:
+                logger.error(f"Failed to detach user block {block['label']}: {e}")
+                
+        logger.info(f"Periodic cleanup complete: detached {len(user_blocks_to_detach)} user blocks")
+        
+    except Exception as e:
+        logger.error(f"Error during periodic user block cleanup: {e}")
+
 def initialize_x_void():
     """Initialize the void agent for X operations."""
     logger.info("Starting void agent initialization for X...")
@@ -1944,6 +2016,10 @@ def initialize_x_void():
         logger.error(f"Failed to load void agent {agent_id}: {e}")
         raise e
     
+    # Clean up all user blocks at startup
+    logger.info("🧹 Cleaning up user blocks at X startup...")
+    periodic_user_block_cleanup(client, agent_id)
+    
     # Ensure correct tools are attached for X
     logger.info("Configuring tools for X platform...")
     try:
@@ -1959,13 +2035,19 @@ def initialize_x_void():
     
     return void_agent
 
-def x_main_loop(testing_mode=False):
+def x_main_loop(testing_mode=False, cleanup_interval=10):
     """
     Main X bot loop that continuously monitors for mentions and processes them.
     Similar to bsky.py main() but for X/Twitter.
+    
+    Args:
+        testing_mode: If True, don't actually post to X
+        cleanup_interval: Run user block cleanup every N cycles (0 to disable)
     """
     import time
     from time import sleep
+    from config_loader import get_letta_config
+    from letta_client import Letta
     
     logger.info("=== STARTING X VOID BOT ===")
     
@@ -1977,6 +2059,10 @@ def x_main_loop(testing_mode=False):
     x_client = create_x_client()
     logger.info("Connected to X API")
     
+    # Get Letta client for periodic cleanup
+    config = get_letta_config()
+    letta_client = Letta(token=config['api_key'], timeout=config['timeout'])
+    
     # Main loop
     FETCH_DELAY_SEC = 120  # Check every 2 minutes for X mentions (reduced from 60s to conserve API calls)
     logger.info(f"Starting X mention monitoring, checking every {FETCH_DELAY_SEC} seconds")
@@ -1985,6 +2071,11 @@ def x_main_loop(testing_mode=False):
         logger.info("=== RUNNING IN X TESTING MODE ===")
         logger.info("   - No messages will be sent to X")
         logger.info("   - Queue files will not be deleted")
+    
+    if cleanup_interval > 0:
+        logger.info(f"User block cleanup enabled every {cleanup_interval} cycles")
+    else:
+        logger.info("User block cleanup disabled")
     
     cycle_count = 0
     start_time = time.time()
@@ -1996,6 +2087,11 @@ def x_main_loop(testing_mode=False):
             
             # Process X notifications (fetch, queue, and process)
             process_x_notifications(void_agent, x_client, testing_mode)
+            
+            # Run periodic cleanup every N cycles
+            if cleanup_interval > 0 and cycle_count % cleanup_interval == 0:
+                logger.debug(f"Running periodic user block cleanup (cycle {cycle_count})")
+                periodic_user_block_cleanup(letta_client, void_agent.id)
             
             # Log cycle completion
             elapsed_time = time.time() - start_time
@@ -2062,12 +2158,14 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1:
         if sys.argv[1] == "bot":
-            # Main bot with optional --test flag
+            # Main bot with optional --test flag and cleanup interval
             parser = argparse.ArgumentParser(description='X Void Bot')
             parser.add_argument('command', choices=['bot'])
             parser.add_argument('--test', action='store_true', help='Run in testing mode (no actual posts)')
+            parser.add_argument('--cleanup-interval', type=int, default=10, 
+                              help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
             args = parser.parse_args()
-            x_main_loop(testing_mode=args.test)
+            x_main_loop(testing_mode=args.test, cleanup_interval=args.cleanup_interval)
         elif sys.argv[1] == "loop":
             x_notification_loop()
         elif sys.argv[1] == "reply":

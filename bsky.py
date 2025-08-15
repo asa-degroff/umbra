@@ -82,10 +82,10 @@ CLIENT= Letta(
 PROJECT_ID = "5ec33d52-ab14-4fd6-91b5-9dbc43e888a8"
 
 # Notification check delay
-FETCH_NOTIFICATIONS_DELAY_SEC = 30
+FETCH_NOTIFICATIONS_DELAY_SEC = 10  # Check every 10 seconds for faster response
 
 # Check for new notifications every N queue items
-CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS = 5
+CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS = 2  # Check more frequently during processing
 
 # Queue directory
 QUEUE_DIR = Path("queue")
@@ -372,7 +372,8 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         
         # Log concise prompt info to main logger
         thread_handles_count = len(unique_handles)
-        logger.debug(f"Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users")
+        prompt_char_count = len(prompt)
+        logger.debug(f"Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users | prompt: {prompt_char_count} chars")
 
         try:
             # Use streaming to avoid 524 timeout errors
@@ -952,6 +953,7 @@ def save_notification_to_queue(notification, is_priority=None):
                 author_handle = notification.get('author', {}).get('handle', '')
             else:
                 author_handle = getattr(notification.author, 'handle', '') if hasattr(notification, 'author') else ''
+            # Prioritize cameron.pfiffer.org responses
             priority_prefix = "0_" if author_handle == "cameron.pfiffer.org" else "1_"
 
         # Create filename with priority, timestamp and hash
@@ -1029,8 +1031,18 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
         logger.info(f"Session stats: {total_messages} total messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies, {message_counters['follows']} follows) | {messages_per_minute:.1f} msg/min")
 
         for i, filepath in enumerate(queue_files, 1):
+            # Determine if this is a priority notification
+            is_priority = filepath.name.startswith("0_")
+            
             # Check for new notifications periodically during queue processing
-            if i % CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS == 0 and i > 1:
+            # Also check immediately after processing each priority item
+            should_check_notifications = (i % CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS == 0 and i > 1)
+            
+            # If we just processed a priority item, immediately check for new priority notifications
+            if is_priority and i > 1:
+                should_check_notifications = True
+            
+            if should_check_notifications:
                 logger.info(f"🔄 Checking for new notifications (processed {i-1}/{len(queue_files)} queue items)")
                 try:
                     # Fetch and queue new notifications without processing them
@@ -1045,7 +1057,8 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                 except Exception as e:
                     logger.error(f"Error checking for new notifications: {e}")
             
-            logger.info(f"Processing queue file {i}/{len(queue_files)}: {filepath.name}")
+            priority_label = " [PRIORITY]" if is_priority else ""
+            logger.info(f"Processing queue file {i}/{len(queue_files)}{priority_label}: {filepath.name}")
             try:
                 # Load notification data
                 with open(filepath, 'r') as f:
@@ -1065,10 +1078,11 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     author_handle = notif_data['author']['handle']
                     author_display_name = notif_data['author'].get('display_name', 'no display name')
                     follow_update = f"@{author_handle} ({author_display_name}) started following you."
-                    logger.info(f"Notifying agent about new follower: @{author_handle}")
+                    follow_message = f"Update: {follow_update}"
+                    logger.info(f"Notifying agent about new follower: @{author_handle} | prompt: {len(follow_message)} chars")
                     CLIENT.agents.messages.create(
                         agent_id = void_agent.id,
-                        messages = [{"role":"user", "content": f"Update: {follow_update}"}]
+                        messages = [{"role":"user", "content": follow_message}]
                     )
                     success = True  # Follow updates are always successful
                     if success:

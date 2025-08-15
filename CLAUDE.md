@@ -29,6 +29,18 @@ ac && python bsky.py --cleanup-interval 5
 
 # Run with user block cleanup disabled
 ac && python bsky.py --cleanup-interval 0
+
+# Run with custom synthesis interval (every 5 minutes)
+ac && python bsky.py --synthesis-interval 300
+
+# Run with synthesis disabled
+ac && python bsky.py --synthesis-interval 0
+
+# Run in synthesis-only mode (no notification processing)
+ac && python bsky.py --synthesis-only --synthesis-interval 300
+
+# Run synthesis-only mode with immediate synthesis every 2 minutes
+ac && python bsky.py --synthesis-only --synthesis-interval 120
 ```
 
 ### Managing Tools
@@ -80,6 +92,9 @@ ac && python attach_user_block.py
 ```bash
 # View queue statistics
 python queue_manager.py stats
+
+# View detailed count by handle (shows who uses void the most)
+python queue_manager.py count
 
 # List all notifications in queue
 python queue_manager.py list
