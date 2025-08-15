@@ -23,6 +23,9 @@ from tools.webpage import fetch_webpage, WebpageArgs
 # Import X thread tool
 from tools.x_thread import add_post_to_x_thread, XThreadPostArgs
 
+# Import X post tool
+from tools.x_post import post_to_x, PostToXArgs
+
 # Import X search tool
 from tools.search_x import search_x_posts, SearchXArgs
 
@@ -109,6 +112,14 @@ X_TOOL_CONFIGS = [
         "args_schema": XThreadPostArgs,
         "description": "Add a single post to the current X reply thread atomically",
         "tags": ["x", "twitter", "reply", "thread", "atomic"]
+    },
+    
+    # X post tool
+    {
+        "func": post_to_x,
+        "args_schema": PostToXArgs,
+        "description": "Create a new standalone post on X (Twitter)",
+        "tags": ["x", "twitter", "post", "create", "standalone"]
     },
     
     # X search tool

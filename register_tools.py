@@ -20,8 +20,6 @@ from tools.ignore import ignore_notification, IgnoreNotificationArgs
 from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
 from tools.ack import annotate_ack, AnnotateAckArgs
 from tools.webpage import fetch_webpage, WebpageArgs
-from tools.x_post import post_to_x, PostToXArgs
-from tools.x_thread import add_post_to_x_thread, XThreadPostArgs
 
 letta_config = get_letta_config()
 logging.basicConfig(level=logging.INFO)
@@ -116,18 +114,6 @@ TOOL_CONFIGS = [
         "args_schema": WebpageArgs,
         "description": "Fetch a webpage and convert it to markdown/text format using Jina AI reader",
         "tags": ["web", "fetch", "webpage", "markdown", "jina"]
-    },
-    {
-        "func": post_to_x,
-        "args_schema": PostToXArgs,
-        "description": "Create a new standalone post on X (Twitter)",
-        "tags": ["x", "twitter", "post", "create"]
-    },
-    {
-        "func": add_post_to_x_thread,
-        "args_schema": XThreadPostArgs,
-        "description": "Add a single post to the current X reply thread atomically",
-        "tags": ["x", "twitter", "reply", "thread", "atomic"]
     },
 ]
 
