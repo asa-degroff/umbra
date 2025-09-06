@@ -29,22 +29,53 @@ ac && python bsky.py --cleanup-interval 5
 
 # Run with user block cleanup disabled
 ac && python bsky.py --cleanup-interval 0
+
+# Run with custom synthesis interval (every 5 minutes)
+ac && python bsky.py --synthesis-interval 300
+
+# Run with synthesis disabled
+ac && python bsky.py --synthesis-interval 0
+
+# Run in synthesis-only mode (no notification processing)
+ac && python bsky.py --synthesis-only --synthesis-interval 300
+
+# Run synthesis-only mode with immediate synthesis every 2 minutes
+ac && python bsky.py --synthesis-only --synthesis-interval 120
 ```
 
 ### Managing Tools
 
 ```bash
-# Register all tools with void agent
+# Register all tools with void agent (uses agent_id from config)
 ac && python register_tools.py
 
 # Register specific tools
-ac && python register_tools.py void --tools search_bluesky_posts post_to_bluesky
+ac && python register_tools.py --tools search_bluesky_posts post_to_bluesky
 
 # List available tools
 ac && python register_tools.py --list
 
-# Register tools with a different agent
-ac && python register_tools.py my_agent_name
+# Register tools with a different agent by ID
+ac && python register_tools.py --agent-id <agent-id>
+```
+
+### Managing X Bot
+
+```bash
+# Run X bot main loop
+ac && python x.py bot
+
+# Run in testing mode (no actual posts)
+ac && python x.py bot --test
+
+# Queue mentions only (no processing)
+ac && python x.py queue
+
+# Process queued mentions only
+ac && python x.py process
+
+# View downranked users (10% response rate)
+ac && python x.py downrank list
 ```
 
 ### Creating Research Agents
@@ -61,6 +92,9 @@ ac && python attach_user_block.py
 ```bash
 # View queue statistics
 python queue_manager.py stats
+
+# View detailed count by handle (shows who uses void the most)
+python queue_manager.py count
 
 # List all notifications in queue
 python queue_manager.py list
@@ -80,6 +114,34 @@ python queue_manager.py delete @example.bsky.social
 # Delete all notifications from a specific handle (skip confirmation)
 python queue_manager.py delete @example.bsky.social --force
 ```
+
+### X Debug Data Structure
+
+The X bot saves comprehensive debugging data to `x_queue/debug/conversation_{conversation_id}/` for each processed mention:
+
+- `thread_data_{mention_id}.json` - Raw thread data from X API
+- `thread_context_{mention_id}.yaml` - Processed YAML thread context sent to agent  
+- `debug_info_{mention_id}.json` - Conversation metadata and user analysis
+- `agent_response_{mention_id}.json` - Complete agent interaction including prompt, reasoning, tool calls, and responses
+
+This debug data is especially useful for analyzing how different conversation types (including Grok interactions) are handled.
+
+### X Downrank System
+
+The X bot includes a downrank system to manage response frequency for specific users:
+
+- **File**: `x_downrank_users.txt` - Contains user IDs (one per line) that should be responded to less frequently
+- **Response Rate**: Downranked users receive responses only 10% of the time
+- **Format**: One user ID per line, comments start with `#`
+- **Logging**: All downrank decisions are logged for analysis
+- **Use Case**: Managing interactions with AI bots like Grok to prevent excessive back-and-forth
+
+**Common Issues:**
+- **Incomplete Thread Context**: X API's conversation search may miss recent tweets in long conversations. The bot attempts to fetch missing referenced tweets directly.
+- **Cache Staleness**: Thread context caching is disabled during processing to ensure fresh data.
+- **Search API Limitations**: X API recent search only covers 7 days and may have indexing delays.
+- **Temporal Constraints**: Thread context uses `until_id` parameter to exclude tweets that occurred after the mention being processed, preventing "future knowledge" leakage.
+- **Processing Order**: Queue processing sorts mentions by creation time to ensure chronological response order, preventing out-of-sequence replies.
 
 ## Architecture Overview
 
@@ -151,6 +213,12 @@ Main packages (install with `uv pip install`):
 ## Key Coding Principles
 
 - All errors in tools must be thrown, not returned as strings.
+- **Tool Self-Containment**: Tools executed in the cloud (like user block management tools) must be completely self-contained:
+  - Cannot use shared functions like `get_letta_client()` 
+  - Must create Letta client inline using environment variables: `Letta(token=os.environ["LETTA_API_KEY"])`
+  - Cannot use config.yaml (only environment variables)
+  - Cannot use logging (cloud execution doesn't support it)
+  - Must include all necessary imports within the function
 
 ## Memory: Python Environment Commands
 

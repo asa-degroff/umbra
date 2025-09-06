@@ -6,6 +6,7 @@ letta:
   api_key: "your-letta-api-key-here"
   timeout: 600  # 10 minutes timeout for API calls
   project_id: "c82faea2-3ce8-4aa9-a220-b56433e62c92"  # Use your specific project ID
+  agent_id: "agent-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Your void agent ID
 
 # Bluesky Configuration
 bluesky:
@@ -69,6 +70,15 @@ queue:
   error_dir: "queue/errors"
   no_reply_dir: "queue/no_reply"
   processed_file: "queue/processed_notifications.json"
+
+# X (Twitter) Configuration
+x:
+  api_key: "your-x-api-bearer-token-here"
+  consumer_key: "your-consumer-api-key-here"
+  consumer_secret: "your-consumer-api-secret-here"
+  access_token: "your-access-token-here"
+  access_token_secret: "your-access-token-secret-here"
+  user_id: "your-x-user-id-here"  # Void's X user ID
 
 # Logging Configuration
 logging:

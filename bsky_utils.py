@@ -26,7 +26,6 @@ STRIP_FIELDS = [
     "threadgate",
     "py_type",
     "labels",
-    "facets",
     "avatar",
     "viewer",
     "indexed_at",
@@ -595,6 +594,76 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         return None
 
 
+def create_synthesis_ack(client: Client, note: str) -> Optional[Dict[str, Any]]:
+    """
+    Create a stream.thought.ack record for synthesis without a target post.
+    
+    This creates a synthesis acknowledgment with null subject field.
+    
+    Args:
+        client: Authenticated Bluesky client
+        note: The synthesis note/content
+        
+    Returns:
+        The response from creating the acknowledgment record or None if failed
+    """
+    try:
+        import requests
+        import json
+        from datetime import datetime, timezone
+        
+        # Get session info from the client
+        access_token = None
+        user_did = None
+        
+        # Try different ways to get the session info
+        if hasattr(client, '_session') and client._session:
+            access_token = client._session.access_jwt
+            user_did = client._session.did
+        elif hasattr(client, 'access_jwt'):
+            access_token = client.access_jwt
+            user_did = client.did if hasattr(client, 'did') else None
+        else:
+            logger.error("Cannot access client session information")
+            return None
+            
+        if not access_token or not user_did:
+            logger.error("Missing access token or DID from session")
+            return None
+            
+        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        
+        # Create acknowledgment record with null subject
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        ack_record = {
+            "$type": "stream.thought.ack",
+            "subject": None,  # Null subject for synthesis
+            "createdAt": now,
+            "note": note
+        }
+        
+        # Create the record
+        headers = {"Authorization": f"Bearer {access_token}"}
+        create_record_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
+        
+        create_data = {
+            "repo": user_did,
+            "collection": "stream.thought.ack",
+            "record": ack_record
+        }
+        
+        response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        
+        logger.info(f"Successfully created synthesis acknowledgment")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error creating synthesis acknowledgment: {e}")
+        return None
+
+
 def acknowledge_post(client: Client, post_uri: str, post_cid: str, note: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Create a stream.thought.ack record to acknowledge a post.
@@ -613,6 +682,7 @@ def acknowledge_post(client: Client, post_uri: str, post_cid: str, note: Optiona
     """
     try:
         import requests
+        import json
         from datetime import datetime, timezone
         
         # Get session info from the client
@@ -668,6 +738,155 @@ def acknowledge_post(client: Client, post_uri: str, post_cid: str, note: Optiona
         
     except Exception as e:
         logger.error(f"Error acknowledging post: {e}")
+        return None
+
+
+def create_tool_call_record(client: Client, tool_name: str, arguments: str, tool_call_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Create a stream.thought.tool_call record to track tool usage.
+    
+    This creates a record of tool calls made by void during processing,
+    allowing for analysis of tool usage patterns and debugging.
+    
+    Args:
+        client: Authenticated Bluesky client
+        tool_name: Name of the tool being called
+        arguments: Raw JSON string of the tool arguments
+        tool_call_id: Optional ID of the tool call for correlation
+        
+    Returns:
+        The response from creating the tool call record or None if failed
+    """
+    try:
+        import requests
+        import json
+        from datetime import datetime, timezone
+        
+        # Get session info from the client
+        access_token = None
+        user_did = None
+        
+        # Try different ways to get the session info
+        if hasattr(client, '_session') and client._session:
+            access_token = client._session.access_jwt
+            user_did = client._session.did
+        elif hasattr(client, 'access_jwt'):
+            access_token = client.access_jwt
+            user_did = client.did if hasattr(client, 'did') else None
+        else:
+            logger.error("Cannot access client session information")
+            return None
+            
+        if not access_token or not user_did:
+            logger.error("Missing access token or DID from session")
+            return None
+            
+        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        
+        # Create tool call record
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        tool_record = {
+            "$type": "stream.thought.tool.call",
+            "tool_name": tool_name,
+            "arguments": arguments,  # Store as string to avoid parsing issues
+            "createdAt": now
+        }
+        
+        # Add tool_call_id if provided
+        if tool_call_id:
+            tool_record["tool_call_id"] = tool_call_id
+        
+        # Create the record
+        headers = {"Authorization": f"Bearer {access_token}"}
+        create_record_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
+        
+        create_data = {
+            "repo": user_did,
+            "collection": "stream.thought.tool.call",
+            "record": tool_record
+        }
+        
+        response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+        if response.status_code != 200:
+            logger.error(f"Tool call record creation failed: {response.status_code} - {response.text}")
+        response.raise_for_status()
+        result = response.json()
+        
+        logger.debug(f"Successfully recorded tool call: {tool_name}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error creating tool call record: {e}")
+        return None
+
+
+def create_reasoning_record(client: Client, reasoning_text: str) -> Optional[Dict[str, Any]]:
+    """
+    Create a stream.thought.reasoning record to track agent reasoning.
+    
+    This creates a record of void's reasoning during message processing,
+    providing transparency into the decision-making process.
+    
+    Args:
+        client: Authenticated Bluesky client
+        reasoning_text: The reasoning text from the agent
+        
+    Returns:
+        The response from creating the reasoning record or None if failed
+    """
+    try:
+        import requests
+        import json
+        from datetime import datetime, timezone
+        
+        # Get session info from the client
+        access_token = None
+        user_did = None
+        
+        # Try different ways to get the session info
+        if hasattr(client, '_session') and client._session:
+            access_token = client._session.access_jwt
+            user_did = client._session.did
+        elif hasattr(client, 'access_jwt'):
+            access_token = client.access_jwt
+            user_did = client.did if hasattr(client, 'did') else None
+        else:
+            logger.error("Cannot access client session information")
+            return None
+            
+        if not access_token or not user_did:
+            logger.error("Missing access token or DID from session")
+            return None
+            
+        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        
+        # Create reasoning record
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        reasoning_record = {
+            "$type": "stream.thought.reasoning",
+            "reasoning": reasoning_text,
+            "createdAt": now
+        }
+        
+        # Create the record
+        headers = {"Authorization": f"Bearer {access_token}"}
+        create_record_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
+        
+        create_data = {
+            "repo": user_did,
+            "collection": "stream.thought.reasoning",
+            "record": reasoning_record
+        }
+        
+        response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        
+        logger.debug(f"Successfully recorded reasoning (length: {len(reasoning_text)} chars)")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error creating reasoning record: {e}")
         return None
 
 

@@ -7,7 +7,7 @@ from typing import List
 from letta_client import Letta
 from rich.console import Console
 from rich.table import Table
-from config_loader import get_config, get_letta_config, get_agent_config
+from config_loader import get_letta_config
 
 # Import standalone functions and their schemas
 from tools.search import search_bluesky_posts, SearchArgs
@@ -21,9 +21,7 @@ from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
 from tools.ack import annotate_ack, AnnotateAckArgs
 from tools.webpage import fetch_webpage, WebpageArgs
 
-config = get_config()
 letta_config = get_letta_config()
-agent_config = get_agent_config()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 console = Console()
@@ -49,12 +47,8 @@ TOOL_CONFIGS = [
         "description": "Retrieve a Bluesky feed (home timeline or custom feed)",
         "tags": ["bluesky", "feed", "timeline"]
     },
-    {
-        "func": attach_user_blocks,
-        "args_schema": AttachUserBlocksArgs,
-        "description": "Attach user-specific memory blocks to the agent. Creates blocks if they don't exist.",
-        "tags": ["memory", "blocks", "user"]
-    },
+    # Note: attach_user_blocks is available on the server but not exposed to the agent
+    # to prevent the agent from managing its own memory blocks
     {
         "func": detach_user_blocks,
         "args_schema": DetachUserBlocksArgs,
@@ -124,34 +118,27 @@ TOOL_CONFIGS = [
 ]
 
 
-def register_tools(agent_name: str = None, tools: List[str] = None):
+def register_tools(agent_id: str = None, tools: List[str] = None):
     """Register tools with a Letta agent.
 
     Args:
-        agent_name: Name of the agent to attach tools to. If None, uses config default.
+        agent_id: ID of the agent to attach tools to. If None, uses config default.
         tools: List of tool names to register. If None, registers all tools.
     """
-    # Use agent name from config if not provided
-    if agent_name is None:
-        agent_name = agent_config['name']
+    # Use agent ID from config if not provided
+    if agent_id is None:
+        agent_id = letta_config['agent_id']
     
     try:
         # Initialize Letta client with API key from config
-        client = Letta(token=letta_config['api_key'])
+        client = Letta(token=letta_config['api_key'], timeout=letta_config['timeout'])
 
-        # Find the agent
-        agents = client.agents.list()
-        agent = None
-        for a in agents:
-            if a.name == agent_name:
-                agent = a
-                break
-
-        if not agent:
-            console.print(f"[red]Error: Agent '{agent_name}' not found[/red]")
-            console.print("\nAvailable agents:")
-            for a in agents:
-                console.print(f"  - {a.name}")
+        # Get the agent by ID
+        try:
+            agent = client.agents.retrieve(agent_id=agent_id)
+        except Exception as e:
+            console.print(f"[red]Error: Agent '{agent_id}' not found[/red]")
+            console.print(f"Error details: {e}")
             return
 
         # Filter tools if specific ones requested
@@ -163,7 +150,7 @@ def register_tools(agent_name: str = None, tools: List[str] = None):
                 console.print(f"[yellow]Warning: Unknown tools: {missing}[/yellow]")
 
         # Create results table
-        table = Table(title=f"Tool Registration for Agent '{agent_name}'")
+        table = Table(title=f"Tool Registration for Agent '{agent.name}' ({agent_id})")
         table.add_column("Tool", style="cyan")
         table.add_column("Status", style="green")
         table.add_column("Description")
@@ -228,7 +215,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Register Void tools with a Letta agent")
-    parser.add_argument("agent", nargs="?", default=None, help=f"Agent name (default: {agent_config['name']})")
+    parser.add_argument("--agent-id", help=f"Agent ID (default: from config)")
     parser.add_argument("--tools", nargs="+", help="Specific tools to register (default: all)")
     parser.add_argument("--list", action="store_true", help="List available tools")
 
@@ -238,6 +225,6 @@ if __name__ == "__main__":
         list_available_tools()
     else:
         # Use config default if no agent specified
-        agent_name = args.agent if args.agent is not None else agent_config['name']
-        console.print(f"\n[bold]Registering tools for agent: {agent_name}[/bold]\n")
-        register_tools(args.agent, args.tools)
+        agent_id = args.agent_id if args.agent_id else letta_config['agent_id']
+        console.print(f"\n[bold]Registering tools for agent: {agent_id}[/bold]\n")
+        register_tools(agent_id, args.tools)

@@ -182,6 +182,71 @@ def delete_by_handle(handle: str, dry_run: bool = False, force: bool = False):
     console.print(f"\\n[bold green]Successfully deleted {deleted_count} notifications[/bold green]")
 
 
+def count_by_handle():
+    """Show detailed count of notifications by handle."""
+    handle_counts = {}
+    
+    # Collect counts from all directories
+    for directory, location in [(QUEUE_DIR, 'queue'), (QUEUE_ERROR_DIR, 'errors'), (QUEUE_NO_REPLY_DIR, 'no_reply')]:
+        if not directory.exists():
+            continue
+            
+        for filepath in directory.glob("*.json"):
+            if filepath.is_dir():
+                continue
+                
+            notif = load_notification(filepath)
+            if notif and isinstance(notif, dict):
+                handle = notif.get('author', {}).get('handle', 'unknown')
+                
+                if handle not in handle_counts:
+                    handle_counts[handle] = {'queue': 0, 'errors': 0, 'no_reply': 0, 'total': 0}
+                
+                handle_counts[handle][location] += 1
+                handle_counts[handle]['total'] += 1
+    
+    if not handle_counts:
+        console.print("[yellow]No notifications found in any queue[/yellow]")
+        return
+    
+    # Sort by total count
+    sorted_handles = sorted(handle_counts.items(), key=lambda x: x[1]['total'], reverse=True)
+    
+    # Display results
+    table = Table(title=f"Notification Count by Handle ({len(handle_counts)} unique handles)")
+    table.add_column("Handle", style="green", width=30)
+    table.add_column("Queue", style="cyan", justify="right")
+    table.add_column("Errors", style="red", justify="right")
+    table.add_column("No Reply", style="yellow", justify="right")
+    table.add_column("Total", style="bold magenta", justify="right")
+    
+    for handle, counts in sorted_handles:
+        table.add_row(
+            f"@{handle}",
+            str(counts['queue']) if counts['queue'] > 0 else "-",
+            str(counts['errors']) if counts['errors'] > 0 else "-",
+            str(counts['no_reply']) if counts['no_reply'] > 0 else "-",
+            str(counts['total'])
+        )
+    
+    console.print(table)
+    
+    # Summary statistics
+    total_notifications = sum(h['total'] for h in handle_counts.values())
+    avg_per_handle = total_notifications / len(handle_counts)
+    
+    console.print(f"\n[bold]Summary:[/bold]")
+    console.print(f"  Total notifications: {total_notifications}")
+    console.print(f"  Unique handles: {len(handle_counts)}")
+    console.print(f"  Average per handle: {avg_per_handle:.1f}")
+    
+    # Top user info
+    if sorted_handles:
+        top_handle, top_counts = sorted_handles[0]
+        percentage = (top_counts['total'] / total_notifications) * 100
+        console.print(f"  Most active: @{top_handle} ({top_counts['total']} notifications, {percentage:.1f}% of total)")
+
+
 def stats():
     """Show queue statistics."""
     stats_data = {
@@ -258,6 +323,9 @@ def main():
     # Stats command
     stats_parser = subparsers.add_parser('stats', help='Show queue statistics')
     
+    # Count command
+    count_parser = subparsers.add_parser('count', help='Show detailed count by handle')
+    
     args = parser.parse_args()
     
     if args.command == 'list':
@@ -266,6 +334,8 @@ def main():
         delete_by_handle(args.handle, args.dry_run, args.force)
     elif args.command == 'stats':
         stats()
+    elif args.command == 'count':
+        count_by_handle()
     else:
         parser.print_help()
 

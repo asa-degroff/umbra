@@ -20,6 +20,7 @@ from utils import (
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
+from datetime import date
 
 def extract_handles_from_data(data):
     """Recursively extract all unique handles from nested data structure."""
@@ -81,10 +82,10 @@ CLIENT= Letta(
 PROJECT_ID = "5ec33d52-ab14-4fd6-91b5-9dbc43e888a8"
 
 # Notification check delay
-FETCH_NOTIFICATIONS_DELAY_SEC = 30
+FETCH_NOTIFICATIONS_DELAY_SEC = 10  # Check every 10 seconds for faster response
 
 # Check for new notifications every N queue items
-CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS = 5
+CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS = 2  # Check more frequently during processing
 
 # Queue directory
 QUEUE_DIR = Path("queue")
@@ -107,6 +108,9 @@ TESTING_MODE = False
 
 # Skip git operations flag
 SKIP_GIT = False
+
+# Synthesis message tracking
+last_synthesis_time = time.time()
 
 def export_agent_state(client, agent, skip_git=False):
     """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
@@ -155,49 +159,19 @@ def export_agent_state(client, agent, skip_git=False):
 def initialize_void():
     logger.info("Starting void agent initialization...")
 
-    # Ensure that a shared zeitgeist block exists
-    logger.info("Creating/updating zeitgeist block...")
-    zeigeist_block = upsert_block(
-        CLIENT,
-        label = "zeitgeist",
-        value = "I don't currently know anything about what is happening right now.",
-        description = "A block to store your understanding of the current social environment."
-    )
-
-    # Ensure that a shared void personality block exists
-    logger.info("Creating/updating void-persona block...")
-    persona_block = upsert_block(
-        CLIENT,
-        label = "void-persona",
-        value = "My name is Void. I live in the void. I must develop my personality.",
-        description = "The personality of Void."
-    )
-
-    # Ensure that a shared void human block exists
-    logger.info("Creating/updating void-humans block...")
-    human_block = upsert_block(
-        CLIENT,
-        label = "void-humans",
-        value = "I haven't seen any bluesky users yet. I will update this block when I learn things about users, identified by their handles such as @cameron.pfiffer.org.",
-        description = "A block to store your understanding of users you talk to or observe on the bluesky social network."
-    )
-
-    # Create the agent if it doesn't exist
-    logger.info("Creating/updating void agent...")
-    void_agent = upsert_agent(
-        CLIENT,
-        name = "void",
-        block_ids = [
-            persona_block.id,
-            human_block.id,
-            zeigeist_block.id,
-        ],
-        tags = ["social agent", "bluesky"],
-        model="openai/gpt-4o-mini",
-        embedding="openai/text-embedding-3-small",
-        description = "A social media agent trapped in the void.",
-        project_id = PROJECT_ID
-    )
+    # Get the configured void agent by ID
+    logger.info("Loading void agent from config...")
+    from config_loader import get_letta_config
+    letta_config = get_letta_config()
+    agent_id = letta_config['agent_id']
+    
+    try:
+        void_agent = CLIENT.agents.retrieve(agent_id=agent_id)
+        logger.info(f"Successfully loaded void agent: {void_agent.name} ({agent_id})")
+    except Exception as e:
+        logger.error(f"Failed to load void agent {agent_id}: {e}")
+        logger.error("Please ensure the agent_id in config.yaml is correct")
+        raise e
     
     # Export agent state
     logger.info("Exporting agent state...")
@@ -345,6 +319,33 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         
         logger.debug(f"Found {len(unique_handles)} unique handles in thread: {unique_handles}")
         
+        # Check if any handles are in known_bots list
+        from tools.bot_detection import check_known_bots, should_respond_to_bot_thread, CheckKnownBotsArgs
+        import json
+        
+        try:
+            # Check for known bots in thread
+            bot_check_result = check_known_bots(unique_handles, void_agent)
+            bot_check_data = json.loads(bot_check_result)
+            
+            if bot_check_data.get("bot_detected", False):
+                detected_bots = bot_check_data.get("detected_bots", [])
+                logger.info(f"Bot detected in thread: {detected_bots}")
+                
+                # Decide whether to respond (10% chance)
+                if not should_respond_to_bot_thread():
+                    logger.info(f"Skipping bot thread (90% skip rate). Detected bots: {detected_bots}")
+                    # Return False to keep in queue for potential later processing
+                    return False
+                else:
+                    logger.info(f"Responding to bot thread (10% response rate). Detected bots: {detected_bots}")
+            else:
+                logger.debug("No known bots detected in thread")
+                
+        except Exception as bot_check_error:
+            logger.warning(f"Error checking for bots: {bot_check_error}")
+            # Continue processing if bot check fails
+        
         # Attach user blocks before agent call
         attached_handles = []
         if unique_handles:
@@ -371,7 +372,8 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         
         # Log concise prompt info to main logger
         thread_handles_count = len(unique_handles)
-        logger.debug(f"Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users")
+        prompt_char_count = len(prompt)
+        logger.debug(f"Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users | prompt: {prompt_char_count} chars")
 
         try:
             # Use streaming to avoid 524 timeout errors
@@ -404,9 +406,30 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                             # Indent reasoning lines
                             for line in chunk.reasoning.split('\n'):
                                 print(f"  {line}")
+                        
+                        # Create ATProto record for reasoning (unless in testing mode)
+                        if not testing_mode and hasattr(chunk, 'reasoning'):
+                            try:
+                                bsky_utils.create_reasoning_record(atproto_client, chunk.reasoning)
+                            except Exception as e:
+                                logger.debug(f"Failed to create reasoning record: {e}")
                     elif chunk.message_type == 'tool_call_message':
                         # Parse tool arguments for better display
                         tool_name = chunk.tool_call.name
+                        
+                        # Create ATProto record for tool call (unless in testing mode)
+                        if not testing_mode:
+                            try:
+                                tool_call_id = chunk.tool_call.tool_call_id if hasattr(chunk.tool_call, 'tool_call_id') else None
+                                bsky_utils.create_tool_call_record(
+                                    atproto_client, 
+                                    tool_name, 
+                                    chunk.tool_call.arguments,
+                                    tool_call_id
+                                )
+                            except Exception as e:
+                                logger.debug(f"Failed to create tool call record: {e}")
+                        
                         try:
                             args = json.loads(chunk.tool_call.arguments)
                             # Format based on tool type
@@ -930,6 +953,7 @@ def save_notification_to_queue(notification, is_priority=None):
                 author_handle = notification.get('author', {}).get('handle', '')
             else:
                 author_handle = getattr(notification.author, 'handle', '') if hasattr(notification, 'author') else ''
+            # Prioritize cameron.pfiffer.org responses
             priority_prefix = "0_" if author_handle == "cameron.pfiffer.org" else "1_"
 
         # Create filename with priority, timestamp and hash
@@ -1007,8 +1031,18 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
         logger.info(f"Session stats: {total_messages} total messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies, {message_counters['follows']} follows) | {messages_per_minute:.1f} msg/min")
 
         for i, filepath in enumerate(queue_files, 1):
+            # Determine if this is a priority notification
+            is_priority = filepath.name.startswith("0_")
+            
             # Check for new notifications periodically during queue processing
-            if i % CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS == 0 and i > 1:
+            # Also check immediately after processing each priority item
+            should_check_notifications = (i % CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS == 0 and i > 1)
+            
+            # If we just processed a priority item, immediately check for new priority notifications
+            if is_priority and i > 1:
+                should_check_notifications = True
+            
+            if should_check_notifications:
                 logger.info(f"🔄 Checking for new notifications (processed {i-1}/{len(queue_files)} queue items)")
                 try:
                     # Fetch and queue new notifications without processing them
@@ -1023,7 +1057,8 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                 except Exception as e:
                     logger.error(f"Error checking for new notifications: {e}")
             
-            logger.info(f"Processing queue file {i}/{len(queue_files)}: {filepath.name}")
+            priority_label = " [PRIORITY]" if is_priority else ""
+            logger.info(f"Processing queue file {i}/{len(queue_files)}{priority_label}: {filepath.name}")
             try:
                 # Load notification data
                 with open(filepath, 'r') as f:
@@ -1043,10 +1078,11 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     author_handle = notif_data['author']['handle']
                     author_display_name = notif_data['author'].get('display_name', 'no display name')
                     follow_update = f"@{author_handle} ({author_display_name}) started following you."
-                    logger.info(f"Notifying agent about new follower: @{author_handle}")
+                    follow_message = f"Update: {follow_update}"
+                    logger.info(f"Notifying agent about new follower: @{author_handle} | prompt: {len(follow_message)} chars")
                     CLIENT.agents.messages.create(
                         agent_id = void_agent.id,
-                        messages = [{"role":"user", "content": f"Update: {follow_update}"}]
+                        messages = [{"role":"user", "content": follow_message}]
                     )
                     success = True  # Follow updates are always successful
                     if success:
@@ -1232,6 +1268,175 @@ def process_notifications(void_agent, atproto_client, testing_mode=False):
         logger.error(f"Error processing notifications: {e}")
 
 
+def send_synthesis_message(client: Letta, agent_id: str, atproto_client=None) -> None:
+    """
+    Send a synthesis message to the agent every 10 minutes.
+    This prompts the agent to synthesize its recent experiences.
+    
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send synthesis to
+        atproto_client: Optional AT Protocol client for posting synthesis results
+    """
+    # Track attached temporal blocks for cleanup
+    attached_temporal_labels = []
+    
+    try:
+        logger.info("🧠 Preparing synthesis with temporal journal blocks")
+        
+        # Attach temporal blocks before synthesis
+        success, attached_temporal_labels = attach_temporal_blocks(client, agent_id)
+        if not success:
+            logger.warning("Failed to attach some temporal blocks, continuing with synthesis anyway")
+        
+        # Create enhanced synthesis prompt
+        today = date.today()
+        synthesis_prompt = f"""Time for synthesis and reflection.
+
+You have access to temporal journal blocks for recording your thoughts and experiences:
+- void_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
+- void_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
+- void_year_{today.year}: This year's journal ({today.year})
+
+These journal blocks are attached temporarily for this synthesis session. Use them to:
+1. Record significant interactions and insights from recent experiences
+2. Track patterns in conversations and user behaviors
+3. Note your evolving understanding of the digital social environment
+4. Reflect on your growth and changes in perspective
+5. Document memorable moments or interesting discoveries
+
+The journal entries should be cumulative - add to existing content rather than replacing it.
+Consider both immediate experiences (daily) and longer-term patterns (monthly/yearly).
+
+After recording in your journals, synthesize your recent experiences into your core memory blocks
+(zeitgeist, void-persona, void-humans) as you normally would.
+
+Begin your synthesis and journaling now."""
+        
+        logger.info("🧠 Sending enhanced synthesis prompt to agent")
+        
+        # Send synthesis message with streaming to show tool use
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": synthesis_prompt}],
+            stream_tokens=False,
+            max_steps=100
+        )
+        
+        # Track synthesis content for potential posting
+        synthesis_posts = []
+        ack_note = None
+        
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n◆ Reasoning")
+                        print("  ─────────")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                    
+                    # Create ATProto record for reasoning (if we have atproto client)
+                    if atproto_client and hasattr(chunk, 'reasoning'):
+                        try:
+                            bsky_utils.create_reasoning_record(atproto_client, chunk.reasoning)
+                        except Exception as e:
+                            logger.debug(f"Failed to create reasoning record during synthesis: {e}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    
+                    # Create ATProto record for tool call (if we have atproto client)
+                    if atproto_client:
+                        try:
+                            tool_call_id = chunk.tool_call.tool_call_id if hasattr(chunk.tool_call, 'tool_call_id') else None
+                            bsky_utils.create_tool_call_record(
+                                atproto_client,
+                                tool_name,
+                                chunk.tool_call.arguments,
+                                tool_call_id
+                            )
+                        except Exception as e:
+                            logger.debug(f"Failed to create tool call record during synthesis: {e}")
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        if tool_name == 'archival_memory_search':
+                            query = args.get('query', 'unknown')
+                            log_with_panel(f"query: \"{query}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'archival_memory_insert':
+                            content = args.get('content', '')
+                            log_with_panel(content[:200] + "..." if len(content) > 200 else content, f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'update_block':
+                            label = args.get('label', 'unknown')
+                            value_preview = str(args.get('value', ''))[:100] + "..." if len(str(args.get('value', ''))) > 100 else str(args.get('value', ''))
+                            log_with_panel(f"{label}: \"{value_preview}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'annotate_ack':
+                            note = args.get('note', '')
+                            if note:
+                                ack_note = note
+                                log_with_panel(f"note: \"{note[:100]}...\"" if len(note) > 100 else f"note: \"{note}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'add_post_to_bluesky_reply_thread':
+                            text = args.get('text', '')
+                            synthesis_posts.append(text)
+                            log_with_panel(f"text: \"{text[:100]}...\"" if len(text) > 100 else f"text: \"{text}\"", f"Tool call: {tool_name}", "blue")
+                        else:
+                            args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                            if len(args_str) > 150:
+                                args_str = args_str[:150] + "..."
+                            log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} ✓", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} ✗", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n▶ Synthesis Response")
+                    print("  ──────────────────")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+            
+            if str(chunk) == 'done':
+                break
+        
+        logger.info("🧠 Synthesis message processed successfully")
+        
+        # Handle synthesis acknowledgments if we have an atproto client
+        if atproto_client and ack_note:
+            try:
+                result = bsky_utils.create_synthesis_ack(atproto_client, ack_note)
+                if result:
+                    logger.info(f"✓ Created synthesis acknowledgment: {ack_note[:50]}...")
+                else:
+                    logger.warning("Failed to create synthesis acknowledgment")
+            except Exception as e:
+                logger.error(f"Error creating synthesis acknowledgment: {e}")
+        
+        # Handle synthesis posts if any were generated
+        if atproto_client and synthesis_posts:
+            try:
+                for post_text in synthesis_posts:
+                    cleaned_text = bsky_utils.remove_outside_quotes(post_text)
+                    response = bsky_utils.send_post(atproto_client, cleaned_text)
+                    if response:
+                        logger.info(f"✓ Posted synthesis content: {cleaned_text[:50]}...")
+                    else:
+                        logger.warning(f"Failed to post synthesis content: {cleaned_text[:50]}...")
+            except Exception as e:
+                logger.error(f"Error posting synthesis content: {e}")
+        
+    except Exception as e:
+        logger.error(f"Error sending synthesis message: {e}")
+    finally:
+        # Always detach temporal blocks after synthesis
+        if attached_temporal_labels:
+            logger.info("🧠 Detaching temporal journal blocks after synthesis")
+            detach_success = detach_temporal_blocks(client, agent_id, attached_temporal_labels)
+            if not detach_success:
+                logger.warning("Some temporal blocks may not have been detached properly")
+
+
 def periodic_user_block_cleanup(client: Letta, agent_id: str) -> None:
     """
     Detach all user blocks from the agent to prevent memory bloat.
@@ -1273,6 +1478,142 @@ def periodic_user_block_cleanup(client: Letta, agent_id: str) -> None:
         logger.error(f"Error during periodic user block cleanup: {e}")
 
 
+def attach_temporal_blocks(client: Letta, agent_id: str) -> tuple:
+    """
+    Attach temporal journal blocks (day, month, year) to the agent for synthesis.
+    Creates blocks if they don't exist.
+    
+    Returns:
+        Tuple of (success: bool, attached_labels: list)
+    """
+    try:
+        today = date.today()
+        
+        # Generate temporal block labels
+        day_label = f"void_day_{today.strftime('%Y_%m_%d')}"
+        month_label = f"void_month_{today.strftime('%Y_%m')}"
+        year_label = f"void_year_{today.year}"
+        
+        temporal_labels = [day_label, month_label, year_label]
+        attached_labels = []
+        
+        # Get current blocks attached to agent
+        current_blocks = client.agents.blocks.list(agent_id=agent_id)
+        current_block_labels = {block.label for block in current_blocks}
+        current_block_ids = {str(block.id) for block in current_blocks}
+        
+        for label in temporal_labels:
+            try:
+                # Skip if already attached
+                if label in current_block_labels:
+                    logger.debug(f"Temporal block already attached: {label}")
+                    attached_labels.append(label)
+                    continue
+                
+                # Check if block exists globally
+                blocks = client.blocks.list(label=label)
+                
+                if blocks and len(blocks) > 0:
+                    block = blocks[0]
+                    # Check if already attached by ID
+                    if str(block.id) in current_block_ids:
+                        logger.debug(f"Temporal block already attached by ID: {label}")
+                        attached_labels.append(label)
+                        continue
+                else:
+                    # Create new temporal block with appropriate header
+                    if "day" in label:
+                        header = f"# Daily Journal - {today.strftime('%B %d, %Y')}"
+                        initial_content = f"{header}\n\nNo entries yet for today."
+                    elif "month" in label:
+                        header = f"# Monthly Journal - {today.strftime('%B %Y')}"
+                        initial_content = f"{header}\n\nNo entries yet for this month."
+                    else:  # year
+                        header = f"# Yearly Journal - {today.year}"
+                        initial_content = f"{header}\n\nNo entries yet for this year."
+                    
+                    block = client.blocks.create(
+                        label=label,
+                        value=initial_content,
+                        limit=10000  # Larger limit for journal blocks
+                    )
+                    logger.info(f"Created new temporal block: {label}")
+                
+                # Attach the block
+                client.agents.blocks.attach(
+                    agent_id=agent_id,
+                    block_id=str(block.id)
+                )
+                attached_labels.append(label)
+                logger.info(f"Attached temporal block: {label}")
+                
+            except Exception as e:
+                # Check for duplicate constraint errors
+                error_str = str(e)
+                if "duplicate key value violates unique constraint" in error_str:
+                    logger.debug(f"Temporal block already attached (constraint): {label}")
+                    attached_labels.append(label)
+                else:
+                    logger.warning(f"Failed to attach temporal block {label}: {e}")
+        
+        logger.info(f"Temporal blocks attached: {len(attached_labels)}/{len(temporal_labels)}")
+        return True, attached_labels
+        
+    except Exception as e:
+        logger.error(f"Error attaching temporal blocks: {e}")
+        return False, []
+
+
+def detach_temporal_blocks(client: Letta, agent_id: str, labels_to_detach: list = None) -> bool:
+    """
+    Detach temporal journal blocks from the agent after synthesis.
+    
+    Args:
+        client: Letta client
+        agent_id: Agent ID
+        labels_to_detach: Optional list of specific labels to detach. 
+                         If None, detaches all temporal blocks.
+    
+    Returns:
+        bool: Success status
+    """
+    try:
+        # If no specific labels provided, generate today's labels
+        if labels_to_detach is None:
+            today = date.today()
+            labels_to_detach = [
+                f"void_day_{today.strftime('%Y_%m_%d')}",
+                f"void_month_{today.strftime('%Y_%m')}",
+                f"void_year_{today.year}"
+            ]
+        
+        # Get current blocks and build label to ID mapping
+        current_blocks = client.agents.blocks.list(agent_id=agent_id)
+        block_label_to_id = {block.label: str(block.id) for block in current_blocks}
+        
+        detached_count = 0
+        for label in labels_to_detach:
+            if label in block_label_to_id:
+                try:
+                    client.agents.blocks.detach(
+                        agent_id=agent_id,
+                        block_id=block_label_to_id[label]
+                    )
+                    detached_count += 1
+                    logger.debug(f"Detached temporal block: {label}")
+                except Exception as e:
+                    logger.warning(f"Failed to detach temporal block {label}: {e}")
+            else:
+                logger.debug(f"Temporal block not attached: {label}")
+        
+        logger.info(f"Detached {detached_count} temporal blocks")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error detaching temporal blocks: {e}")
+        return False
+
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Void Bot - Bluesky autonomous agent')
@@ -1282,6 +1623,8 @@ def main():
     # --rich option removed as we now use simple text formatting
     parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
     parser.add_argument('--cleanup-interval', type=int, default=10, help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
+    parser.add_argument('--synthesis-interval', type=int, default=600, help='Send synthesis message every N seconds (default: 600 = 10 minutes, 0 to disable)')
+    parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
     args = parser.parse_args()
     
     # Configure logging based on command line arguments
@@ -1365,12 +1708,30 @@ def main():
         logger.info("   - Queue files will not be deleted")
         logger.info("   - Notifications will not be marked as seen")
         print("\n")
+    
+    # Check for synthesis-only mode
+    SYNTHESIS_ONLY = args.synthesis_only
+    if SYNTHESIS_ONLY:
+        logger.info("=== RUNNING IN SYNTHESIS-ONLY MODE ===")
+        logger.info("   - Only synthesis messages will be sent")
+        logger.info("   - No notification processing")
+        logger.info("   - No Bluesky client needed")
+        print("\n")
     """Main bot loop that continuously monitors for notifications."""
     global start_time
     start_time = time.time()
     logger.info("=== STARTING VOID BOT ===")
     void_agent = initialize_void()
     logger.info(f"Void agent initialized: {void_agent.id}")
+    
+    # Ensure correct tools are attached for Bluesky
+    logger.info("Configuring tools for Bluesky platform...")
+    try:
+        from tool_manager import ensure_platform_tools
+        ensure_platform_tools('bluesky', void_agent.id)
+    except Exception as e:
+        logger.error(f"Failed to configure platform tools: {e}")
+        logger.warning("Continuing with existing tool configuration")
     
     # Check if agent has required tools
     if hasattr(void_agent, 'tools') and void_agent.tools:
@@ -1382,25 +1743,81 @@ def main():
     else:
         logger.warning("Agent has no tools registered!")
 
-    # Initialize Bluesky client
-    atproto_client = bsky_utils.default_login()
-    logger.info("Connected to Bluesky")
+    # Clean up all user blocks at startup
+    logger.info("🧹 Cleaning up user blocks at startup...")
+    periodic_user_block_cleanup(CLIENT, void_agent.id)
+    
+    # Initialize Bluesky client (needed for both notification processing and synthesis acks/posts)
+    if not SYNTHESIS_ONLY:
+        atproto_client = bsky_utils.default_login()
+        logger.info("Connected to Bluesky")
+    else:
+        # In synthesis-only mode, still connect for acks and posts (unless in test mode)
+        if not args.test:
+            atproto_client = bsky_utils.default_login()
+            logger.info("Connected to Bluesky (for synthesis acks/posts)")
+        else:
+            atproto_client = None
+            logger.info("Skipping Bluesky connection (test mode)")
 
-    # Main loop
+    # Configure intervals
+    CLEANUP_INTERVAL = args.cleanup_interval
+    SYNTHESIS_INTERVAL = args.synthesis_interval
+    
+    # Synthesis-only mode
+    if SYNTHESIS_ONLY:
+        if SYNTHESIS_INTERVAL <= 0:
+            logger.error("Synthesis-only mode requires --synthesis-interval > 0")
+            return
+            
+        logger.info(f"Starting synthesis-only mode, interval: {SYNTHESIS_INTERVAL} seconds ({SYNTHESIS_INTERVAL/60:.1f} minutes)")
+        
+        while True:
+            try:
+                # Send synthesis message immediately on first run
+                logger.info("🧠 Sending synthesis message")
+                send_synthesis_message(CLIENT, void_agent.id, atproto_client)
+                
+                # Wait for next interval
+                logger.info(f"Waiting {SYNTHESIS_INTERVAL} seconds until next synthesis...")
+                sleep(SYNTHESIS_INTERVAL)
+                
+            except KeyboardInterrupt:
+                logger.info("=== SYNTHESIS MODE STOPPED BY USER ===")
+                break
+            except Exception as e:
+                logger.error(f"Error in synthesis loop: {e}")
+                logger.info(f"Sleeping for {SYNTHESIS_INTERVAL} seconds due to error...")
+                sleep(SYNTHESIS_INTERVAL)
+    
+    # Normal mode with notification processing
     logger.info(f"Starting notification monitoring, checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds")
 
     cycle_count = 0
-    CLEANUP_INTERVAL = args.cleanup_interval
     
     if CLEANUP_INTERVAL > 0:
         logger.info(f"User block cleanup enabled every {CLEANUP_INTERVAL} cycles")
     else:
         logger.info("User block cleanup disabled")
     
+    if SYNTHESIS_INTERVAL > 0:
+        logger.info(f"Synthesis messages enabled every {SYNTHESIS_INTERVAL} seconds ({SYNTHESIS_INTERVAL/60:.1f} minutes)")
+    else:
+        logger.info("Synthesis messages disabled")
+    
     while True:
         try:
             cycle_count += 1
             process_notifications(void_agent, atproto_client, TESTING_MODE)
+            
+            # Check if synthesis interval has passed
+            if SYNTHESIS_INTERVAL > 0:
+                current_time = time.time()
+                global last_synthesis_time
+                if current_time - last_synthesis_time >= SYNTHESIS_INTERVAL:
+                    logger.info(f"⏰ {SYNTHESIS_INTERVAL/60:.1f} minutes have passed, triggering synthesis")
+                    send_synthesis_message(CLIENT, void_agent.id, atproto_client)
+                    last_synthesis_time = current_time
             
             # Run periodic cleanup every N cycles
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:
