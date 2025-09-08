@@ -179,12 +179,12 @@ def get_letta_config() -> Dict[str, Any]:
     }
 
 def get_bluesky_config() -> Dict[str, Any]:
-    """Get Bluesky configuration."""
+    """Get Bluesky configuration, prioritizing config.yaml over environment variables."""
     config = get_config()
     return {
-        'username': config.get_required('bluesky.username', 'BSKY_USERNAME'),
-        'password': config.get_required('bluesky.password', 'BSKY_PASSWORD'),
-        'pds_uri': config.get_with_env('bluesky.pds_uri', 'PDS_URI', 'https://bsky.social'),
+        'username': config.get_required('bluesky.username'),
+        'password': config.get_required('bluesky.password'),
+        'pds_uri': config.get('bluesky.pds_uri', 'https://bsky.social'),
     }
 
 def get_bot_config() -> Dict[str, Any]:

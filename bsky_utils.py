@@ -1,5 +1,7 @@
 import os
 import logging
+import uuid
+import time
 from typing import Optional, Dict, Any, List
 from atproto_client import Client, Session, SessionEvent, models
 
@@ -235,22 +237,26 @@ def init_client(username: str, password: str) -> Client:
 
 
 def default_login() -> Client:
-    username = os.getenv("BSKY_USERNAME")
-    password = os.getenv("BSKY_PASSWORD")
-
-    if username is None:
-        logger.error(
-            "No username provided. Please provide a username using the BSKY_USERNAME environment variable."
-        )
-        exit()
-
-    if password is None:
-        logger.error(
-            "No password provided. Please provide a password using the BSKY_PASSWORD environment variable."
-        )
-        exit()
-
-    return init_client(username, password)
+    """Login using configuration from config.yaml or environment variables."""
+    try:
+        from config_loader import get_bluesky_config
+        bluesky_config = get_bluesky_config()
+        
+        username = bluesky_config['username']
+        password = bluesky_config['password']
+        pds_uri = bluesky_config.get('pds_uri', 'https://bsky.social')
+        
+        logger.info(f"Logging into Bluesky as {username} via {pds_uri}")
+        
+        # Use pds_uri from config
+        client = Client(base_url=pds_uri)
+        client.login(username, password)
+        return client
+        
+    except Exception as e:
+        logger.error(f"Failed to load Bluesky configuration: {e}")
+        logger.error("Please check your config.yaml file or environment variables")
+        exit(1)
 
 def remove_outside_quotes(text: str) -> str:
     """
@@ -277,7 +283,7 @@ def remove_outside_quotes(text: str) -> str:
     
     return text
 
-def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: str, root_uri: Optional[str] = None, root_cid: Optional[str] = None, lang: Optional[str] = None) -> Dict[str, Any]:
+def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: str, root_uri: Optional[str] = None, root_cid: Optional[str] = None, lang: Optional[str] = None, correlation_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Reply to a post on Bluesky with rich text support.
 
@@ -289,11 +295,28 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
         root_uri: The URI of the root post (if replying to a reply). If None, uses reply_to_uri
         root_cid: The CID of the root post (if replying to a reply). If None, uses reply_to_cid
         lang: Language code for the post (e.g., 'en-US', 'es', 'ja')
+        correlation_id: Unique ID for tracking this message through the pipeline
 
     Returns:
         The response from sending the post
     """
     import re
+    
+    # Generate correlation ID if not provided
+    if correlation_id is None:
+        correlation_id = str(uuid.uuid4())[:8]
+    
+    # Enhanced logging with structured data
+    logger.info(f"[{correlation_id}] Starting reply_to_post", extra={
+        'correlation_id': correlation_id,
+        'text_length': len(text),
+        'text_preview': text[:100] + '...' if len(text) > 100 else text,
+        'reply_to_uri': reply_to_uri,
+        'root_uri': root_uri,
+        'lang': lang
+    })
+    
+    start_time = time.time()
     
     # If root is not provided, this is a reply to the root post
     if root_uri is None:
@@ -307,12 +330,17 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
     # Parse rich text facets (mentions and URLs)
     facets = []
     text_bytes = text.encode("UTF-8")
+    mentions_found = []
+    urls_found = []
+    
+    logger.debug(f"[{correlation_id}] Parsing facets from text (length: {len(text_bytes)} bytes)")
     
     # Parse mentions - fixed to handle @ at start of text
     mention_regex = rb"(?:^|[$|\W])(@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
     
     for m in re.finditer(mention_regex, text_bytes):
         handle = m.group(1)[1:].decode("UTF-8")  # Remove @ prefix
+        mentions_found.append(handle)
         # Adjust byte positions to account for the optional prefix
         mention_start = m.start(1)
         mention_end = m.end(1)
@@ -329,8 +357,9 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
                         features=[models.AppBskyRichtextFacet.Mention(did=resolve_resp.did)]
                     )
                 )
+                logger.debug(f"[{correlation_id}] Resolved mention @{handle} -> {resolve_resp.did}")
         except Exception as e:
-            logger.debug(f"Failed to resolve handle {handle}: {e}")
+            logger.warning(f"[{correlation_id}] Failed to resolve handle @{handle}: {e}")
             continue
     
     # Parse URLs - fixed to handle URLs at start of text
@@ -338,6 +367,7 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
     
     for m in re.finditer(url_regex, text_bytes):
         url = m.group(1).decode("UTF-8")
+        urls_found.append(url)
         # Adjust byte positions to account for the optional prefix
         url_start = m.start(1)
         url_end = m.end(1)
@@ -350,24 +380,79 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
                 features=[models.AppBskyRichtextFacet.Link(uri=url)]
             )
         )
+        logger.debug(f"[{correlation_id}] Found URL: {url}")
+    
+    logger.debug(f"[{correlation_id}] Facet parsing complete", extra={
+        'correlation_id': correlation_id,
+        'mentions_count': len(mentions_found),
+        'mentions': mentions_found,
+        'urls_count': len(urls_found),
+        'urls': urls_found,
+        'total_facets': len(facets)
+    })
 
     # Send the reply with facets if any were found
-    if facets:
-        response = client.send_post(
-            text=text,
-            reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
-            facets=facets,
-            langs=[lang] if lang else None
-        )
-    else:
-        response = client.send_post(
-            text=text,
-            reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
-            langs=[lang] if lang else None
-        )
-
-    logger.info(f"Reply sent successfully: {response.uri}")
-    return response
+    logger.info(f"[{correlation_id}] Sending reply to Bluesky API", extra={
+        'correlation_id': correlation_id,
+        'has_facets': bool(facets),
+        'facet_count': len(facets),
+        'lang': lang
+    })
+    
+    try:
+        if facets:
+            response = client.send_post(
+                text=text,
+                reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
+                facets=facets,
+                langs=[lang] if lang else None
+            )
+        else:
+            response = client.send_post(
+                text=text,
+                reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref),
+                langs=[lang] if lang else None
+            )
+        
+        # Calculate response time
+        response_time = time.time() - start_time
+        
+        # Extract post URL for user-friendly logging
+        post_url = None
+        if hasattr(response, 'uri') and response.uri:
+            # Convert AT-URI to web URL
+            # Format: at://did:plc:xxx/app.bsky.feed.post/xxx -> https://bsky.app/profile/handle/post/xxx
+            try:
+                uri_parts = response.uri.split('/')
+                if len(uri_parts) >= 4 and uri_parts[3] == 'app.bsky.feed.post':
+                    rkey = uri_parts[4]
+                    # We'd need to resolve DID to handle, but for now just use the URI
+                    post_url = f"bsky://post/{rkey}"
+            except:
+                pass
+        
+        logger.info(f"[{correlation_id}] Reply sent successfully ({response_time:.3f}s) - URI: {response.uri}" + 
+                   (f" - URL: {post_url}" if post_url else ""), extra={
+            'correlation_id': correlation_id,
+            'response_time': round(response_time, 3),
+            'post_uri': response.uri,
+            'post_url': post_url,
+            'post_cid': getattr(response, 'cid', None),
+            'text_length': len(text)
+        })
+        
+        return response
+        
+    except Exception as e:
+        response_time = time.time() - start_time
+        logger.error(f"[{correlation_id}] Failed to send reply", extra={
+            'correlation_id': correlation_id,
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'response_time': round(response_time, 3),
+            'text_length': len(text)
+        })
+        raise
 
 
 def get_post_thread(client: Client, uri: str) -> Optional[Dict[str, Any]]:
@@ -389,7 +474,7 @@ def get_post_thread(client: Client, uri: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def reply_to_notification(client: Client, notification: Any, reply_text: str, lang: str = "en-US") -> Optional[Dict[str, Any]]:
+def reply_to_notification(client: Client, notification: Any, reply_text: str, lang: str = "en-US", correlation_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Reply to a notification (mention or reply).
 
@@ -398,10 +483,21 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str, la
         notification: The notification object from list_notifications
         reply_text: The text to reply with
         lang: Language code for the post (defaults to "en-US")
+        correlation_id: Unique ID for tracking this message through the pipeline
 
     Returns:
         The response from sending the reply or None if failed
     """
+    # Generate correlation ID if not provided
+    if correlation_id is None:
+        correlation_id = str(uuid.uuid4())[:8]
+    
+    logger.info(f"[{correlation_id}] Processing reply_to_notification", extra={
+        'correlation_id': correlation_id,
+        'reply_length': len(reply_text),
+        'lang': lang
+    })
+    
     try:
         # Get the post URI and CID from the notification (handle both dict and object)
         if isinstance(notification, dict):
@@ -461,15 +557,20 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str, la
             reply_to_cid=post_cid,
             root_uri=root_uri,
             root_cid=root_cid,
-            lang=lang
+            lang=lang,
+            correlation_id=correlation_id
         )
 
     except Exception as e:
-        logger.error(f"Error replying to notification: {e}")
+        logger.error(f"[{correlation_id}] Error replying to notification: {e}", extra={
+            'correlation_id': correlation_id,
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
         return None
 
 
-def reply_with_thread_to_notification(client: Client, notification: Any, reply_messages: List[str], lang: str = "en-US") -> Optional[List[Dict[str, Any]]]:
+def reply_with_thread_to_notification(client: Client, notification: Any, reply_messages: List[str], lang: str = "en-US", correlation_id: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Reply to a notification with a threaded chain of messages (max 15).
 
@@ -478,17 +579,29 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         notification: The notification object from list_notifications
         reply_messages: List of reply texts (max 15 messages, each max 300 chars)
         lang: Language code for the posts (defaults to "en-US")
+        correlation_id: Unique ID for tracking this message through the pipeline
 
     Returns:
         List of responses from sending the replies or None if failed
     """
+    # Generate correlation ID if not provided
+    if correlation_id is None:
+        correlation_id = str(uuid.uuid4())[:8]
+    
+    logger.info(f"[{correlation_id}] Starting threaded reply", extra={
+        'correlation_id': correlation_id,
+        'message_count': len(reply_messages),
+        'total_length': sum(len(msg) for msg in reply_messages),
+        'lang': lang
+    })
+    
     try:
         # Validate input
         if not reply_messages or len(reply_messages) == 0:
-            logger.error("Reply messages list cannot be empty")
+            logger.error(f"[{correlation_id}] Reply messages list cannot be empty")
             return None
         if len(reply_messages) > 15:
-            logger.error(f"Cannot send more than 15 reply messages (got {len(reply_messages)})")
+            logger.error(f"[{correlation_id}] Cannot send more than 15 reply messages (got {len(reply_messages)})")
             return None
         
         # Get the post URI and CID from the notification (handle both dict and object)
@@ -547,7 +660,8 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         current_parent_cid = post_cid
         
         for i, message in enumerate(reply_messages):
-            logger.info(f"Sending reply {i+1}/{len(reply_messages)}: {message[:50]}...")
+            thread_correlation_id = f"{correlation_id}-{i+1}"
+            logger.info(f"[{thread_correlation_id}] Sending reply {i+1}/{len(reply_messages)}: {message[:50]}...")
             
             # Send this reply
             response = reply_to_post(
@@ -557,11 +671,12 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
                 reply_to_cid=current_parent_cid,
                 root_uri=root_uri,
                 root_cid=root_cid,
-                lang=lang
+                lang=lang,
+                correlation_id=thread_correlation_id
             )
             
             if not response:
-                logger.error(f"Failed to send reply {i+1}, posting system failure message")
+                logger.error(f"[{thread_correlation_id}] Failed to send reply {i+1}, posting system failure message")
                 # Try to post a system failure message
                 failure_response = reply_to_post(
                     client=client,
@@ -570,14 +685,15 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
                     reply_to_cid=current_parent_cid,
                     root_uri=root_uri,
                     root_cid=root_cid,
-                    lang=lang
+                    lang=lang,
+                    correlation_id=f"{thread_correlation_id}-FAIL"
                 )
                 if failure_response:
                     responses.append(failure_response)
                     current_parent_uri = failure_response.uri
                     current_parent_cid = failure_response.cid
                 else:
-                    logger.error("Could not even send system failure message, stopping thread")
+                    logger.error(f"[{thread_correlation_id}] Could not even send system failure message, stopping thread")
                     return responses if responses else None
             else:
                 responses.append(response)
@@ -586,11 +702,20 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
                     current_parent_uri = response.uri
                     current_parent_cid = response.cid
                 
-        logger.info(f"Successfully sent {len(responses)} threaded replies")
+        logger.info(f"[{correlation_id}] Successfully sent {len(responses)} threaded replies", extra={
+            'correlation_id': correlation_id,
+            'replies_sent': len(responses),
+            'replies_requested': len(reply_messages)
+        })
         return responses
 
     except Exception as e:
-        logger.error(f"Error sending threaded reply to notification: {e}")
+        logger.error(f"[{correlation_id}] Error sending threaded reply to notification: {e}", extra={
+            'correlation_id': correlation_id,
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'message_count': len(reply_messages)
+        })
         return None
 
 
@@ -631,7 +756,10 @@ def create_synthesis_ack(client: Client, note: str) -> Optional[Dict[str, Any]]:
             logger.error("Missing access token or DID from session")
             return None
             
-        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        # Get PDS URI from config instead of environment variables
+        from config_loader import get_bluesky_config
+        bluesky_config = get_bluesky_config()
+        pds_host = bluesky_config['pds_uri']
         
         # Create acknowledgment record with null subject
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -705,7 +833,10 @@ def acknowledge_post(client: Client, post_uri: str, post_cid: str, note: Optiona
             logger.error("Missing access token or DID from session")
             return None
             
-        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        # Get PDS URI from config instead of environment variables
+        from config_loader import get_bluesky_config
+        bluesky_config = get_bluesky_config()
+        pds_host = bluesky_config['pds_uri']
         
         # Create acknowledgment record with stream.thought.ack type
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -781,7 +912,10 @@ def create_tool_call_record(client: Client, tool_name: str, arguments: str, tool
             logger.error("Missing access token or DID from session")
             return None
             
-        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        # Get PDS URI from config instead of environment variables
+        from config_loader import get_bluesky_config
+        bluesky_config = get_bluesky_config()
+        pds_host = bluesky_config['pds_uri']
         
         # Create tool call record
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -858,7 +992,10 @@ def create_reasoning_record(client: Client, reasoning_text: str) -> Optional[Dic
             logger.error("Missing access token or DID from session")
             return None
             
-        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+        # Get PDS URI from config instead of environment variables
+        from config_loader import get_bluesky_config
+        bluesky_config = get_bluesky_config()
+        pds_host = bluesky_config['pds_uri']
         
         # Create reasoning record
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

@@ -206,8 +206,16 @@ def process_mention(void_agent, atproto_client, notification_data, queue_filepat
         None: Failed with non-retryable error, move to errors directory
         "no_reply": No reply was generated, move to no_reply directory
     """
+    import uuid
+    
+    # Generate correlation ID for tracking this notification through the pipeline
+    correlation_id = str(uuid.uuid4())[:8]
+    
     try:
-        logger.debug(f"Starting process_mention with notification_data type: {type(notification_data)}")
+        logger.info(f"[{correlation_id}] Starting process_mention", extra={
+            'correlation_id': correlation_id,
+            'notification_type': type(notification_data).__name__
+        })
         
         # Handle both dict and object inputs for backwards compatibility
         if isinstance(notification_data, dict):
@@ -222,7 +230,14 @@ def process_mention(void_agent, atproto_client, notification_data, queue_filepat
             author_handle = notification_data.author.handle
             author_name = notification_data.author.display_name or author_handle
         
-        logger.debug(f"Extracted data - URI: {uri}, Author: @{author_handle}, Text: {mention_text[:50]}...")
+        logger.info(f"[{correlation_id}] Processing mention from @{author_handle}", extra={
+            'correlation_id': correlation_id,
+            'author_handle': author_handle,
+            'author_name': author_name,
+            'mention_uri': uri,
+            'mention_text_length': len(mention_text),
+            'mention_preview': mention_text[:100] if mention_text else ''
+        })
 
         # Retrieve the entire thread associated with the mention
         try:
@@ -328,7 +343,9 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
             bot_check_result = check_known_bots(unique_handles, void_agent)
             bot_check_data = json.loads(bot_check_result)
             
-            if bot_check_data.get("bot_detected", False):
+            # TEMPORARILY DISABLED: Bot detection causing issues with normal users
+            # TODO: Re-enable after debugging why normal users are being flagged as bots
+            if False:  # bot_check_data.get("bot_detected", False):
                 detected_bots = bot_check_data.get("detected_bots", [])
                 logger.info(f"Bot detected in thread: {detected_bots}")
                 
@@ -340,7 +357,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 else:
                     logger.info(f"Responding to bot thread (10% response rate). Detected bots: {detected_bots}")
             else:
-                logger.debug("No known bots detected in thread")
+                logger.debug("Bot detection disabled - processing all notifications")
                 
         except Exception as bot_check_error:
             logger.warning(f"Error checking for bots: {bot_check_error}")
@@ -809,7 +826,8 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         client=atproto_client,
                         notification=notification_data,
                         reply_text=cleaned_text,
-                        lang=reply_lang
+                        lang=reply_lang,
+                        correlation_id=correlation_id
                     )
                 else:
                     # Multiple replies - use new threaded function
@@ -819,11 +837,16 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         client=atproto_client,
                         notification=notification_data,
                         reply_messages=cleaned_messages,
-                        lang=reply_lang
+                        lang=reply_lang,
+                        correlation_id=correlation_id
                     )
 
             if response:
-                logger.info(f"Successfully replied to @{author_handle}")
+                logger.info(f"[{correlation_id}] Successfully replied to @{author_handle}", extra={
+                    'correlation_id': correlation_id,
+                    'author_handle': author_handle,
+                    'reply_count': len(reply_messages)
+                })
                 
                 # Acknowledge the post we're replying to with stream.thought.ack
                 try:
@@ -857,14 +880,26 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         else:
             # Check if notification was explicitly ignored
             if ignored_notification:
-                logger.info(f"Notification from @{author_handle} was explicitly ignored (category: {ignore_category})")
+                logger.info(f"[{correlation_id}] Notification from @{author_handle} was explicitly ignored (category: {ignore_category})", extra={
+                    'correlation_id': correlation_id,
+                    'author_handle': author_handle,
+                    'ignore_category': ignore_category
+                })
                 return "ignored"
             else:
-                logger.warning(f"No add_post_to_bluesky_reply_thread tool calls found for mention from @{author_handle}, moving to no_reply folder")
+                logger.warning(f"[{correlation_id}] No reply generated for mention from @{author_handle}, moving to no_reply folder", extra={
+                    'correlation_id': correlation_id,
+                    'author_handle': author_handle
+                })
                 return "no_reply"
 
     except Exception as e:
-        logger.error(f"Error processing mention: {e}")
+        logger.error(f"[{correlation_id}] Error processing mention: {e}", extra={
+            'correlation_id': correlation_id,
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'author_handle': author_handle if 'author_handle' in locals() else 'unknown'
+        })
         return False
     finally:
         # Detach user blocks after agent response (success or failure)
