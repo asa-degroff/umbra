@@ -21,6 +21,7 @@ from utils import (
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
 from datetime import date
+from notification_db import NotificationDB
 
 def extract_handles_from_data(data):
     """Recursively extract all unique handles from nested data structure."""
@@ -111,6 +112,9 @@ SKIP_GIT = False
 
 # Synthesis message tracking
 last_synthesis_time = time.time()
+
+# Database for notification tracking
+NOTIFICATION_DB = None
 
 def export_agent_state(client, agent, skip_git=False):
     """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
@@ -723,9 +727,12 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         logger.info(f"Deleted queue file: {queue_filepath.name}")
                         
                         # Also mark as processed to avoid reprocessing
-                        processed_uris = load_processed_notifications()
-                        processed_uris.add(notification_data.get('uri', ''))
-                        save_processed_notifications(processed_uris)
+                        if NOTIFICATION_DB:
+                            NOTIFICATION_DB.mark_processed(notification_data.get('uri', ''), status='processed')
+                        else:
+                            processed_uris = load_processed_notifications()
+                            processed_uris.add(notification_data.get('uri', ''))
+                            save_processed_notifications(processed_uris)
                     
                     # Export agent state before terminating
                     export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
@@ -932,35 +939,24 @@ def notification_to_dict(notification):
 
 
 def load_processed_notifications():
-    """Load the set of processed notification URIs."""
-    if PROCESSED_NOTIFICATIONS_FILE.exists():
-        try:
-            with open(PROCESSED_NOTIFICATIONS_FILE, 'r') as f:
-                data = json.load(f)
-                # Keep only recent entries (last MAX_PROCESSED_NOTIFICATIONS)
-                if len(data) > MAX_PROCESSED_NOTIFICATIONS:
-                    data = data[-MAX_PROCESSED_NOTIFICATIONS:]
-                    save_processed_notifications(data)
-                return set(data)
-        except Exception as e:
-            logger.error(f"Error loading processed notifications: {e}")
+    """Load the set of processed notification URIs from database."""
+    global NOTIFICATION_DB
+    if NOTIFICATION_DB:
+        return NOTIFICATION_DB.get_processed_uris(limit=MAX_PROCESSED_NOTIFICATIONS)
     return set()
 
 
 def save_processed_notifications(processed_set):
-    """Save the set of processed notification URIs."""
-    try:
-        with open(PROCESSED_NOTIFICATIONS_FILE, 'w') as f:
-            json.dump(list(processed_set), f)
-    except Exception as e:
-        logger.error(f"Error saving processed notifications: {e}")
+    """Save the set of processed notification URIs to database."""
+    # This is now handled by marking individual notifications in the DB
+    # Keeping function for compatibility but it doesn't need to do anything
+    pass
 
 
 def save_notification_to_queue(notification, is_priority=None):
     """Save a notification to the queue directory with priority-based filename."""
     try:
-        # Check if already processed
-        processed_uris = load_processed_notifications()
+        global NOTIFICATION_DB
         
         # Handle both notification objects and dicts
         if isinstance(notification, dict):
@@ -969,10 +965,20 @@ def save_notification_to_queue(notification, is_priority=None):
         else:
             notif_dict = notification_to_dict(notification)
             notification_uri = notification.uri
-            
-        if notification_uri in processed_uris:
-            logger.debug(f"Notification already processed: {notification_uri}")
-            return False
+        
+        # Check if already processed (using database if available)
+        if NOTIFICATION_DB:
+            if NOTIFICATION_DB.is_processed(notification_uri):
+                logger.debug(f"Notification already processed (DB): {notification_uri}")
+                return False
+            # Add to database
+            NOTIFICATION_DB.add_notification(notif_dict)
+        else:
+            # Fall back to old JSON method
+            processed_uris = load_processed_notifications()
+            if notification_uri in processed_uris:
+                logger.debug(f"Notification already processed: {notification_uri}")
+                return False
 
         # Create JSON string
         notif_json = json.dumps(notif_dict, sort_keys=True)
@@ -1146,9 +1152,12 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                         logger.info(f"Successfully processed and removed: {filepath.name}")
                         
                         # Mark as processed to avoid reprocessing
-                        processed_uris = load_processed_notifications()
-                        processed_uris.add(notif_data['uri'])
-                        save_processed_notifications(processed_uris)
+                        if NOTIFICATION_DB:
+                            NOTIFICATION_DB.mark_processed(notif_data['uri'], status='processed')
+                        else:
+                            processed_uris = load_processed_notifications()
+                            processed_uris.add(notif_data['uri'])
+                            save_processed_notifications(processed_uris)
                     
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name
@@ -1156,9 +1165,12 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     logger.warning(f"Moved {filepath.name} to errors directory")
                     
                     # Also mark as processed to avoid retrying
-                    processed_uris = load_processed_notifications()
-                    processed_uris.add(notif_data['uri'])
-                    save_processed_notifications(processed_uris)
+                    if NOTIFICATION_DB:
+                        NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error')
+                    else:
+                        processed_uris = load_processed_notifications()
+                        processed_uris.add(notif_data['uri'])
+                        save_processed_notifications(processed_uris)
                     
                 elif success == "no_reply":  # Special case for moving to no_reply directory
                     no_reply_path = QUEUE_NO_REPLY_DIR / filepath.name
@@ -1166,9 +1178,12 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     logger.info(f"Moved {filepath.name} to no_reply directory")
                     
                     # Also mark as processed to avoid retrying
-                    processed_uris = load_processed_notifications()
-                    processed_uris.add(notif_data['uri'])
-                    save_processed_notifications(processed_uris)
+                    if NOTIFICATION_DB:
+                        NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error')
+                    else:
+                        processed_uris = load_processed_notifications()
+                        processed_uris.add(notif_data['uri'])
+                        save_processed_notifications(processed_uris)
                     
                 elif success == "ignored":  # Special case for explicitly ignored notifications
                     # For ignored notifications, we just delete them (not move to no_reply)
@@ -1176,9 +1191,12 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     logger.info(f"🚫 Deleted ignored notification: {filepath.name}")
                     
                     # Also mark as processed to avoid retrying
-                    processed_uris = load_processed_notifications()
-                    processed_uris.add(notif_data['uri'])
-                    save_processed_notifications(processed_uris)
+                    if NOTIFICATION_DB:
+                        NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error')
+                    else:
+                        processed_uris = load_processed_notifications()
+                        processed_uris.add(notif_data['uri'])
+                        save_processed_notifications(processed_uris)
                     
                 else:
                     logger.warning(f"⚠️  Failed to process {filepath.name}, keeping in queue for retry")
@@ -1194,9 +1212,18 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
 def fetch_and_queue_new_notifications(atproto_client):
     """Fetch new notifications and queue them without processing."""
     try:
+        global NOTIFICATION_DB
+        
         # Get current time for marking notifications as seen
         logger.debug("Getting current time for notification marking...")
         last_seen_at = atproto_client.get_current_time_iso()
+        
+        # Get timestamp of last processed notification for filtering
+        last_processed_time = None
+        if NOTIFICATION_DB:
+            last_processed_time = NOTIFICATION_DB.get_latest_processed_time()
+            if last_processed_time:
+                logger.debug(f"Last processed notification was at: {last_processed_time}")
 
         # Fetch ALL notifications using pagination
         all_notifications = []
@@ -1236,6 +1263,8 @@ def fetch_and_queue_new_notifications(atproto_client):
         # Now process all fetched notifications
         new_count = 0
         if all_notifications:
+            logger.info(f"📥 Fetched {len(all_notifications)} total notifications from API")
+            
             # Mark as seen first
             try:
                 atproto_client.app.bsky.notification.update_seen(
@@ -1245,16 +1274,43 @@ def fetch_and_queue_new_notifications(atproto_client):
             except Exception as e:
                 logger.error(f"Error marking notifications as seen: {e}")
             
-            # Queue all new notifications (except likes and already read)
+            # Debug counters
+            skipped_read = 0
+            skipped_likes = 0
+            skipped_processed = 0
+            skipped_old_timestamp = 0
+            processed_uris = load_processed_notifications()
+            
+            # Queue all new notifications (except likes)
             for notif in all_notifications:
-                # Skip if already read or if it's a like
-                if (hasattr(notif, 'is_read') and notif.is_read) or (hasattr(notif, 'reason') and notif.reason == 'like'):
+                # Skip if older than last processed (when we have timestamp filtering)
+                if last_processed_time and hasattr(notif, 'indexed_at'):
+                    if notif.indexed_at <= last_processed_time:
+                        skipped_old_timestamp += 1
+                        logger.debug(f"Skipping old notification (indexed_at {notif.indexed_at} <= {last_processed_time})")
+                        continue
+                
+                # Debug: Log is_read status but DON'T skip based on it
+                if hasattr(notif, 'is_read') and notif.is_read:
+                    skipped_read += 1
+                    logger.debug(f"Notification has is_read=True (but processing anyway): {notif.uri if hasattr(notif, 'uri') else 'unknown'}")
+                
+                # Skip likes
+                if hasattr(notif, 'reason') and notif.reason == 'like':
+                    skipped_likes += 1
                     continue
                     
                 notif_dict = notif.model_dump() if hasattr(notif, 'model_dump') else notif
                 
                 # Skip likes in dict form too
                 if notif_dict.get('reason') == 'like':
+                    continue
+                
+                # Check if already processed
+                notif_uri = notif_dict.get('uri', '')
+                if notif_uri in processed_uris:
+                    skipped_processed += 1
+                    logger.debug(f"Skipping already processed: {notif_uri}")
                     continue
                 
                 # Check if it's a priority notification
@@ -1275,8 +1331,16 @@ def fetch_and_queue_new_notifications(atproto_client):
                 
                 if save_notification_to_queue(notif_dict, is_priority=is_priority):
                     new_count += 1
+                    logger.debug(f"Queued notification from @{author_handle}: {notif_dict.get('reason', 'unknown')}")
             
-            logger.info(f"Queued {new_count} new notifications and marked as seen")
+            # Log summary of filtering
+            logger.info(f"📊 Notification processing summary:")
+            logger.info(f"  • Total fetched: {len(all_notifications)}")
+            logger.info(f"  • Had is_read=True: {skipped_read} (not skipped)")
+            logger.info(f"  • Skipped (likes): {skipped_likes}")
+            logger.info(f"  • Skipped (old timestamp): {skipped_old_timestamp}")
+            logger.info(f"  • Skipped (already processed): {skipped_processed}")
+            logger.info(f"  • Queued for processing: {new_count}")
         else:
             logger.debug("No new notifications to queue")
             
@@ -1759,6 +1823,23 @@ def main():
     void_agent = initialize_void()
     logger.info(f"Void agent initialized: {void_agent.id}")
     
+    # Initialize notification database
+    global NOTIFICATION_DB
+    logger.info("Initializing notification database...")
+    NOTIFICATION_DB = NotificationDB()
+    
+    # Migrate from old JSON format if it exists
+    if PROCESSED_NOTIFICATIONS_FILE.exists():
+        logger.info("Found old processed_notifications.json, migrating to database...")
+        NOTIFICATION_DB.migrate_from_json(str(PROCESSED_NOTIFICATIONS_FILE))
+    
+    # Log database stats
+    db_stats = NOTIFICATION_DB.get_stats()
+    logger.info(f"Database initialized - Total notifications: {db_stats.get('total', 0)}, Recent (24h): {db_stats.get('recent_24h', 0)}")
+    
+    # Clean up old records
+    NOTIFICATION_DB.cleanup_old_records(days=7)
+    
     # Ensure correct tools are attached for Bluesky
     logger.info("Configuring tools for Bluesky platform...")
     try:
@@ -1858,6 +1939,22 @@ def main():
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:
                 logger.debug(f"Running periodic user block cleanup (cycle {cycle_count})")
                 periodic_user_block_cleanup(CLIENT, void_agent.id)
+                
+                # Also check database health when doing cleanup
+                if NOTIFICATION_DB:
+                    db_stats = NOTIFICATION_DB.get_stats()
+                    pending = db_stats.get('status_pending', 0)
+                    errors = db_stats.get('status_error', 0)
+                    
+                    if pending > 50:
+                        logger.warning(f"⚠️ Queue health check: {pending} pending notifications (may be stuck)")
+                    if errors > 20:
+                        logger.warning(f"⚠️ Queue health check: {errors} error notifications")
+                    
+                    # Periodic cleanup of old records
+                    if cycle_count % (CLEANUP_INTERVAL * 10) == 0:  # Every 100 cycles
+                        logger.info("Running database cleanup of old records...")
+                        NOTIFICATION_DB.cleanup_old_records(days=7)
             
             # Log cycle completion with stats
             elapsed_time = time.time() - start_time
@@ -1881,6 +1978,12 @@ def main():
             logger.info(f"   - {message_counters['follows']} follows")
             logger.info(f"   - {message_counters['reposts_skipped']} reposts skipped")
             logger.info(f"   - Average rate: {messages_per_minute:.1f} messages/minute")
+            
+            # Close database connection
+            if NOTIFICATION_DB:
+                logger.info("Closing database connection...")
+                NOTIFICATION_DB.close()
+            
             break
         except Exception as e:
             logger.error(f"=== ERROR IN MAIN LOOP CYCLE {cycle_count} ===")
