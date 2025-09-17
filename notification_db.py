@@ -92,16 +92,22 @@ class NotificationDB:
             author_handle = author.get('handle', '') if author else ''
             author_did = author.get('did', '') if author else ''
             
-            # Extract text from record if available
-            record = notif_dict.get('record', {})
-            text = record.get('text', '')[:500]  # Limit text length
+            # Extract text from record if available (handle None records)
+            record = notif_dict.get('record') or {}
+            text = record.get('text', '')[:500] if record else ''
             
             # Extract thread info
             parent_uri = None
             root_uri = None
-            if 'reply' in record:
-                parent_uri = record['reply'].get('parent', {}).get('uri')
-                root_uri = record['reply'].get('root', {}).get('uri')
+            if record and 'reply' in record and record['reply']:
+                reply_info = record['reply']
+                if reply_info and isinstance(reply_info, dict):
+                    parent_info = reply_info.get('parent', {})
+                    root_info = reply_info.get('root', {})
+                    if parent_info:
+                        parent_uri = parent_info.get('uri')
+                    if root_info:
+                        root_uri = root_info.get('uri')
             
             # Store additional metadata as JSON
             metadata = {

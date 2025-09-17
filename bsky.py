@@ -971,8 +971,10 @@ def save_notification_to_queue(notification, is_priority=None):
             if NOTIFICATION_DB.is_processed(notification_uri):
                 logger.debug(f"Notification already processed (DB): {notification_uri}")
                 return False
-            # Add to database
-            NOTIFICATION_DB.add_notification(notif_dict)
+            # Add to database - if this fails, don't queue the notification
+            if not NOTIFICATION_DB.add_notification(notif_dict):
+                logger.warning(f"Failed to add notification to database, skipping: {notification_uri}")
+                return False
         else:
             # Fall back to old JSON method
             processed_uris = load_processed_notifications()
