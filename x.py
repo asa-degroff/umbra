@@ -495,31 +495,46 @@ class XClient:
             logger.error("Failed to post tweet")
             return None
 
-def load_x_config(config_path: str = "config.yaml") -> Dict[str, str]:
-    """Load X configuration from config file."""
+def load_x_config(config_path: str = "x_config.yaml") -> Dict[str, Any]:
+    """Load complete X configuration from x_config.yaml."""
     try:
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
-        
+
+        if not config:
+            raise ValueError(f"Empty or invalid configuration file: {config_path}")
+
+        # Validate required sections
         x_config = config.get('x', {})
+        letta_config = config.get('letta', {})
+
         if not x_config.get('api_key') or not x_config.get('user_id'):
-            raise ValueError("X API key and user_id must be configured in config.yaml")
-        
-        return x_config
+            raise ValueError("X API key and user_id must be configured in x_config.yaml")
+
+        if not letta_config.get('api_key') or not letta_config.get('agent_id'):
+            raise ValueError("Letta API key and agent_id must be configured in x_config.yaml")
+
+        return config
     except Exception as e:
         logger.error(f"Failed to load X configuration: {e}")
         raise
 
-def create_x_client(config_path: str = "config.yaml") -> XClient:
+def get_x_letta_config(config_path: str = "x_config.yaml") -> Dict[str, Any]:
+    """Get Letta configuration from X config file."""
+    config = load_x_config(config_path)
+    return config['letta']
+
+def create_x_client(config_path: str = "x_config.yaml") -> XClient:
     """Create and return an X client with configuration loaded from file."""
     config = load_x_config(config_path)
+    x_config = config['x']
     return XClient(
-        api_key=config['api_key'],
-        user_id=config['user_id'],
-        access_token=config.get('access_token'),
-        consumer_key=config.get('consumer_key'),
-        consumer_secret=config.get('consumer_secret'),
-        access_token_secret=config.get('access_token_secret')
+        api_key=x_config['api_key'],
+        user_id=x_config['user_id'],
+        access_token=x_config.get('access_token'),
+        consumer_key=x_config.get('consumer_key'),
+        consumer_secret=x_config.get('consumer_secret'),
+        access_token_secret=x_config.get('access_token_secret')
     )
 
 def mention_to_yaml_string(mention: Dict, users_data: Optional[Dict] = None) -> str:
@@ -605,11 +620,10 @@ def ensure_x_user_blocks_attached(thread_data: Dict, agent_id: Optional[str] = N
     
     try:
         from tools.blocks import attach_x_user_blocks, x_user_note_set
-        from config_loader import get_letta_config
         from letta_client import Letta
-        
-        # Get Letta client and agent_id from config
-        config = get_letta_config()
+
+        # Get Letta client and agent_id from X config
+        config = get_x_letta_config()
         client = Letta(token=config['api_key'], timeout=config['timeout'])
         
         # Use provided agent_id or get from config
@@ -1011,7 +1025,7 @@ def get_my_user_info():
             print(f"   Username: @{user_data.get('username')}")
             print(f"   Name: {user_data.get('name')}")
             print(f"   Description: {user_data.get('description', 'N/A')[:100]}...")
-            print(f"\n🔧 Update your config.yaml with:")
+            print(f"\n🔧 Update your x_config.yaml with:")
             print(f"   user_id: \"{user_data.get('id')}\"")
             return user_data
         else:
@@ -1143,12 +1157,10 @@ def test_letta_integration(agent_id: str = None):
         import json
         import yaml
         
-        # Load full config to access letta section
+        # Load X config to access letta section
         try:
-            with open("config.yaml", 'r') as f:
-                full_config = yaml.safe_load(f)
-            
-            letta_config = full_config.get('letta', {})
+            x_config = load_x_config()
+            letta_config = x_config.get('letta', {})
             api_key = letta_config.get('api_key')
             config_agent_id = letta_config.get('agent_id')
             
@@ -1158,7 +1170,7 @@ def test_letta_integration(agent_id: str = None):
                     agent_id = config_agent_id
                     print(f"ℹ️ Using agent_id from config: {agent_id}")
                 else:
-                    print("❌ No agent_id found in config.yaml")
+                    print("❌ No agent_id found in x_config.yaml")
                     print("Expected config structure:")
                     print("  letta:")
                     print("    agent_id: your-agent-id")
@@ -1171,7 +1183,7 @@ def test_letta_integration(agent_id: str = None):
                 import os
                 api_key = os.getenv('LETTA_API_KEY')
                 if not api_key:
-                    print("❌ LETTA_API_KEY not found in config.yaml or environment")
+                    print("❌ LETTA_API_KEY not found in x_config.yaml or environment")
                     print("Expected config structure:")
                     print("  letta:")
                     print("    api_key: your-letta-api-key")
@@ -1179,7 +1191,7 @@ def test_letta_integration(agent_id: str = None):
                 else:
                     print("ℹ️ Using LETTA_API_KEY from environment")
             else:
-                print("ℹ️ Using LETTA_API_KEY from config.yaml")
+                print("ℹ️ Using LETTA_API_KEY from x_config.yaml")
                 
         except Exception as e:
             print(f"❌ Error loading config: {e}")
@@ -1548,10 +1560,9 @@ To reply, use the add_post_to_x_thread tool:
             print(f"  {line}")
         
         # Send to Letta agent
-        from config_loader import get_letta_config
         from letta_client import Letta
-        
-        config = get_letta_config()
+
+        config = get_x_letta_config()
         letta_client = Letta(token=config['api_key'], timeout=config['timeout'])
         
         prompt_char_count = len(prompt)
@@ -2001,11 +2012,10 @@ def initialize_x_void():
     """Initialize the void agent for X operations."""
     logger.info("Starting void agent initialization for X...")
     
-    from config_loader import get_letta_config
     from letta_client import Letta
-    
+
     # Get config
-    config = get_letta_config()
+    config = get_x_letta_config()
     client = Letta(token=config['api_key'], timeout=config['timeout'])
     agent_id = config['agent_id']
     
@@ -2046,9 +2056,8 @@ def x_main_loop(testing_mode=False, cleanup_interval=10):
     """
     import time
     from time import sleep
-    from config_loader import get_letta_config
     from letta_client import Letta
-    
+
     logger.info("=== STARTING X VOID BOT ===")
     
     # Initialize void agent
@@ -2060,7 +2069,7 @@ def x_main_loop(testing_mode=False, cleanup_interval=10):
     logger.info("Connected to X API")
     
     # Get Letta client for periodic cleanup
-    config = get_letta_config()
+    config = get_x_letta_config()
     letta_client = Letta(token=config['api_key'], timeout=config['timeout'])
     
     # Main loop

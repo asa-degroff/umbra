@@ -193,6 +193,37 @@ BSKY_PASSWORD=your_bluesky_password
 PDS_URI=https://bsky.social  # Optional, defaults to bsky.social
 ```
 
+### X Bot Configuration
+
+The X bot uses a separate configuration file `x_config.yaml` with the following structure:
+```yaml
+x:
+  api_key: your_x_bearer_token
+  consumer_key: your_consumer_key
+  consumer_secret: your_consumer_secret
+  access_token: your_access_token
+  access_token_secret: your_access_token_secret
+  user_id: "your_user_id"
+
+letta:
+  api_key: your_letta_api_key
+  project_id: your_project_id
+  timeout: 600
+  agent_id: your_agent_id
+
+bot:
+  cleanup_interval: 10
+  max_thread_depth: 50
+  rate_limit_delay: 1
+  downrank_response_rate: 0.1
+
+logging:
+  level: INFO
+  enable_debug_data: true
+  log_thread_context: true
+  log_agent_responses: true
+```
+
 ## Key Development Patterns
 
 1. **Tool System**: Tools are defined as standalone functions in `tools/functions.py` with Pydantic schemas for validation, registered via `register_tools.py`
