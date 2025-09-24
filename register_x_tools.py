@@ -5,14 +5,12 @@ from typing import List
 from letta_client import Letta
 from rich.console import Console
 from rich.table import Table
-from config_loader import get_letta_config
+from x import get_x_letta_config
 
 # Import standalone functions and their schemas
 from tools.blocks import (
-    attach_x_user_blocks, detach_x_user_blocks, 
-    x_user_note_append, x_user_note_replace, x_user_note_set, x_user_note_view,
-    AttachXUserBlocksArgs, DetachXUserBlocksArgs, 
-    XUserNoteAppendArgs, XUserNoteReplaceArgs, XUserNoteSetArgs, XUserNoteViewArgs
+    attach_x_user_blocks, detach_x_user_blocks,
+    AttachXUserBlocksArgs, DetachXUserBlocksArgs
 )
 from tools.halt import halt_activity, HaltArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
@@ -29,7 +27,7 @@ from tools.x_post import post_to_x, PostToXArgs
 # Import X search tool
 from tools.search_x import search_x_posts, SearchXArgs
 
-letta_config = get_letta_config()
+letta_config = get_x_letta_config()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 console = Console()
@@ -80,30 +78,6 @@ X_TOOL_CONFIGS = [
         "args_schema": DetachXUserBlocksArgs,
         "description": "Detach X user-specific memory blocks from the agent. Blocks are preserved for later use.",
         "tags": ["memory", "blocks", "user", "x", "twitter"]
-    },
-    {
-        "func": x_user_note_append,
-        "args_schema": XUserNoteAppendArgs,
-        "description": "Append a note to an X user's memory block. Creates the block if it doesn't exist.",
-        "tags": ["memory", "blocks", "user", "append", "x", "twitter"]
-    },
-    {
-        "func": x_user_note_replace,
-        "args_schema": XUserNoteReplaceArgs,
-        "description": "Replace text in an X user's memory block.",
-        "tags": ["memory", "blocks", "user", "replace", "x", "twitter"]
-    },
-    {
-        "func": x_user_note_set,
-        "args_schema": XUserNoteSetArgs,
-        "description": "Set the complete content of an X user's memory block.",
-        "tags": ["memory", "blocks", "user", "set", "x", "twitter"]
-    },
-    {
-        "func": x_user_note_view,
-        "args_schema": XUserNoteViewArgs,
-        "description": "View the content of an X user's memory block.",
-        "tags": ["memory", "blocks", "user", "view", "x", "twitter"]
     },
     
     # X thread tool
