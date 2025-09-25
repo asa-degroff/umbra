@@ -21,11 +21,31 @@ class XRateLimitError(Exception):
     pass
 
 
-# Configure logging
+# Configure logging (will be updated by setup_logging_from_config if called)
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("x_client")
+
+def setup_logging_from_config(config_path: str = "x_config.yaml"):
+    """Configure logging based on x_config.yaml settings."""
+    try:
+        config = load_x_config(config_path)
+        logging_config = config.get('logging', {})
+        log_level = logging_config.get('level', 'INFO').upper()
+
+        # Convert string level to logging constant
+        numeric_level = getattr(logging, log_level, logging.INFO)
+
+        # Update the root logger level
+        logging.getLogger().setLevel(numeric_level)
+        # Update our specific logger level
+        logger.setLevel(numeric_level)
+
+        logger.info(f"Logging level set to {log_level}")
+
+    except Exception as e:
+        logger.warning(f"Failed to configure logging from config: {e}, using default INFO level")
 
 # X-specific file paths
 X_QUEUE_DIR = Path("x_queue")
@@ -79,7 +99,10 @@ class XClient:
     def _make_request(self, endpoint: str, params: Optional[Dict] = None, method: str = "GET", data: Optional[Dict] = None, max_retries: int = 3) -> Optional[Dict]:
         """Make a request to the X API with proper error handling and exponential backoff."""
         url = f"{self.base_url}{endpoint}"
-        
+
+        # Log the specific API call being made
+        logger.debug(f"Making X API request: {method} {endpoint}")
+
         for attempt in range(max_retries):
             try:
                 if method.upper() == "GET":
@@ -111,14 +134,14 @@ class XClient:
                     if attempt < max_retries - 1:
                         # Exponential backoff: 60s, 120s, 240s
                         backoff_time = 60 * (2 ** attempt)
-                        logger.warning(f"X API rate limit exceeded (attempt {attempt + 1}/{max_retries}) - waiting {backoff_time}s before retry")
+                        logger.warning(f"X API rate limit exceeded on {method} {endpoint} (attempt {attempt + 1}/{max_retries}) - waiting {backoff_time}s before retry")
                         logger.error(f"Response: {response.text}")
                         time.sleep(backoff_time)
                         continue
                     else:
-                        logger.error("X API rate limit exceeded - max retries reached")
+                        logger.error(f"X API rate limit exceeded on {method} {endpoint} - max retries reached")
                         logger.error(f"Response: {response.text}")
-                        raise XRateLimitError("X API rate limit exceeded")
+                        raise XRateLimitError(f"X API rate limit exceeded on {method} {endpoint}")
                 else:
                     if attempt < max_retries - 1:
                         # Exponential backoff for other HTTP errors too
@@ -255,6 +278,7 @@ class XClient:
                 return cached_data
         
         # First, get the original tweet directly since it might not appear in conversation search
+        logger.debug(f"Getting thread context for conversation {conversation_id}")
         original_tweet = None
         try:
             endpoint = f"/tweets/{conversation_id}"
@@ -263,6 +287,7 @@ class XClient:
                 "user.fields": "id,name,username",
                 "expansions": "author_id"
             }
+            logger.debug(f"Fetching original tweet: GET {endpoint}")
             response = self._make_request(endpoint, params)
             if response and "data" in response:
                 original_tweet = response["data"]
@@ -287,6 +312,7 @@ class XClient:
             logger.info(f"Using until_id={until_id} to exclude future tweets")
         
         logger.info(f"Fetching thread context for conversation {conversation_id}")
+        logger.debug(f"Searching conversation: GET {endpoint} with query={params['query']}")
         response = self._make_request(endpoint, params)
         
         tweets = []
@@ -369,6 +395,7 @@ class XClient:
                             "user.fields": "id,name,username",
                             "expansions": "author_id"
                         }
+                        logger.debug(f"Batch fetching missing tweets: GET {endpoint} (ids: {len(batch_ids)} tweets)")
                         response = self._make_request(endpoint, params)
                         
                         if response and "data" in response:
@@ -455,6 +482,7 @@ class XClient:
         }
         
         logger.info(f"Attempting to post reply with {self.auth_method} authentication")
+        logger.debug(f"Posting reply: POST {endpoint}")
         result = self._make_request(endpoint, method="POST", data=payload)
         
         if result:
@@ -486,6 +514,7 @@ class XClient:
         }
         
         logger.info(f"Attempting to post tweet with {self.auth_method} authentication")
+        logger.debug(f"Posting tweet: POST {endpoint}")
         result = self._make_request(endpoint, method="POST", data=payload)
         
         if result:
@@ -494,6 +523,52 @@ class XClient:
         else:
             logger.error("Failed to post tweet")
             return None
+
+    def get_user_info(self, fields: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the authenticated user's information, using cached data when available.
+        This reduces API calls significantly since user info rarely changes.
+
+        Args:
+            fields: Optional comma-separated list of user fields to fetch
+
+        Returns:
+            User data dict if successful, None if failed
+        """
+        # First try to get from cache
+        cached_user_info = get_cached_user_info()
+        if cached_user_info:
+            # Check if cached data has all requested fields
+            requested_fields = set(fields.split(',') if fields else ['id', 'username', 'name'])
+            cached_fields = set(cached_user_info.keys())
+            if requested_fields.issubset(cached_fields):
+                return cached_user_info
+
+        # Cache miss, expired, or missing requested fields - fetch from API
+        logger.debug("Fetching fresh user info from /users/me API")
+        endpoint = "/users/me"
+        params = {"user.fields": fields or "id,username,name,description"}
+
+        response = self._make_request(endpoint, params=params)
+        if response and "data" in response:
+            user_data = response["data"]
+            # Cache the result for future use
+            save_cached_user_info(user_data)
+            return user_data
+        else:
+            logger.error("Failed to get user info from /users/me API")
+            return None
+
+    def get_username(self) -> Optional[str]:
+        """
+        Get the authenticated user's username, using cached data when available.
+        This reduces API calls significantly since username rarely changes.
+
+        Returns:
+            Username string if successful, None if failed
+        """
+        user_info = self.get_user_info("id,username,name")
+        return user_info.get("username") if user_info else None
 
 def load_x_config(config_path: str = "x_config.yaml") -> Dict[str, Any]:
     """Load complete X configuration from x_config.yaml."""
@@ -916,6 +991,45 @@ def save_cached_tweets(tweets_data: List[Dict], users_data: Dict[str, Dict] = No
     except Exception as e:
         logger.error(f"Error caching individual tweets: {e}")
 
+def get_cached_user_info() -> Optional[Dict]:
+    """Load cached user info if available and not expired."""
+    cache_file = X_CACHE_DIR / "user_info.json"
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'r') as f:
+                cached_data = json.load(f)
+                # Check if cache is recent (within 24 hours)
+                from datetime import datetime, timedelta
+                cached_time = datetime.fromisoformat(cached_data.get('cached_at', ''))
+                if datetime.now() - cached_time < timedelta(hours=24):
+                    logger.debug("Using cached user info")
+                    return cached_data.get('data')
+                else:
+                    logger.debug("Cached user info expired (>24 hours old)")
+        except Exception as e:
+            logger.warning(f"Error loading cached user info: {e}")
+    return None
+
+def save_cached_user_info(user_data: Dict):
+    """Save user info to cache."""
+    try:
+        X_CACHE_DIR.mkdir(exist_ok=True)
+        cache_file = X_CACHE_DIR / "user_info.json"
+
+        from datetime import datetime
+        cache_data = {
+            'data': user_data,
+            'cached_at': datetime.now().isoformat()
+        }
+
+        with open(cache_file, 'w') as f:
+            json.dump(cache_data, f, indent=2)
+
+        logger.debug(f"Cached user info: {user_data.get('username')}")
+
+    except Exception as e:
+        logger.error(f"Error caching user info: {e}")
+
 def has_sufficient_context(tweets: List[Dict], missing_tweet_ids: Set[str]) -> bool:
     """
     Determine if we have sufficient context to skip backfilling missing tweets.
@@ -971,8 +1085,9 @@ def fetch_and_queue_mentions(username: str) -> int:
         last_seen_id = load_last_seen_id()
         
         logger.info(f"Fetching mentions for @{username} since {last_seen_id or 'beginning'}")
-        
-        # Search for mentions
+
+        # Search for mentions - this calls GET /2/tweets/search/recent
+        logger.debug(f"Calling search_mentions API for @{username}")
         mentions = client.search_mentions(
             username=username,
             since_id=last_seen_id,
@@ -1009,17 +1124,11 @@ def get_my_user_info():
     try:
         client = create_x_client()
         
-        # Use the /2/users/me endpoint to get authenticated user info
-        endpoint = "/users/me"
-        params = {
-            "user.fields": "id,name,username,description"
-        }
-        
+        # Get authenticated user info using cached method
         print("Fetching authenticated user information...")
-        response = client._make_request(endpoint, params=params)
-        
-        if response and "data" in response:
-            user_data = response["data"]
+        user_data = client.get_user_info("id,name,username,description")
+
+        if user_data:
             print(f"✅ Found authenticated user:")
             print(f"   ID: {user_data.get('id')}")
             print(f"   Username: @{user_data.get('username')}")
@@ -1043,12 +1152,10 @@ def test_search_mentions():
         client = create_x_client()
         
         # First get our username
-        user_info = client._make_request("/users/me", params={"user.fields": "username"})
-        if not user_info or "data" not in user_info:
+        username = client.get_username()
+        if not username:
             print("❌ Could not get username")
             return
-        
-        username = user_info["data"]["username"]
         print(f"🔍 Searching for mentions of @{username}")
         
         mentions = client.search_mentions(username, max_results=5)
@@ -1069,12 +1176,10 @@ def test_fetch_and_queue():
         client = create_x_client()
         
         # Get our username
-        user_info = client._make_request("/users/me", params={"user.fields": "username"})
-        if not user_info or "data" not in user_info:
+        username = client.get_username()
+        if not username:
             print("❌ Could not get username")
             return
-        
-        username = user_info["data"]["username"]
         print(f"🔄 Fetching and queueing mentions for @{username}")
         
         # Show current state
@@ -1410,6 +1515,7 @@ def process_x_mention(void_agent, x_client, mention_data, queue_filepath=None, t
                                     "user.fields": "id,name,username",
                                     "expansions": "author_id"
                                 }
+                                logger.debug(f"Fetching individual missing tweet: GET {endpoint}")
                                 response = x_client._make_request(endpoint, params)
                                 if response and "data" in response:
                                     missing_tweet = response["data"]
@@ -1949,13 +2055,11 @@ def process_x_notifications(void_agent, x_client, testing_mode=False):
     Similar to bsky.py process_notifications but for X.
     """
     try:
-        # Get username for fetching mentions
-        user_info = x_client._make_request("/users/me", params={"user.fields": "username"})
-        if not user_info or "data" not in user_info:
+        # Get username for fetching mentions - uses cached data to avoid rate limits
+        username = x_client.get_username()
+        if not username:
             logger.error("Could not get username for X mentions")
             return
-        
-        username = user_info["data"]["username"]
         
         # Fetch and queue new mentions
         new_count = fetch_and_queue_mentions(username)
@@ -2034,7 +2138,7 @@ def initialize_x_void():
     logger.info("Configuring tools for X platform...")
     try:
         from tool_manager import ensure_platform_tools
-        ensure_platform_tools('x', void_agent.id)
+        ensure_platform_tools('x', void_agent.id, config['api_key'])
     except Exception as e:
         logger.error(f"Failed to configure platform tools: {e}")
         logger.warning("Continuing with existing tool configuration")
@@ -2059,7 +2163,10 @@ def x_main_loop(testing_mode=False, cleanup_interval=10):
     from letta_client import Letta
 
     logger.info("=== STARTING X VOID BOT ===")
-    
+
+    # Configure logging from config file
+    setup_logging_from_config()
+
     # Initialize void agent
     void_agent = initialize_x_void()
     logger.info(f"X void agent initialized: {void_agent.id}")
