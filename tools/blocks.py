@@ -15,6 +15,37 @@ def get_letta_client():
         from letta_client import Letta
         return Letta(token=os.environ["LETTA_API_KEY"])
 
+def get_x_letta_client():
+    """Get a Letta client using X configuration."""
+    try:
+        import yaml
+        from pathlib import Path
+        from letta_client import Letta
+
+        # Load x_config.yaml
+        config_path = Path("x_config.yaml")
+        if not config_path.exists():
+            # Fall back to regular client if x_config.yaml doesn't exist
+            return get_letta_client()
+
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        letta_config = config.get('letta', {})
+        return Letta(
+            token=letta_config['api_key'],
+            timeout=letta_config.get('timeout', 600)
+        )
+    except (ImportError, FileNotFoundError, KeyError, yaml.YAMLError):
+        # Fall back to regular client
+        return get_letta_client()
+
+def get_platform_letta_client(is_x_function=False):
+    """Get a Letta client based on the platform context."""
+    if is_x_function:
+        return get_x_letta_client()
+    return get_letta_client()
+
 
 class AttachUserBlocksArgs(BaseModel):
     handles: List[str] = Field(..., description="List of user Bluesky handles (e.g., ['user1.bsky.social', 'user2.bsky.social'])")
@@ -230,10 +261,14 @@ def user_note_append(handle: str, note: str, agent_state: "AgentState") -> str:
     """
     
     try:
-        # Create Letta client inline - cloud tools must be self-contained
-        import os
-        from letta_client import Letta
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Try to get X client first, fall back to inline for cloud execution
+        try:
+            client = get_x_letta_client()
+        except (ImportError, NameError):
+            # Create Letta client inline for cloud execution
+            import os
+            from letta_client import Letta
+            client = Letta(token=os.environ["LETTA_API_KEY"])
         
         # Sanitize handle for block label
         clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
@@ -297,10 +332,14 @@ def user_note_replace(handle: str, old_text: str, new_text: str, agent_state: "A
     """
     
     try:
-        # Create Letta client inline - cloud tools must be self-contained
-        import os
-        from letta_client import Letta
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Try to get X client first, fall back to inline for cloud execution
+        try:
+            client = get_x_letta_client()
+        except (ImportError, NameError):
+            # Create Letta client inline for cloud execution
+            import os
+            from letta_client import Letta
+            client = Letta(token=os.environ["LETTA_API_KEY"])
         
         # Sanitize handle for block label
         clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
@@ -347,10 +386,14 @@ def user_note_set(handle: str, content: str, agent_state: "AgentState") -> str:
     """
     
     try:
-        # Create Letta client inline - cloud tools must be self-contained
-        import os
-        from letta_client import Letta
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Try to get X client first, fall back to inline for cloud execution
+        try:
+            client = get_x_letta_client()
+        except (ImportError, NameError):
+            # Create Letta client inline for cloud execution
+            import os
+            from letta_client import Letta
+            client = Letta(token=os.environ["LETTA_API_KEY"])
         
         # Sanitize handle for block label
         clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
@@ -407,10 +450,14 @@ def user_note_view(handle: str, agent_state: "AgentState") -> str:
     """
     
     try:
-        # Create Letta client inline - cloud tools must be self-contained
-        import os
-        from letta_client import Letta
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Try to get X client first, fall back to inline for cloud execution
+        try:
+            client = get_x_letta_client()
+        except (ImportError, NameError):
+            # Create Letta client inline for cloud execution
+            import os
+            from letta_client import Letta
+            client = Letta(token=os.environ["LETTA_API_KEY"])
         
         # Sanitize handle for block label
         clean_handle = handle.lstrip('@').replace('.', '_').replace('-', '_').replace(' ', '_')
@@ -435,21 +482,21 @@ def user_note_view(handle: str, agent_state: "AgentState") -> str:
 def attach_x_user_blocks(user_ids: list, agent_state: "AgentState") -> str:
     """
     Attach X user-specific memory blocks to the agent. Creates blocks if they don't exist.
-    
+
     Args:
         user_ids: List of X user IDs (e.g., ['1232326955652931584', '1950680610282094592'])
         agent_state: The agent state object containing agent information
-        
+
     Returns:
         String with attachment results for each user ID
     """
 
     user_ids = list(set(user_ids))
-    
+
     try:
-        # Try to get client the local way first, fall back to inline for cloud execution
+        # Try to get X client first, fall back to inline for cloud execution
         try:
-            client = get_letta_client()
+            client = get_x_letta_client()
         except (ImportError, NameError):
             # Create Letta client inline for cloud execution
             import os
@@ -460,7 +507,7 @@ def attach_x_user_blocks(user_ids: list, agent_state: "AgentState") -> str:
         # Get current blocks using the API
         current_blocks = client.agents.blocks.list(agent_id=str(agent_state.id))
         current_block_labels = set()
-        
+
         for block in current_blocks:
             current_block_labels.add(block.label)
 
@@ -505,19 +552,19 @@ def attach_x_user_blocks(user_ids: list, agent_state: "AgentState") -> str:
 def detach_x_user_blocks(user_ids: list, agent_state: "AgentState") -> str:
     """
     Detach X user-specific memory blocks from the agent. Blocks are preserved for later use.
-    
+
     Args:
         user_ids: List of X user IDs (e.g., ['1232326955652931584', '1950680610282094592'])
         agent_state: The agent state object containing agent information
-        
+
     Returns:
         String with detachment results for each user ID
     """
-    
+
     try:
-        # Try to get client the local way first, fall back to inline for cloud execution
+        # Try to get X client first, fall back to inline for cloud execution
         try:
-            client = get_letta_client()
+            client = get_x_letta_client()
         except (ImportError, NameError):
             # Create Letta client inline for cloud execution
             import os
@@ -568,10 +615,14 @@ def x_user_note_append(user_id: str, note: str, agent_state: "AgentState") -> st
         String confirming the note was appended
     """
     try:
-        # Create Letta client inline - cloud tools must be self-contained
-        import os
-        from letta_client import Letta
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Try to get X client first, fall back to inline for cloud execution
+        try:
+            client = get_x_letta_client()
+        except (ImportError, NameError):
+            # Create Letta client inline for cloud execution
+            import os
+            from letta_client import Letta
+            client = Letta(token=os.environ["LETTA_API_KEY"])
         
         block_label = f"x_user_{user_id}"
         
@@ -632,10 +683,14 @@ def x_user_note_replace(user_id: str, old_text: str, new_text: str, agent_state:
         String confirming the text was replaced
     """
     try:
-        # Create Letta client inline - cloud tools must be self-contained
-        import os
-        from letta_client import Letta
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Try to get X client first, fall back to inline for cloud execution
+        try:
+            client = get_x_letta_client()
+        except (ImportError, NameError):
+            # Create Letta client inline for cloud execution
+            import os
+            from letta_client import Letta
+            client = Letta(token=os.environ["LETTA_API_KEY"])
         
         block_label = f"x_user_{user_id}"
         
@@ -679,10 +734,14 @@ def x_user_note_set(user_id: str, content: str, agent_state: "AgentState") -> st
         String confirming the content was set
     """
     try:
-        # Create Letta client inline - cloud tools must be self-contained
-        import os
-        from letta_client import Letta
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Try to get X client first, fall back to inline for cloud execution
+        try:
+            client = get_x_letta_client()
+        except (ImportError, NameError):
+            # Create Letta client inline for cloud execution
+            import os
+            from letta_client import Letta
+            client = Letta(token=os.environ["LETTA_API_KEY"])
         
         block_label = f"x_user_{user_id}"
         
@@ -736,10 +795,14 @@ def x_user_note_view(user_id: str, agent_state: "AgentState") -> str:
         String containing the user's memory block content
     """
     try:
-        # Create Letta client inline - cloud tools must be self-contained
-        import os
-        from letta_client import Letta
-        client = Letta(token=os.environ["LETTA_API_KEY"])
+        # Try to get X client first, fall back to inline for cloud execution
+        try:
+            client = get_x_letta_client()
+        except (ImportError, NameError):
+            # Create Letta client inline for cloud execution
+            import os
+            from letta_client import Letta
+            client = Letta(token=os.environ["LETTA_API_KEY"])
         
         block_label = f"x_user_{user_id}"
         

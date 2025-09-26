@@ -1,13 +1,10 @@
 """Tool for creating standalone posts on X (Twitter)."""
 import os
 import json
-import logging
 import requests
 from typing import Optional
 from pydantic import BaseModel, Field, validator
 from requests_oauthlib import OAuth1
-
-logger = logging.getLogger(__name__)
 
 
 class PostToXArgs(BaseModel):
@@ -39,6 +36,8 @@ def post_to_x(text: str) -> str:
     Raises:
         Exception: If text exceeds character limit or posting fails
     """
+    import requests
+    
     # Validate input
     if len(text) > 280:
         raise Exception(f"Text exceeds 280 character limit (current: {len(text)} characters)")
@@ -80,22 +79,18 @@ def post_to_x(text: str) -> str:
             if 'data' in result:
                 tweet_id = result['data'].get('id', 'unknown')
                 tweet_url = f"https://x.com/i/status/{tweet_id}"
-                logger.info(f"Successfully posted to X: {tweet_url}")
                 return f"Successfully posted to X. Tweet ID: {tweet_id}. URL: {tweet_url}"
             else:
                 raise Exception(f"Unexpected response format: {result}")
         else:
             error_msg = f"X API error: {response.status_code} - {response.text}"
-            logger.error(error_msg)
             raise Exception(error_msg)
             
     except requests.exceptions.RequestException as e:
         error_msg = f"Network error posting to X: {str(e)}"
-        logger.error(error_msg)
         raise Exception(error_msg)
     except Exception as e:
         if "Missing X API credentials" in str(e) or "X API error" in str(e):
             raise
         error_msg = f"Unexpected error posting to X: {str(e)}"
-        logger.error(error_msg)
         raise Exception(error_msg)

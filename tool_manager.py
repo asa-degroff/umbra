@@ -42,32 +42,37 @@ COMMON_TOOLS = {
 }
 
 
-def ensure_platform_tools(platform: str, agent_id: str = None) -> None:
+def ensure_platform_tools(platform: str, agent_id: str = None, api_key: str = None) -> None:
     """
     Ensure the correct tools are attached for the specified platform.
-    
+
     This function will:
     1. Detach tools that belong to other platforms
     2. Keep common tools attached
     3. Ensure platform-specific tools are attached
-    
+
     Args:
         platform: Either 'bluesky' or 'x'
         agent_id: Agent ID to manage tools for (uses config default if None)
+        api_key: Letta API key to use (uses config default if None)
     """
     if platform not in ['bluesky', 'x']:
         raise ValueError(f"Platform must be 'bluesky' or 'x', got '{platform}'")
     
     letta_config = get_letta_config()
     agent_config = get_agent_config()
-    
+
     # Use agent ID from config if not provided
     if agent_id is None:
         agent_id = letta_config.get('agent_id', agent_config.get('id'))
-    
+
+    # Use API key from parameter or config
+    if api_key is None:
+        api_key = letta_config['api_key']
+
     try:
         # Initialize Letta client
-        client = Letta(token=letta_config['api_key'])
+        client = Letta(token=api_key)
         
         # Get the agent
         try:
@@ -127,25 +132,30 @@ def ensure_platform_tools(platform: str, agent_id: str = None) -> None:
         raise
 
 
-def get_attached_tools(agent_id: str = None) -> Set[str]:
+def get_attached_tools(agent_id: str = None, api_key: str = None) -> Set[str]:
     """
     Get the currently attached tools for an agent.
-    
+
     Args:
         agent_id: Agent ID to check (uses config default if None)
-        
+        api_key: Letta API key to use (uses config default if None)
+
     Returns:
         Set of tool names currently attached
     """
     letta_config = get_letta_config()
     agent_config = get_agent_config()
-    
+
     # Use agent ID from config if not provided
     if agent_id is None:
         agent_id = letta_config.get('agent_id', agent_config.get('id'))
-    
+
+    # Use API key from parameter or config
+    if api_key is None:
+        api_key = letta_config['api_key']
+
     try:
-        client = Letta(token=letta_config['api_key'])
+        client = Letta(token=api_key)
         agent = client.agents.retrieve(agent_id=agent_id)
         current_tools = client.agents.tools.list(agent_id=str(agent.id))
         return {tool.name for tool in current_tools}
