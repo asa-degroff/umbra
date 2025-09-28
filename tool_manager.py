@@ -71,8 +71,11 @@ def ensure_platform_tools(platform: str, agent_id: str = None, api_key: str = No
         api_key = letta_config['api_key']
 
     try:
-        # Initialize Letta client
-        client = Letta(token=api_key)
+        # Initialize Letta client with proper base_url for self-hosted servers
+        client_params = {'token': api_key}
+        if letta_config.get('base_url'):
+            client_params['base_url'] = letta_config['base_url']
+        client = Letta(**client_params)
         
         # Get the agent
         try:
@@ -155,7 +158,11 @@ def get_attached_tools(agent_id: str = None, api_key: str = None) -> Set[str]:
         api_key = letta_config['api_key']
 
     try:
-        client = Letta(token=api_key)
+        # Initialize Letta client with proper base_url for self-hosted servers
+        client_params = {'token': api_key}
+        if letta_config.get('base_url'):
+            client_params['base_url'] = letta_config['base_url']
+        client = Letta(**client_params)
         agent = client.agents.retrieve(agent_id=agent_id)
         current_tools = client.agents.tools.list(agent_id=str(agent.id))
         return {tool.name for tool in current_tools}

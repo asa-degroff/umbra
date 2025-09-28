@@ -17,6 +17,7 @@ from utils import (
     upsert_block,
     upsert_agent
 )
+from config_loader import get_letta_config
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
@@ -73,14 +74,18 @@ def log_with_panel(message, title=None, border_color="white"):
         print(message)
 
 
-# Create a client with extended timeout for LLM operations
-CLIENT= Letta(
-    token=os.environ["LETTA_API_KEY"],
-    timeout=600  # 10 minutes timeout for API calls - higher than Cloudflare's 524 timeout
-)
+# Load Letta configuration from config.yaml
+letta_config = get_letta_config()
 
-# Use the "Bluesky" project
-PROJECT_ID = "5ec33d52-ab14-4fd6-91b5-9dbc43e888a8"
+# Create a client with configuration from config.yaml
+CLIENT_PARAMS = {
+    'token': letta_config['api_key'],
+    'timeout': letta_config['timeout']
+}
+if letta_config.get('base_url'):
+    CLIENT_PARAMS['base_url'] = letta_config['base_url']
+
+CLIENT = Letta(**CLIENT_PARAMS)
 
 # Notification check delay
 FETCH_NOTIFICATIONS_DELAY_SEC = 10  # Check every 10 seconds for faster response
@@ -165,8 +170,6 @@ def initialize_void():
 
     # Get the configured void agent by ID
     logger.info("Loading void agent from config...")
-    from config_loader import get_letta_config
-    letta_config = get_letta_config()
     agent_id = letta_config['agent_id']
     
     try:
@@ -186,7 +189,8 @@ def initialize_void():
     logger.info(f"Agent name: {void_agent.name}")
     if hasattr(void_agent, 'llm_config'):
         logger.info(f"Agent model: {void_agent.llm_config.model}")
-    logger.info(f"Agent project_id: {void_agent.project_id}")
+    if hasattr(void_agent, 'project_id') and void_agent.project_id:
+        logger.info(f"Agent project_id: {void_agent.project_id}")
     if hasattr(void_agent, 'tools'):
         logger.info(f"Agent has {len(void_agent.tools)} tools")
         for tool in void_agent.tools[:3]:  # Show first 3 tools

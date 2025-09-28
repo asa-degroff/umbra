@@ -8,7 +8,13 @@ def get_letta_client():
         from config_loader import get_letta_config
         from letta_client import Letta
         config = get_letta_config()
-        return Letta(token=config['api_key'], timeout=config['timeout'])
+        client_params = {
+            'token': config['api_key'],
+            'timeout': config['timeout']
+        }
+        if config.get('base_url'):
+            client_params['base_url'] = config['base_url']
+        return Letta(**client_params)
     except (ImportError, FileNotFoundError, KeyError):
         # Fallback to environment variable
         import os
@@ -32,10 +38,13 @@ def get_x_letta_client():
             config = yaml.safe_load(f)
 
         letta_config = config.get('letta', {})
-        return Letta(
-            token=letta_config['api_key'],
-            timeout=letta_config.get('timeout', 600)
-        )
+        client_params = {
+            'token': letta_config['api_key'],
+            'timeout': letta_config.get('timeout', 600)
+        }
+        if letta_config.get('base_url'):
+            client_params['base_url'] = letta_config['base_url']
+        return Letta(**client_params)
     except (ImportError, FileNotFoundError, KeyError, yaml.YAMLError):
         # Fall back to regular client
         return get_letta_client()

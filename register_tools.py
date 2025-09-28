@@ -130,8 +130,14 @@ def register_tools(agent_id: str = None, tools: List[str] = None):
         agent_id = letta_config['agent_id']
     
     try:
-        # Initialize Letta client with API key from config
-        client = Letta(token=letta_config['api_key'], timeout=letta_config['timeout'])
+        # Initialize Letta client with API key and base_url from config
+        client_params = {
+            'token': letta_config['api_key'],
+            'timeout': letta_config['timeout']
+        }
+        if letta_config.get('base_url'):
+            client_params['base_url'] = letta_config['base_url']
+        client = Letta(**client_params)
 
         # Get the agent by ID
         try:
