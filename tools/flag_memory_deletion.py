@@ -27,6 +27,9 @@ def flag_archival_memory_for_deletion(reason: str, memory_text: str, confirm: bo
 
     The system will search for all archival memories with this exact text and delete them.
 
+    IMPORTANT: If multiple archival memories have identical text, ALL of them will be deleted.
+    Make sure the memory_text is unique enough to avoid unintended deletions.
+
     Args:
         reason: The reason why this memory should be deleted
         memory_text: The exact text content of the archival memory to delete
