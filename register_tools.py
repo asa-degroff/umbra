@@ -20,6 +20,7 @@ from tools.ignore import ignore_notification, IgnoreNotificationArgs
 from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
 from tools.ack import annotate_ack, AnnotateAckArgs
 from tools.webpage import fetch_webpage, WebpageArgs
+from tools.flag_memory_deletion import flag_archival_memory_for_deletion, FlagArchivalMemoryForDeletionArgs
 
 letta_config = get_letta_config()
 logging.basicConfig(level=logging.INFO)
@@ -114,6 +115,12 @@ TOOL_CONFIGS = [
         "args_schema": WebpageArgs,
         "description": "Fetch a webpage and convert it to markdown/text format using Jina AI reader",
         "tags": ["web", "fetch", "webpage", "markdown", "jina"]
+    },
+    {
+        "func": flag_archival_memory_for_deletion,
+        "args_schema": FlagArchivalMemoryForDeletionArgs,
+        "description": "Flag an archival memory for deletion based on its exact text content",
+        "tags": ["memory", "archival", "delete", "cleanup"]
     },
 ]
 

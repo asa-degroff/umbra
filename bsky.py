@@ -661,6 +661,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         reply_candidates = []
         tool_call_results = {}  # Map tool_call_id to status
         ack_note = None  # Track any note from annotate_ack tool
+        flagged_memories = []  # Track memories flagged for deletion
         
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
         
@@ -766,6 +767,17 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                             logger.debug(f"Found annotate_ack with note: {note[:50]}...")
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse annotate_ack arguments: {e}")
+
+                # Collect flag_archival_memory_for_deletion tool calls
+                elif message.tool_call.name == 'flag_archival_memory_for_deletion':
+                    try:
+                        args = json.loads(message.tool_call.arguments)
+                        memory_text = args.get('memory_text', '')
+                        if memory_text:
+                            flagged_memories.append(memory_text)
+                            logger.debug(f"Found memory flagged for deletion: {memory_text[:50]}...")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse flag_archival_memory_for_deletion arguments: {e}")
                 
                 # Collect add_post_to_bluesky_reply_thread tool calls - only if they were successful
                 elif message.tool_call.name == 'add_post_to_bluesky_reply_thread':
@@ -787,6 +799,45 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         logger.debug(f"Skipping failed add_post_to_bluesky_reply_thread tool call (status: error)")
                     else:
                         logger.warning(f"⚠️ Skipping add_post_to_bluesky_reply_thread tool call with unknown status: {tool_status}")
+
+        # Handle archival memory deletion if any were flagged (only if no halt was received)
+        if flagged_memories:
+            logger.info(f"Processing {len(flagged_memories)} flagged memories for deletion")
+            for memory_text in flagged_memories:
+                try:
+                    # Search for passages with this exact text
+                    logger.debug(f"Searching for passages matching: {memory_text[:100]}...")
+                    passages = CLIENT.agents.passages.list(
+                        agent_id=void_agent.id,
+                        query=memory_text
+                    )
+
+                    if not passages:
+                        logger.warning(f"No passages found matching flagged memory: {memory_text[:50]}...")
+                        continue
+
+                    # Delete all matching passages
+                    deleted_count = 0
+                    for passage in passages:
+                        # Check if the passage text exactly matches (to avoid partial matches)
+                        if hasattr(passage, 'text') and passage.text == memory_text:
+                            try:
+                                CLIENT.agents.passages.delete(
+                                    agent_id=void_agent.id,
+                                    passage_id=str(passage.id)
+                                )
+                                deleted_count += 1
+                                logger.debug(f"Deleted passage {passage.id}")
+                            except Exception as delete_error:
+                                logger.error(f"Failed to delete passage {passage.id}: {delete_error}")
+
+                    if deleted_count > 0:
+                        logger.info(f"🗑️ Deleted {deleted_count} archival memory passage(s): {memory_text[:50]}...")
+                    else:
+                        logger.warning(f"No exact matches found for deletion: {memory_text[:50]}...")
+
+                except Exception as e:
+                    logger.error(f"Error processing memory deletion: {e}")
 
         # Check for conflicting tool calls
         if reply_candidates and ignored_notification:
