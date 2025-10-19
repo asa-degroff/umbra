@@ -772,10 +772,19 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 elif message.tool_call.name == 'flag_archival_memory_for_deletion':
                     try:
                         args = json.loads(message.tool_call.arguments)
+                        reason = args.get('reason', '')
                         memory_text = args.get('memory_text', '')
-                        if memory_text:
-                            flagged_memories.append(memory_text)
-                            logger.debug(f"Found memory flagged for deletion: {memory_text[:50]}...")
+                        confirm = args.get('confirm', False)
+
+                        # Only flag for deletion if confirmed
+                        if confirm and memory_text:
+                            flagged_memories.append({
+                                'reason': reason,
+                                'memory_text': memory_text
+                            })
+                            logger.debug(f"Found memory flagged for deletion (reason: {reason}): {memory_text[:50]}...")
+                        elif not confirm:
+                            logger.debug(f"Memory deletion not confirmed, skipping: {memory_text[:50]}...")
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse flag_archival_memory_for_deletion arguments: {e}")
                 
@@ -803,7 +812,10 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         # Handle archival memory deletion if any were flagged (only if no halt was received)
         if flagged_memories:
             logger.info(f"Processing {len(flagged_memories)} flagged memories for deletion")
-            for memory_text in flagged_memories:
+            for flagged_memory in flagged_memories:
+                reason = flagged_memory['reason']
+                memory_text = flagged_memory['memory_text']
+
                 try:
                     # Search for passages with this exact text
                     logger.debug(f"Searching for passages matching: {memory_text[:100]}...")
@@ -832,7 +844,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                                 logger.error(f"Failed to delete passage {passage.id}: {delete_error}")
 
                     if deleted_count > 0:
-                        logger.info(f"🗑️ Deleted {deleted_count} archival memory passage(s): {memory_text[:50]}...")
+                        logger.info(f"🗑️ Deleted {deleted_count} archival memory passage(s) (reason: {reason}): {memory_text[:50]}...")
                     else:
                         logger.warning(f"No exact matches found for deletion: {memory_text[:50]}...")
 
