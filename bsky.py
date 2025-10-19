@@ -675,6 +675,9 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 if message.name == 'add_post_to_bluesky_reply_thread':
                     tool_call_results[message.tool_call_id] = message.status
                     logger.debug(f"Tool result: {message.tool_call_id} -> {message.status}")
+                elif message.name == 'flag_archival_memory_for_deletion':
+                    tool_call_results[message.tool_call_id] = message.status
+                    logger.debug(f"Tool result: {message.tool_call_id} -> {message.status}")
                 elif message.name == 'ignore_notification':
                     # Check if the tool was successful
                     if hasattr(message, 'tool_return') and message.status == 'success':
@@ -776,8 +779,8 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         memory_text = args.get('memory_text', '')
                         confirm = args.get('confirm', False)
 
-                        # Only flag for deletion if confirmed
-                        if confirm and memory_text:
+                        # Only flag for deletion if confirmed and has all required fields
+                        if confirm and memory_text and reason:
                             flagged_memories.append({
                                 'reason': reason,
                                 'memory_text': memory_text
@@ -785,6 +788,8 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                             logger.debug(f"Found memory flagged for deletion (reason: {reason}): {memory_text[:50]}...")
                         elif not confirm:
                             logger.debug(f"Memory deletion not confirmed, skipping: {memory_text[:50]}...")
+                        elif not reason:
+                            logger.warning(f"Memory deletion missing reason, skipping: {memory_text[:50]}...")
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse flag_archival_memory_for_deletion arguments: {e}")
                 
