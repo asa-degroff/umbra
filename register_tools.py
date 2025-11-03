@@ -7,7 +7,7 @@ from typing import List
 from letta_client import Letta
 from rich.console import Console
 from rich.table import Table
-from config_loader import get_letta_config
+from config_loader import get_letta_config, get_bluesky_config, get_config
 
 # Import standalone functions and their schemas
 from tools.search import search_bluesky_posts, SearchArgs
@@ -22,7 +22,6 @@ from tools.ack import annotate_ack, AnnotateAckArgs
 from tools.webpage import fetch_webpage, WebpageArgs
 from tools.flag_memory_deletion import flag_archival_memory_for_deletion, FlagArchivalMemoryForDeletionArgs
 
-letta_config = get_letta_config()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 console = Console()
@@ -125,17 +124,21 @@ TOOL_CONFIGS = [
 ]
 
 
-def register_tools(agent_id: str = None, tools: List[str] = None):
+def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool = True):
     """Register tools with a Letta agent.
 
     Args:
         agent_id: ID of the agent to attach tools to. If None, uses config default.
         tools: List of tool names to register. If None, registers all tools.
+        set_env: If True, set environment variables for tool execution. Defaults to True.
     """
+    # Load config fresh (uses global config instance from get_config())
+    letta_config = get_letta_config()
+
     # Use agent ID from config if not provided
     if agent_id is None:
         agent_id = letta_config['agent_id']
-    
+
     try:
         # Initialize Letta client with API key and base_url from config
         client_params = {
@@ -153,6 +156,32 @@ def register_tools(agent_id: str = None, tools: List[str] = None):
             console.print(f"[red]Error: Agent '{agent_id}' not found[/red]")
             console.print(f"Error details: {e}")
             return
+
+        # Set environment variables for tool execution if requested
+        if set_env:
+            try:
+                bsky_config = get_bluesky_config()
+                env_vars = {
+                    'BSKY_USERNAME': bsky_config['username'],
+                    'BSKY_PASSWORD': bsky_config['password'],
+                    'PDS_URI': bsky_config['pds_uri']
+                }
+
+                console.print(f"\n[bold cyan]Setting tool execution environment variables:[/bold cyan]")
+                console.print(f"  BSKY_USERNAME: {env_vars['BSKY_USERNAME']}")
+                console.print(f"  PDS_URI: {env_vars['PDS_URI']}")
+                console.print(f"  BSKY_PASSWORD: {'*' * len(env_vars['BSKY_PASSWORD'])}\n")
+
+                # Modify agent with environment variables
+                client.agents.modify(
+                    agent_id=agent_id,
+                    tool_exec_environment_variables=env_vars
+                )
+
+                console.print("[green]✓ Environment variables set successfully[/green]\n")
+            except Exception as e:
+                console.print(f"[yellow]Warning: Failed to set environment variables: {e}[/yellow]\n")
+                logger.warning(f"Failed to set environment variables: {e}")
 
         # Filter tools if specific ones requested
         tools_to_register = TOOL_CONFIGS
@@ -228,16 +257,22 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Register Void tools with a Letta agent")
+    parser.add_argument("--config", type=str, default='config.yaml', help="Path to config file (default: config.yaml)")
     parser.add_argument("--agent-id", help=f"Agent ID (default: from config)")
     parser.add_argument("--tools", nargs="+", help="Specific tools to register (default: all)")
     parser.add_argument("--list", action="store_true", help="List available tools")
+    parser.add_argument("--no-env", action="store_true", help="Skip setting environment variables")
 
     args = parser.parse_args()
+
+    # Initialize config with custom path (sets global config instance)
+    get_config(args.config)
 
     if args.list:
         list_available_tools()
     else:
-        # Use config default if no agent specified
+        # Load config and get agent ID
+        letta_config = get_letta_config()
         agent_id = args.agent_id if args.agent_id else letta_config['agent_id']
         console.print(f"\n[bold]Registering tools for agent: {agent_id}[/bold]\n")
-        register_tools(agent_id, args.tools)
+        register_tools(agent_id, args.tools, set_env=not args.no_env)

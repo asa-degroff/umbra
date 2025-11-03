@@ -18,6 +18,9 @@ ac && python bsky.py
 # OR
 source .venv/bin/activate && python bsky.py
 
+# Run with custom config file
+ac && python bsky.py --config herald.yaml
+
 # Run with testing mode (no messages sent, queue preserved)
 ac && python bsky.py --test
 
@@ -46,8 +49,11 @@ ac && python bsky.py --synthesis-only --synthesis-interval 120
 ### Managing Tools
 
 ```bash
-# Register all tools with void agent (uses agent_id from config)
+# Register all tools with void agent (uses agent_id from config.yaml)
 ac && python register_tools.py
+
+# Register tools for herald agent (uses herald.yaml config)
+ac && python register_tools.py --config herald.yaml
 
 # Register specific tools
 ac && python register_tools.py --tools search_bluesky_posts post_to_bluesky
@@ -57,6 +63,12 @@ ac && python register_tools.py --list
 
 # Register tools with a different agent by ID
 ac && python register_tools.py --agent-id <agent-id>
+
+# Register tools without setting environment variables
+ac && python register_tools.py --no-env
+
+# Note: register_tools.py automatically sets BSKY_USERNAME, BSKY_PASSWORD, and PDS_URI
+# as environment variables on the agent for tool execution
 ```
 
 ### Managing X Bot
