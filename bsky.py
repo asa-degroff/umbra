@@ -17,7 +17,7 @@ from utils import (
     upsert_block,
     upsert_agent
 )
-from config_loader import get_letta_config
+from config_loader import get_letta_config, get_config, get_queue_config
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
@@ -74,18 +74,9 @@ def log_with_panel(message, title=None, border_color="white"):
         print(message)
 
 
-# Load Letta configuration from config.yaml
-letta_config = get_letta_config()
-
-# Create a client with configuration from config.yaml
-CLIENT_PARAMS = {
-    'token': letta_config['api_key'],
-    'timeout': letta_config['timeout']
-}
-if letta_config.get('base_url'):
-    CLIENT_PARAMS['base_url'] = letta_config['base_url']
-
-CLIENT = Letta(**CLIENT_PARAMS)
+# Load Letta configuration from config.yaml (will be initialized later with custom path if provided)
+letta_config = None
+CLIENT = None
 
 # Notification check delay
 FETCH_NOTIFICATIONS_DELAY_SEC = 10  # Check every 10 seconds for faster response
@@ -93,14 +84,11 @@ FETCH_NOTIFICATIONS_DELAY_SEC = 10  # Check every 10 seconds for faster response
 # Check for new notifications every N queue items
 CHECK_NEW_NOTIFICATIONS_EVERY_N_ITEMS = 2  # Check more frequently during processing
 
-# Queue directory
-QUEUE_DIR = Path("queue")
-QUEUE_DIR.mkdir(exist_ok=True)
-QUEUE_ERROR_DIR = Path("queue/errors")
-QUEUE_ERROR_DIR.mkdir(exist_ok=True, parents=True)
-QUEUE_NO_REPLY_DIR = Path("queue/no_reply")
-QUEUE_NO_REPLY_DIR.mkdir(exist_ok=True, parents=True)
-PROCESSED_NOTIFICATIONS_FILE = Path("queue/processed_notifications.json")
+# Queue paths (will be initialized from config in main())
+QUEUE_DIR = None
+QUEUE_ERROR_DIR = None
+QUEUE_NO_REPLY_DIR = None
+PROCESSED_NOTIFICATIONS_FILE = None
 
 # Maximum number of processed notifications to track
 MAX_PROCESSED_NOTIFICATIONS = 10000
@@ -1790,6 +1778,7 @@ def detach_temporal_blocks(client: Letta, agent_id: str, labels_to_detach: list 
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Void Bot - Bluesky autonomous agent')
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file (default: config.yaml)')
     parser.add_argument('--test', action='store_true', help='Run in testing mode (no messages sent, queue files preserved)')
     parser.add_argument('--no-git', action='store_true', help='Skip git operations when exporting agent state')
     parser.add_argument('--simple-logs', action='store_true', help='Use simplified log format (void - LEVEL - message)')
@@ -1799,6 +1788,32 @@ def main():
     parser.add_argument('--synthesis-interval', type=int, default=600, help='Send synthesis message every N seconds (default: 600 = 10 minutes, 0 to disable)')
     parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
     args = parser.parse_args()
+
+    # Initialize configuration with custom path
+    global letta_config, CLIENT, QUEUE_DIR, QUEUE_ERROR_DIR, QUEUE_NO_REPLY_DIR, PROCESSED_NOTIFICATIONS_FILE, NOTIFICATION_DB
+    get_config(args.config)  # Initialize the global config instance
+    letta_config = get_letta_config()
+
+    # Initialize queue paths from config
+    queue_config = get_queue_config()
+    QUEUE_DIR = Path(queue_config['base_dir'])
+    QUEUE_ERROR_DIR = Path(queue_config['error_dir'])
+    QUEUE_NO_REPLY_DIR = Path(queue_config['no_reply_dir'])
+    PROCESSED_NOTIFICATIONS_FILE = Path(queue_config['processed_file'])
+
+    # Create queue directories
+    QUEUE_DIR.mkdir(exist_ok=True)
+    QUEUE_ERROR_DIR.mkdir(exist_ok=True, parents=True)
+    QUEUE_NO_REPLY_DIR.mkdir(exist_ok=True, parents=True)
+
+    # Create Letta client with configuration
+    CLIENT_PARAMS = {
+        'token': letta_config['api_key'],
+        'timeout': letta_config['timeout']
+    }
+    if letta_config.get('base_url'):
+        CLIENT_PARAMS['base_url'] = letta_config['base_url']
+    CLIENT = Letta(**CLIENT_PARAMS)
     
     # Configure logging based on command line arguments
     if args.simple_logs:
@@ -1897,10 +1912,9 @@ def main():
     void_agent = initialize_void()
     logger.info(f"Void agent initialized: {void_agent.id}")
     
-    # Initialize notification database
-    global NOTIFICATION_DB
+    # Initialize notification database with config-based path
     logger.info("Initializing notification database...")
-    NOTIFICATION_DB = NotificationDB()
+    NOTIFICATION_DB = NotificationDB(db_path=queue_config['db_path'])
     
     # Migrate from old JSON format if it exists
     if PROCESSED_NOTIFICATIONS_FILE.exists():

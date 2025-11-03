@@ -218,12 +218,21 @@ def get_threading_config() -> Dict[str, Any]:
     }
 
 def get_queue_config() -> Dict[str, Any]:
-    """Get queue configuration."""
+    """Get queue configuration with bot_name-based namespacing."""
     config = get_config()
+
+    # Get bot name for queue namespacing (defaults to 'void' for backward compatibility)
+    bot_name = config.get('bot.name', 'void')
+
+    # Build queue paths with bot name
+    base_dir = f'queue_{bot_name}' if bot_name != 'void' else 'queue'
+
     return {
+        'bot_name': bot_name,
         'priority_users': config.get('queue.priority_users', ['cameron.pfiffer.org']),
-        'base_dir': config.get('queue.base_dir', 'queue'),
-        'error_dir': config.get('queue.error_dir', 'queue/errors'),
-        'no_reply_dir': config.get('queue.no_reply_dir', 'queue/no_reply'),
-        'processed_file': config.get('queue.processed_file', 'queue/processed_notifications.json'),
+        'base_dir': base_dir,
+        'error_dir': f'{base_dir}/errors',
+        'no_reply_dir': f'{base_dir}/no_reply',
+        'processed_file': f'{base_dir}/processed_notifications.json',
+        'db_path': f'{base_dir}/notifications.db',
     }
