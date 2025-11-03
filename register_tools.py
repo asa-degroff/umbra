@@ -13,7 +13,6 @@ from config_loader import get_letta_config, get_bluesky_config, get_config
 from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
-from tools.blocks import attach_user_blocks, detach_user_blocks, user_note_append, user_note_replace, user_note_set, user_note_view, AttachUserBlocksArgs, DetachUserBlocksArgs, UserNoteAppendArgs, UserNoteReplaceArgs, UserNoteSetArgs, UserNoteViewArgs
 from tools.halt import halt_activity, HaltArgs
 from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
@@ -47,38 +46,9 @@ TOOL_CONFIGS = [
         "description": "Retrieve a Bluesky feed (home timeline or custom feed)",
         "tags": ["bluesky", "feed", "timeline"]
     },
-    # Note: attach_user_blocks is available on the server but not exposed to the agent
-    # to prevent the agent from managing its own memory blocks
-    {
-        "func": detach_user_blocks,
-        "args_schema": DetachUserBlocksArgs,
-        "description": "Detach user-specific memory blocks from the agent. Blocks are preserved for later use.",
-        "tags": ["memory", "blocks", "user"]
-    },
-    {
-        "func": user_note_append,
-        "args_schema": UserNoteAppendArgs,
-        "description": "Append a note to a user's memory block. Creates the block if it doesn't exist.",
-        "tags": ["memory", "blocks", "user", "append"]
-    },
-    {
-        "func": user_note_replace,
-        "args_schema": UserNoteReplaceArgs,
-        "description": "Replace text in a user's memory block.",
-        "tags": ["memory", "blocks", "user", "replace"]
-    },
-    {
-        "func": user_note_set,
-        "args_schema": UserNoteSetArgs,
-        "description": "Set the complete content of a user's memory block.",
-        "tags": ["memory", "blocks", "user", "set"]
-    },
-    {
-        "func": user_note_view,
-        "args_schema": UserNoteViewArgs,
-        "description": "View the content of a user's memory block.",
-        "tags": ["memory", "blocks", "user", "view"]
-    },
+    # Note: User block management tools (attach_user_blocks, detach_user_blocks, user_note_*)
+    # are available on the server but not exposed to the agent to prevent the agent from
+    # managing its own memory blocks. User blocks are managed by bsky.py automatically.
     {
         "func": halt_activity,
         "args_schema": HaltArgs,
