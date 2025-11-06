@@ -657,16 +657,38 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         ignored_notification = False
         ignore_reason = ""
         ignore_category = ""
-        
+
         for message in message_response.messages:
-            if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
+            # Debug: log message type and attributes
+            logger.debug(f"Message type: {message.message_type if hasattr(message, 'message_type') else 'unknown'}")
+
+            # Check for tool_return messages (newer Letta API format)
+            if hasattr(message, 'message_type') and message.message_type == 'tool_return_message':
+                if hasattr(message, 'tool_return'):
+                    tool_call_id = getattr(message.tool_return, 'tool_call_id', None)
+                    tool_name = getattr(message.tool_return, 'name', None)
+                    status = getattr(message.tool_return, 'status', 'success')  # Assume success if no status
+
+                    if tool_call_id and tool_name:
+                        if tool_name == 'add_post_to_bluesky_reply_thread':
+                            tool_call_results[tool_call_id] = status
+                            logger.debug(f"Tool result (new format): {tool_call_id} -> {status}")
+                        elif tool_name == 'flag_archival_memory_for_deletion':
+                            tool_call_results[tool_call_id] = status
+                            logger.debug(f"Tool result (new format): {tool_call_id} -> {status}")
+
+            # Also check old format (for backwards compatibility)
+            elif hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
                 if message.name == 'add_post_to_bluesky_reply_thread':
                     tool_call_results[message.tool_call_id] = message.status
-                    logger.debug(f"Tool result: {message.tool_call_id} -> {message.status}")
+                    logger.debug(f"Tool result (old format): {message.tool_call_id} -> {message.status}")
                 elif message.name == 'flag_archival_memory_for_deletion':
                     tool_call_results[message.tool_call_id] = message.status
-                    logger.debug(f"Tool result: {message.tool_call_id} -> {message.status}")
-                elif message.name == 'ignore_notification':
+                    logger.debug(f"Tool result (old format): {message.tool_call_id} -> {message.status}")
+
+            # Check for ignore_notification tool
+            if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
+                if message.name == 'ignore_notification':
                     # Check if the tool was successful
                     if hasattr(message, 'tool_return') and message.status == 'success':
                         # Parse the return value to extract category and reason
@@ -785,22 +807,25 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                 elif message.tool_call.name == 'add_post_to_bluesky_reply_thread':
                     tool_call_id = message.tool_call.tool_call_id
                     tool_status = tool_call_results.get(tool_call_id, 'unknown')
-                    
-                    if tool_status == 'success':
+
+                    # If status is unknown, try to use it anyway (assume success)
+                    # This handles cases where the Letta API structure changed
+                    if tool_status == 'success' or tool_status == 'unknown':
                         try:
                             args = json.loads(message.tool_call.arguments)
                             reply_text = args.get('text', '')
                             reply_lang = args.get('lang', 'en-US')
-                            
+
                             if reply_text:  # Only add if there's actual content
                                 reply_candidates.append((reply_text, reply_lang))
-                                logger.debug(f"Found successful add_post_to_bluesky_reply_thread candidate: {reply_text[:50]}... (lang: {reply_lang})")
+                                if tool_status == 'unknown':
+                                    logger.warning(f"⚠️ Using reply despite unknown tool status (assuming success): {reply_text[:50]}...")
+                                else:
+                                    logger.debug(f"Found successful add_post_to_bluesky_reply_thread candidate: {reply_text[:50]}... (lang: {reply_lang})")
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to parse tool call arguments: {e}")
                     elif tool_status == 'error':
                         logger.debug(f"Skipping failed add_post_to_bluesky_reply_thread tool call (status: error)")
-                    else:
-                        logger.warning(f"⚠️ Skipping add_post_to_bluesky_reply_thread tool call with unknown status: {tool_status}")
 
         # Handle archival memory deletion if any were flagged (only if no halt was received)
         if flagged_memories:
@@ -1786,7 +1811,7 @@ def main():
     # --rich option removed as we now use simple text formatting
     parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
     parser.add_argument('--cleanup-interval', type=int, default=10, help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
-    parser.add_argument('--synthesis-interval', type=int, default=600, help='Send synthesis message every N seconds (default: 600 = 10 minutes, 0 to disable)')
+    parser.add_argument('--synthesis-interval', type=int, default=21600, help='Send synthesis message every N seconds (default: 3600 = 1 hour, 0 to disable)')
     parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
     args = parser.parse_args()
 
