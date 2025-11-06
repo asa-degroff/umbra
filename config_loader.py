@@ -1,5 +1,5 @@
 """
-Configuration loader for Void Bot.
+Configuration loader for Umbra Bot.
 Loads configuration from config.yaml and environment variables.
 """
 
@@ -200,10 +200,10 @@ def get_agent_config() -> Dict[str, Any]:
     """Get agent configuration."""
     config = get_config()
     return {
-        'name': config.get('bot.agent.name', 'void'),
+        'name': config.get('bot.agent.name', 'umbra'),
         'model': config.get('bot.agent.model', 'openai/gpt-4o-mini'),
         'embedding': config.get('bot.agent.embedding', 'openai/text-embedding-3-small'),
-        'description': config.get('bot.agent.description', 'A social media agent trapped in the void.'),
+        'description': config.get('bot.agent.description', 'A social media agent dwelling in the umbra.'),
         'max_steps': config.get('bot.agent.max_steps', 100),
         'blocks': config.get('bot.agent.blocks', {}),
     }
@@ -221,11 +221,11 @@ def get_queue_config() -> Dict[str, Any]:
     """Get queue configuration with bot_name-based namespacing."""
     config = get_config()
 
-    # Get bot name for queue namespacing (defaults to 'void' for backward compatibility)
-    bot_name = config.get('bot.name', 'void')
+    # Get bot name for queue namespacing (defaults to 'umbra' for backward compatibility)
+    bot_name = config.get('bot.name', 'umbra')
 
     # Build queue paths with bot name
-    base_dir = f'queue_{bot_name}' if bot_name != 'void' else 'queue'
+    base_dir = f'queue_{bot_name}' if bot_name != 'umbra' else 'queue'
 
     return {
         'bot_name': bot_name,

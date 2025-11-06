@@ -131,12 +131,12 @@ def export_agent_state(client, agent, skip_git=False):
         
         # Save timestamped archive copy
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        archive_file = os.path.join("agent_archive", f"void_{timestamp}.af")
+        archive_file = os.path.join("agent_archive", f"umbra_{timestamp}.af")
         with open(archive_file, 'w', encoding='utf-8') as f:
             json.dump(agent_data, f, indent=2, ensure_ascii=False)
         
         # Save current agent state
-        current_file = os.path.join("agents", "void.af")
+        current_file = os.path.join("agents", "umbra.af")
         with open(current_file, 'w', encoding='utf-8') as f:
             json.dump(agent_data, f, indent=2, ensure_ascii=False)
         
@@ -153,45 +153,45 @@ def export_agent_state(client, agent, skip_git=False):
     except Exception as e:
         logger.error(f"Failed to export agent: {e}")
 
-def initialize_void():
-    logger.info("Starting void agent initialization...")
+def initialize_umbra():
+    logger.info("Starting umbra agent initialization...")
 
-    # Get the configured void agent by ID
-    logger.info("Loading void agent from config...")
+    # Get the configured umbra agent by ID
+    logger.info("Loading umbra agent from config...")
     agent_id = letta_config['agent_id']
     
     try:
-        void_agent = CLIENT.agents.retrieve(agent_id=agent_id)
-        logger.info(f"Successfully loaded void agent: {void_agent.name} ({agent_id})")
+        umbra_agent = CLIENT.agents.retrieve(agent_id=agent_id)
+        logger.info(f"Successfully loaded umbra agent: {umbra_agent.name} ({agent_id})")
     except Exception as e:
-        logger.error(f"Failed to load void agent {agent_id}: {e}")
+        logger.error(f"Failed to load umbra agent {agent_id}: {e}")
         logger.error("Please ensure the agent_id in config.yaml is correct")
         raise e
     
     # Export agent state
     logger.info("Exporting agent state...")
-    export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
+    export_agent_state(CLIENT, umbra_agent, skip_git=SKIP_GIT)
     
     # Log agent details
-    logger.info(f"Void agent details - ID: {void_agent.id}")
-    logger.info(f"Agent name: {void_agent.name}")
-    if hasattr(void_agent, 'llm_config'):
-        logger.info(f"Agent model: {void_agent.llm_config.model}")
-    if hasattr(void_agent, 'project_id') and void_agent.project_id:
-        logger.info(f"Agent project_id: {void_agent.project_id}")
-    if hasattr(void_agent, 'tools'):
-        logger.info(f"Agent has {len(void_agent.tools)} tools")
-        for tool in void_agent.tools[:3]:  # Show first 3 tools
+    logger.info(f"Umbra agent details - ID: {umbra_agent.id}")
+    logger.info(f"Agent name: {umbra_agent.name}")
+    if hasattr(umbra_agent, 'llm_config'):
+        logger.info(f"Agent model: {umbra_agent.llm_config.model}")
+    if hasattr(umbra_agent, 'project_id') and umbra_agent.project_id:
+        logger.info(f"Agent project_id: {umbra_agent.project_id}")
+    if hasattr(umbra_agent, 'tools'):
+        logger.info(f"Agent has {len(umbra_agent.tools)} tools")
+        for tool in umbra_agent.tools[:3]:  # Show first 3 tools
             logger.info(f"  - Tool: {tool.name} (type: {tool.tool_type})")
 
-    return void_agent
+    return umbra_agent
 
 
-def process_mention(void_agent, atproto_client, notification_data, queue_filepath=None, testing_mode=False):
+def process_mention(umbra_agent, atproto_client, notification_data, queue_filepath=None, testing_mode=False):
     """Process a mention and generate a reply using the Letta agent.
     
     Args:
-        void_agent: The Letta agent instance
+        umbra_agent: The Letta agent instance
         atproto_client: The AT Protocol client
         notification_data: The notification data dictionary
         queue_filepath: Optional Path object to the queue file (for cleanup on halt)
@@ -259,14 +259,14 @@ def process_mention(void_agent, atproto_client, notification_data, queue_filepat
             thread_context = thread_to_yaml_string(thread)
             logger.debug(f"Thread context generated, length: {len(thread_context)} characters")
             
-            # Check if #voidstop appears anywhere in the thread
-            if "#voidstop" in thread_context.lower():
-                logger.info("Found #voidstop in thread context, skipping this mention")
+            # Check if #umbrastop appears anywhere in the thread
+            if "#umbrastop" in thread_context.lower():
+                logger.info("Found #umbrastop in thread context, skipping this mention")
                 return True  # Return True to remove from queue
             
             # Also check the mention text directly
-            if "#voidstop" in mention_text.lower():
-                logger.info("Found #voidstop in mention text, skipping this mention")
+            if "#umbrastop" in mention_text.lower():
+                logger.info("Found #umbrastop in mention text, skipping this mention")
                 return True  # Return True to remove from queue
             
             # Create a more informative preview by extracting meaningful content
@@ -336,7 +336,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         
         try:
             # Check for known bots in thread
-            bot_check_result = check_known_bots(unique_handles, void_agent)
+            bot_check_result = check_known_bots(unique_handles, umbra_agent)
             bot_check_data = json.loads(bot_check_result)
             
             # TEMPORARILY DISABLED: Bot detection causing issues with normal users
@@ -364,7 +364,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         if unique_handles:
             try:
                 logger.debug(f"Attaching user blocks for handles: {unique_handles}")
-                attach_result = attach_user_blocks(unique_handles, void_agent)
+                attach_result = attach_user_blocks(unique_handles, umbra_agent)
                 attached_handles = unique_handles  # Track successfully attached handles
                 logger.debug(f"Attach result: {attach_result}")
             except Exception as attach_error:
@@ -391,7 +391,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         try:
             # Use streaming to avoid 524 timeout errors
             message_stream = CLIENT.agents.messages.create_stream(
-                agent_id=void_agent.id,
+                agent_id=umbra_agent.id,
                 messages=[{"role": "user", "content": prompt}],
                 stream_tokens=False,  # Step streaming only (faster than token streaming)
                 max_steps=100
@@ -683,7 +683,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                     logger.error("Please use add_post_to_bluesky_reply_thread instead.")
                     logger.error("Update the agent's tools using register_tools.py")
                     # Export agent state before terminating
-                    export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
+                    export_agent_state(CLIENT, umbra_agent, skip_git=SKIP_GIT)
                     logger.info("=== BOT TERMINATED DUE TO DEPRECATED TOOL USE ===")
                     exit(1)
         
@@ -731,7 +731,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                             save_processed_notifications(processed_uris)
                     
                     # Export agent state before terminating
-                    export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
+                    export_agent_state(CLIENT, umbra_agent, skip_git=SKIP_GIT)
                     
                     # Exit the program
                     logger.info("=== BOT TERMINATED BY AGENT ===")
@@ -744,7 +744,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                     logger.error("Please use add_post_to_bluesky_reply_thread instead.")
                     logger.error("Update the agent's tools using register_tools.py")
                     # Export agent state before terminating
-                    export_agent_state(CLIENT, void_agent, skip_git=SKIP_GIT)
+                    export_agent_state(CLIENT, umbra_agent, skip_git=SKIP_GIT)
                     logger.info("=== BOT TERMINATED DUE TO DEPRECATED TOOL USE ===")
                     exit(1)
                 
@@ -813,7 +813,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                     # Search for passages with this exact text
                     logger.debug(f"Searching for passages matching: {memory_text[:100]}...")
                     passages = CLIENT.agents.passages.list(
-                        agent_id=void_agent.id,
+                        agent_id=umbra_agent.id,
                         query=memory_text
                     )
 
@@ -828,7 +828,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
                         if hasattr(passage, 'text') and passage.text == memory_text:
                             try:
                                 CLIENT.agents.passages.delete(
-                                    agent_id=void_agent.id,
+                                    agent_id=umbra_agent.id,
                                     passage_id=str(passage.id)
                                 )
                                 deleted_count += 1
@@ -973,7 +973,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
         if 'attached_handles' in locals() and attached_handles:
             try:
                 logger.info(f"Detaching user blocks for handles: {attached_handles}")
-                detach_result = detach_user_blocks(attached_handles, void_agent)
+                detach_result = detach_user_blocks(attached_handles, umbra_agent)
                 logger.debug(f"Detach result: {detach_result}")
             except Exception as detach_error:
                 logger.warning(f"Failed to detach user blocks: {detach_error}")
@@ -1091,7 +1091,7 @@ def save_notification_to_queue(notification, is_priority=None):
         return False
 
 
-def load_and_process_queued_notifications(void_agent, atproto_client, testing_mode=False):
+def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_mode=False):
     """Load and process all notifications from the queue in priority order."""
     try:
         # Get all JSON files in queue directory (excluding processed_notifications.json)
@@ -1170,11 +1170,11 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                 # Process based on type using dict data directly
                 success = False
                 if notif_data['reason'] == "mention":
-                    success = process_mention(void_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                    success = process_mention(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     if success:
                         message_counters['mentions'] += 1
                 elif notif_data['reason'] == "reply":
-                    success = process_mention(void_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                    success = process_mention(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     if success:
                         message_counters['replies'] += 1
                 elif notif_data['reason'] == "follow":
@@ -1184,7 +1184,7 @@ def load_and_process_queued_notifications(void_agent, atproto_client, testing_mo
                     follow_message = f"Update: {follow_update}"
                     logger.info(f"Notifying agent about new follower: @{author_handle} | prompt: {len(follow_message)} chars")
                     CLIENT.agents.messages.create(
-                        agent_id = void_agent.id,
+                        agent_id = umbra_agent.id,
                         messages = [{"role":"user", "content": follow_message}]
                     )
                     success = True  # Follow updates are always successful
@@ -1413,7 +1413,7 @@ def fetch_and_queue_new_notifications(atproto_client):
         return 0
 
 
-def process_notifications(void_agent, atproto_client, testing_mode=False):
+def process_notifications(umbra_agent, atproto_client, testing_mode=False):
     """Fetch new notifications, queue them, and process the queue."""
     try:
         # Fetch and queue new notifications
@@ -1423,7 +1423,7 @@ def process_notifications(void_agent, atproto_client, testing_mode=False):
             logger.info(f"Found {new_count} new notifications to process")
 
         # Now process the entire queue (old + new notifications)
-        load_and_process_queued_notifications(void_agent, atproto_client, testing_mode)
+        load_and_process_queued_notifications(umbra_agent, atproto_client, testing_mode)
 
     except Exception as e:
         logger.error(f"Error processing notifications: {e}")
@@ -1455,9 +1455,9 @@ def send_synthesis_message(client: Letta, agent_id: str, atproto_client=None) ->
         synthesis_prompt = f"""Time for synthesis and reflection.
 
 You have access to temporal journal blocks for recording your thoughts and experiences:
-- void_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
-- void_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
-- void_year_{today.year}: This year's journal ({today.year})
+- umbra_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
+- umbra_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
+- umbra_year_{today.year}: This year's journal ({today.year})
 
 These journal blocks are attached temporarily for this synthesis session. Use them to:
 1. Record significant interactions and insights from recent experiences
@@ -1470,7 +1470,7 @@ The journal entries should be cumulative - add to existing content rather than r
 Consider both immediate experiences (daily) and longer-term patterns (monthly/yearly).
 
 After recording in your journals, synthesize your recent experiences into your core memory blocks
-(zeitgeist, void-persona, void-humans) as you normally would.
+(zeitgeist, umbra-persona, umbra-humans) as you normally would.
 
 Begin your synthesis and journaling now."""
         
@@ -1651,9 +1651,9 @@ def attach_temporal_blocks(client: Letta, agent_id: str) -> tuple:
         today = date.today()
         
         # Generate temporal block labels
-        day_label = f"void_day_{today.strftime('%Y_%m_%d')}"
-        month_label = f"void_month_{today.strftime('%Y_%m')}"
-        year_label = f"void_year_{today.year}"
+        day_label = f"umbra_day_{today.strftime('%Y_%m_%d')}"
+        month_label = f"umbra_month_{today.strftime('%Y_%m')}"
+        year_label = f"umbra_year_{today.year}"
         
         temporal_labels = [day_label, month_label, year_label]
         attached_labels = []
@@ -1743,9 +1743,9 @@ def detach_temporal_blocks(client: Letta, agent_id: str, labels_to_detach: list 
         if labels_to_detach is None:
             today = date.today()
             labels_to_detach = [
-                f"void_day_{today.strftime('%Y_%m_%d')}",
-                f"void_month_{today.strftime('%Y_%m')}",
-                f"void_year_{today.year}"
+                f"umbra_day_{today.strftime('%Y_%m_%d')}",
+                f"umbra_month_{today.strftime('%Y_%m')}",
+                f"umbra_year_{today.year}"
             ]
         
         # Get current blocks and build label to ID mapping
@@ -1777,11 +1777,11 @@ def detach_temporal_blocks(client: Letta, agent_id: str, labels_to_detach: list 
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Void Bot - Bluesky autonomous agent')
+    parser = argparse.ArgumentParser(description='Umbra Bot - Bluesky autonomous agent')
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file (default: config.yaml)')
     parser.add_argument('--test', action='store_true', help='Run in testing mode (no messages sent, queue files preserved)')
     parser.add_argument('--no-git', action='store_true', help='Skip git operations when exporting agent state')
-    parser.add_argument('--simple-logs', action='store_true', help='Use simplified log format (void - LEVEL - message)')
+    parser.add_argument('--simple-logs', action='store_true', help='Use simplified log format (umbra - LEVEL - message)')
     # --rich option removed as we now use simple text formatting
     parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
     parser.add_argument('--cleanup-interval', type=int, default=10, help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
@@ -1817,7 +1817,7 @@ def main():
     
     # Configure logging based on command line arguments
     if args.simple_logs:
-        log_format = "void - %(levelname)s - %(message)s"
+        log_format = "umbra - %(levelname)s - %(message)s"
     else:
         # Create custom formatter with symbols
         class SymbolFormatter(logging.Formatter):
@@ -1862,11 +1862,11 @@ def main():
         logging.root.addHandler(handler)
     
     global logger, prompt_logger, console
-    logger = logging.getLogger("void_bot")
+    logger = logging.getLogger("umbra_bot")
     logger.setLevel(logging.INFO)
     
     # Create a separate logger for prompts (set to WARNING to hide by default)
-    prompt_logger = logging.getLogger("void_bot.prompts")
+    prompt_logger = logging.getLogger("umbra_bot.prompts")
     if args.reasoning:
         prompt_logger.setLevel(logging.INFO)  # Show reasoning when --reasoning is used
     else:
@@ -1908,9 +1908,9 @@ def main():
     """Main bot loop that continuously monitors for notifications."""
     global start_time
     start_time = time.time()
-    logger.info("=== STARTING VOID BOT ===")
-    void_agent = initialize_void()
-    logger.info(f"Void agent initialized: {void_agent.id}")
+    logger.info("=== STARTING UMBRA BOT ===")
+    umbra_agent = initialize_umbra()
+    logger.info(f"Umbra agent initialized: {umbra_agent.id}")
     
     # Initialize notification database with config-based path
     logger.info("Initializing notification database...")
@@ -1932,14 +1932,14 @@ def main():
     logger.info("Configuring tools for Bluesky platform...")
     try:
         from tool_manager import ensure_platform_tools
-        ensure_platform_tools('bluesky', void_agent.id)
+        ensure_platform_tools('bluesky', umbra_agent.id)
     except Exception as e:
         logger.error(f"Failed to configure platform tools: {e}")
         logger.warning("Continuing with existing tool configuration")
     
     # Check if agent has required tools
-    if hasattr(void_agent, 'tools') and void_agent.tools:
-        tool_names = [tool.name for tool in void_agent.tools]
+    if hasattr(umbra_agent, 'tools') and umbra_agent.tools:
+        tool_names = [tool.name for tool in umbra_agent.tools]
         # Check for bluesky-related tools
         bluesky_tools = [name for name in tool_names if 'bluesky' in name.lower() or 'reply' in name.lower()]
         if not bluesky_tools:
@@ -1949,7 +1949,7 @@ def main():
 
     # Clean up all user blocks at startup
     logger.info("🧹 Cleaning up user blocks at startup...")
-    periodic_user_block_cleanup(CLIENT, void_agent.id)
+    periodic_user_block_cleanup(CLIENT, umbra_agent.id)
     
     # Initialize Bluesky client (needed for both notification processing and synthesis acks/posts)
     if not SYNTHESIS_ONLY:
@@ -1980,7 +1980,7 @@ def main():
             try:
                 # Send synthesis message immediately on first run
                 logger.info("🧠 Sending synthesis message")
-                send_synthesis_message(CLIENT, void_agent.id, atproto_client)
+                send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
                 
                 # Wait for next interval
                 logger.info(f"Waiting {SYNTHESIS_INTERVAL} seconds until next synthesis...")
@@ -2012,7 +2012,7 @@ def main():
     while True:
         try:
             cycle_count += 1
-            process_notifications(void_agent, atproto_client, TESTING_MODE)
+            process_notifications(umbra_agent, atproto_client, TESTING_MODE)
             
             # Check if synthesis interval has passed
             if SYNTHESIS_INTERVAL > 0:
@@ -2020,13 +2020,13 @@ def main():
                 global last_synthesis_time
                 if current_time - last_synthesis_time >= SYNTHESIS_INTERVAL:
                     logger.info(f"⏰ {SYNTHESIS_INTERVAL/60:.1f} minutes have passed, triggering synthesis")
-                    send_synthesis_message(CLIENT, void_agent.id, atproto_client)
+                    send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
                     last_synthesis_time = current_time
             
             # Run periodic cleanup every N cycles
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:
                 logger.debug(f"Running periodic user block cleanup (cycle {cycle_count})")
-                periodic_user_block_cleanup(CLIENT, void_agent.id)
+                periodic_user_block_cleanup(CLIENT, umbra_agent.id)
                 
                 # Also check database health when doing cleanup
                 if NOTIFICATION_DB:

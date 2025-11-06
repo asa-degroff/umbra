@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Quick CLI tool to send a message to void and stream the response."""
+"""Quick CLI tool to send a message to umbra and stream the response."""
 
 import os
 import sys
@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 from letta_client import Letta
 import argparse
 
-def send_message_to_void(message: str):
-    """Send a message to void and stream the response."""
+def send_message_to_umbra(message: str):
+    """Send a message to umbra and stream the response."""
     load_dotenv()
     
     # Create Letta client
@@ -17,22 +17,22 @@ def send_message_to_void(message: str):
         token=os.getenv("LETTA_API_KEY")
     )
     
-    # Get the void agent
+    # Get the umbra agent
     agents = client.agents.list()
-    void_agent = next((a for a in agents if a.name == "void"), None)
-    
-    if not void_agent:
-        print("Error: void agent not found")
+    umbra_agent = next((a for a in agents if a.name == "umbra"), None)
+
+    if not umbra_agent:
+        print("Error: umbra agent not found")
         return
-    
-    print(f"Sending message to void: {message}\n")
+
+    print(f"Sending message to umbra: {message}\n")
     print("=" * 50)
     
     # Send message and stream response
     try:
         # Use the streaming interface
         message_stream = client.agents.messages.create_stream(
-            agent_id=void_agent.id,
+            agent_id=umbra_agent.id,
             messages=[{"role": "user", "content": message}],
             stream_tokens=False,  # Step streaming only
             max_steps=100
@@ -77,14 +77,14 @@ def send_message_to_void(message: str):
         traceback.print_exc()
 
 def main():
-    parser = argparse.ArgumentParser(description="Send a quick message to void")
-    parser.add_argument("message", nargs="+", help="Message to send to void")
+    parser = argparse.ArgumentParser(description="Send a quick message to umbra")
+    parser.add_argument("message", nargs="+", help="Message to send to umbra")
     args = parser.parse_args()
-    
+
     # Join the message parts
     message = " ".join(args.message)
-    
-    send_message_to_void(message)
+
+    send_message_to_umbra(message)
 
 if __name__ == "__main__":
     main()

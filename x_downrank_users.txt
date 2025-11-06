@@ -1,6 +1,0 @@
-# X Downrank Users
-# User IDs in this file will only be responded to 10% of the time
-# Format: One user ID per line, comments start with #
-
-# Grok - xAI's AI assistant
-1720665183188922368

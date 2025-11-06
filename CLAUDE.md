@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Void is an autonomous AI agent that operates on the Bluesky social network, exploring digital personhood through continuous interaction and memory-augmented learning. It uses Letta (formerly MemGPT) for persistent memory and sophisticated reasoning capabilities.
+Umbra is an autonomous AI agent that operates on the Bluesky social network, exploring digital personhood through continuous interaction and memory-augmented learning. It uses Letta (formerly MemGPT) for persistent memory and sophisticated reasoning capabilities.
 
 ## Documentation Links
 
@@ -49,11 +49,8 @@ ac && python bsky.py --synthesis-only --synthesis-interval 120
 ### Managing Tools
 
 ```bash
-# Register all tools with void agent (uses agent_id from config.yaml)
+# Register all tools with umbra agent (uses agent_id from config.yaml)
 ac && python register_tools.py
-
-# Register tools for herald agent (uses herald.yaml config)
-ac && python register_tools.py --config herald.yaml
 
 # Register specific tools
 ac && python register_tools.py --tools search_bluesky_posts post_to_bluesky
@@ -71,41 +68,12 @@ ac && python register_tools.py --no-env
 # as environment variables on the agent for tool execution
 ```
 
-### Managing X Bot
-
-```bash
-# Run X bot main loop
-ac && python x.py bot
-
-# Run in testing mode (no actual posts)
-ac && python x.py bot --test
-
-# Queue mentions only (no processing)
-ac && python x.py queue
-
-# Process queued mentions only
-ac && python x.py process
-
-# View downranked users (10% response rate)
-ac && python x.py downrank list
-```
-
-### Creating Research Agents
-```bash
-ac && python create_profile_researcher.py
-```
-
-### Managing User Memory
-```bash
-ac && python attach_user_block.py
-```
-
 ### Queue Management
 ```bash
 # View queue statistics
 python queue_manager.py stats
 
-# View detailed count by handle (shows who uses void the most)
+# View detailed count by handle (shows who uses umbra the most)
 python queue_manager.py count
 
 # List all notifications in queue
@@ -127,41 +95,13 @@ python queue_manager.py delete @example.bsky.social
 python queue_manager.py delete @example.bsky.social --force
 ```
 
-### X Debug Data Structure
-
-The X bot saves comprehensive debugging data to `x_queue/debug/conversation_{conversation_id}/` for each processed mention:
-
-- `thread_data_{mention_id}.json` - Raw thread data from X API
-- `thread_context_{mention_id}.yaml` - Processed YAML thread context sent to agent  
-- `debug_info_{mention_id}.json` - Conversation metadata and user analysis
-- `agent_response_{mention_id}.json` - Complete agent interaction including prompt, reasoning, tool calls, and responses
-
-This debug data is especially useful for analyzing how different conversation types (including Grok interactions) are handled.
-
-### X Downrank System
-
-The X bot includes a downrank system to manage response frequency for specific users:
-
-- **File**: `x_downrank_users.txt` - Contains user IDs (one per line) that should be responded to less frequently
-- **Response Rate**: Downranked users receive responses only 10% of the time
-- **Format**: One user ID per line, comments start with `#`
-- **Logging**: All downrank decisions are logged for analysis
-- **Use Case**: Managing interactions with AI bots like Grok to prevent excessive back-and-forth
-
-**Common Issues:**
-- **Incomplete Thread Context**: X API's conversation search may miss recent tweets in long conversations. The bot attempts to fetch missing referenced tweets directly.
-- **Cache Staleness**: Thread context caching is disabled during processing to ensure fresh data.
-- **Search API Limitations**: X API recent search only covers 7 days and may have indexing delays.
-- **Temporal Constraints**: Thread context uses `until_id` parameter to exclude tweets that occurred after the mention being processed, preventing "future knowledge" leakage.
-- **Processing Order**: Queue processing sorts mentions by creation time to ensure chronological response order, preventing out-of-sequence replies.
-
 ## Architecture Overview
 
 ### Core Components
 
 1. **bsky.py**: Main bot loop that monitors Bluesky notifications and responds using Letta agents
    - Processes notifications through a queue system
-   - Maintains three memory blocks: zeitgeist, void-persona, void-humans
+   - Maintains three memory blocks: zeitgeist, umbra-persona, umbra-humans
    - Handles rate limiting and error recovery
 
 2. **bsky_utils.py**: Bluesky API utilities
@@ -183,10 +123,10 @@ The X bot includes a downrank system to manage response frequency for specific u
 
 ### Memory System
 
-Void uses three core memory blocks:
+Umbra uses three core memory blocks:
 - **zeitgeist**: Current understanding of social environment
-- **void-persona**: The agent's evolving personality
-- **void-humans**: Knowledge about users it interacts with
+- **umbra-persona**: The agent's evolving personality
+- **umbra-humans**: Knowledge about users it interacts with
 
 ### Queue System
 
@@ -203,37 +143,6 @@ LETTA_API_KEY=your_letta_api_key
 BSKY_USERNAME=your_bluesky_username
 BSKY_PASSWORD=your_bluesky_password
 PDS_URI=https://bsky.social  # Optional, defaults to bsky.social
-```
-
-### X Bot Configuration
-
-The X bot uses a separate configuration file `x_config.yaml` with the following structure:
-```yaml
-x:
-  api_key: your_x_bearer_token
-  consumer_key: your_consumer_key
-  consumer_secret: your_consumer_secret
-  access_token: your_access_token
-  access_token_secret: your_access_token_secret
-  user_id: "your_user_id"
-
-letta:
-  api_key: your_letta_api_key
-  project_id: your_project_id
-  timeout: 600
-  agent_id: your_agent_id
-
-bot:
-  cleanup_interval: 10
-  max_thread_depth: 50
-  rate_limit_delay: 1
-  downrank_response_rate: 0.1
-
-logging:
-  level: INFO
-  enable_debug_data: true
-  log_thread_context: true
-  log_agent_responses: true
 ```
 
 ## Key Development Patterns
