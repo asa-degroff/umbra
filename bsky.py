@@ -1207,19 +1207,20 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
 
                 # Handle file based on processing result
                 if success:
+                    # Mark as processed to avoid reprocessing (do this even in testing mode)
+                    if NOTIFICATION_DB:
+                        NOTIFICATION_DB.mark_processed(notif_data['uri'], status='processed')
+                    else:
+                        processed_uris = load_processed_notifications()
+                        processed_uris.add(notif_data['uri'])
+                        save_processed_notifications(processed_uris)
+
+                    # Delete file in normal mode, keep in testing mode
                     if testing_mode:
                         logger.info(f"TESTING MODE: Keeping queue file: {filepath.name}")
                     else:
                         filepath.unlink()
                         logger.info(f"Successfully processed and removed: {filepath.name}")
-                        
-                        # Mark as processed to avoid reprocessing
-                        if NOTIFICATION_DB:
-                            NOTIFICATION_DB.mark_processed(notif_data['uri'], status='processed')
-                        else:
-                            processed_uris = load_processed_notifications()
-                            processed_uris.add(notif_data['uri'])
-                            save_processed_notifications(processed_uris)
                     
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name

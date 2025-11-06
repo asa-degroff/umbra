@@ -10,12 +10,9 @@ import argparse
 def send_message_to_umbra(message: str):
     """Send a message to umbra and stream the response."""
     load_dotenv()
-    
-    # Create Letta client
-    client = Letta(
-        base_url=os.getenv("LETTA_BASE_URL", "http://localhost:8283"),
-        token=os.getenv("LETTA_API_KEY")
-    )
+
+    # Create Letta client (for cloud, don't specify base_url)
+    client = Letta(token=os.getenv("LETTA_API_KEY"))
     
     # Get the umbra agent
     agents = client.agents.list()
