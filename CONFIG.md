@@ -55,10 +55,10 @@ bot:
   max_notification_pages: 20             # Max pages to fetch per cycle
   
   agent:
-    name: "void"                         # Agent name
-    model: "openai/gpt-4o-mini"          # LLM model to use
+    name: "umbra"                         # Agent name
+    model: "anthropic/claude-haiku-4-5-20251001"          # LLM model to use
     embedding: "openai/text-embedding-3-small"  # Embedding model
-    description: "A social media agent trapped in the void."
+    description: "A social media agent dwelling in the umbra."
     max_steps: 100                       # Max steps per agent interaction
     
     # Memory blocks configuration
