@@ -5,6 +5,7 @@ old.py
 session_*.txt
 __pycache__/
 queue/
+agents/
 agent_archive/
 x_cache/
 x_queue/
