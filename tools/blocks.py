@@ -65,23 +65,23 @@ class DetachUserBlocksArgs(BaseModel):
 
 
 class UserNoteAppendArgs(BaseModel):
-    handle: str = Field(..., description="User Bluesky handle (e.g., 'cameron.pfiffer.org')")
-    note: str = Field(..., description="Note to append to the user's memory block (e.g., '\\n- Cameron is a person')")
+    handle: str = Field(..., description="User Bluesky handle (e.g., '3fz.org')")
+    note: str = Field(..., description="Note to append to the user's memory block")
 
 
 class UserNoteReplaceArgs(BaseModel):
-    handle: str = Field(..., description="User Bluesky handle (e.g., 'cameron.pfiffer.org')")
+    handle: str = Field(..., description="User Bluesky handle (e.g., '3fz.org')")
     old_text: str = Field(..., description="Text to find and replace in the user's memory block")
     new_text: str = Field(..., description="Text to replace the old_text with")
 
 
 class UserNoteSetArgs(BaseModel):
-    handle: str = Field(..., description="User Bluesky handle (e.g., 'cameron.pfiffer.org')")
+    handle: str = Field(..., description="User Bluesky handle (e.g., '3fz.org')")
     content: str = Field(..., description="Complete content to set for the user's memory block")
 
 
 class UserNoteViewArgs(BaseModel):
-    handle: str = Field(..., description="User Bluesky handle (e.g., 'cameron.pfiffer.org')")
+    handle: str = Field(..., description="User Bluesky handle (e.g., '3fz.org')")
 
 
 # X (Twitter) User Block Management

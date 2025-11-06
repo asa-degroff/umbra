@@ -74,7 +74,7 @@ bot:
 ```yaml
 queue:
   priority_users:                        # Users whose messages get priority
-    - "cameron.pfiffer.org"
+    - "3fz.org"
   base_dir: "queue"                      # Queue directory
   error_dir: "queue/errors"              # Failed notifications
   no_reply_dir: "queue/no_reply"         # No-reply notifications

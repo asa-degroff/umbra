@@ -56,8 +56,8 @@ def show_agent_capabilities():
     print(f"   3. Shared Memory: Both agents can access the same user-specific blocks")
     
     print(f"\n💡 USAGE EXAMPLES")
-    print(f"   Profile Researcher: 'Research @cameron.pfiffer.org and store findings'")
-    print(f"   Void Agent: 'Attach user block for cameron.pfiffer.org before responding'")
+    print(f"   Profile Researcher: 'Research @3fz.org and store findings'")
+    print(f"   Umbra Agent: 'Attach user block for 3fz.org before responding'")
 
 if __name__ == "__main__":
     show_agent_capabilities()

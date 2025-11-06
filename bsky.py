@@ -1056,8 +1056,8 @@ def save_notification_to_queue(notification, is_priority=None):
                 author_handle = notification.get('author', {}).get('handle', '')
             else:
                 author_handle = getattr(notification.author, 'handle', '') if hasattr(notification, 'author') else ''
-            # Prioritize cameron.pfiffer.org responses
-            priority_prefix = "0_" if author_handle == "cameron.pfiffer.org" else "1_"
+            # Prioritize 3fz.org responses
+            priority_prefix = "0_" if author_handle == "3fz.org" else "1_"
 
         # Create filename with priority, timestamp and hash
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1378,9 +1378,9 @@ def fetch_and_queue_new_notifications(atproto_client):
                 # Check if it's a priority notification
                 is_priority = False
                 
-                # Priority for cameron.pfiffer.org notifications
+                # Priority for 3fz.org notifications
                 author_handle = notif_dict.get('author', {}).get('handle', '')
-                if author_handle == "cameron.pfiffer.org":
+                if author_handle == "3fz.org":
                     is_priority = True
                 
                 # Also check for priority keywords in mentions

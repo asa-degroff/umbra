@@ -229,7 +229,7 @@ def get_queue_config() -> Dict[str, Any]:
 
     return {
         'bot_name': bot_name,
-        'priority_users': config.get('queue.priority_users', ['cameron.pfiffer.org']),
+        'priority_users': config.get('queue.priority_users', ['3fz.org']),
         'base_dir': base_dir,
         'error_dir': f'{base_dir}/errors',
         'no_reply_dir': f'{base_dir}/no_reply',

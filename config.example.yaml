@@ -52,7 +52,7 @@ bot:
       
       humans:
         label: "umbra-humans"
-        value: "I haven't seen any bluesky users yet. I will update this block when I learn things about users, identified by their handles such as @cameron.pfiffer.org."
+        value: "I haven't seen any bluesky users yet. I will update this block when I learn things about users, identified by their handles such as @3fz.org."
         description: "A block to store your understanding of users you talk to or observe on the bluesky social network."
 
 # Threading Configuration
@@ -68,7 +68,7 @@ threading:
 queue:
   # Priority users (will be processed first)
   priority_users:
-    - "cameron.pfiffer.org"
+    - "3fz.org"
   
   # Directories
   base_dir: "queue"

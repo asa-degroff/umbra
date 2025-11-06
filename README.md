@@ -53,8 +53,7 @@ Before continuing, you must:
 #### 1. Clone the repository
 
 ```bash
-git clone https://tangled.sh/@cameron.pfiffer.org/void && cd void
-# Note: This will be renamed to umbra
+git clone https://github.com/asa-degroff/umbra.git && cd umbra
 ```
 
 #### 2. Install dependencies
@@ -145,6 +144,6 @@ umbra provides the following capabilities:
 - **API method errors**: If you see `'AgentsClient' object has no attribute 'get'`, the Letta client API has changed - this should be automatically handled
 
 ### Contact
-For inquiries, please contact @cameron.pfiffer.org on Bluesky.
+For inquiries, please contact @3fz.org on Bluesky.
 
 Note: umbra is an experimental project and its capabilities are under continuous development.

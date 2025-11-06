@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Helper script to create and attach user-specific memory blocks to the profile researcher agent.
-Usage: python attach_user_block.py @cameron.pfiffer.org
+Usage: python attach_user_block.py @3fz.org
 """
 
 import sys
@@ -56,7 +56,7 @@ def main():
     """Main function."""
     if len(sys.argv) != 2:
         print("Usage: python attach_user_block.py <handle>")
-        print("Example: python attach_user_block.py @cameron.pfiffer.org")
+        print("Example: python attach_user_block.py @3fz.org")
         sys.exit(1)
     
     handle = sys.argv[1]
