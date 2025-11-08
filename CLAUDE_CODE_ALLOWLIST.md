@@ -169,10 +169,15 @@ Requests uploaded to R2 follow this JSON format:
   "task_type": "website",
   "task_description": "Build, modify, or update website code",
   "timestamp": "2025-01-15T10:30:00Z",
-  "max_wait_seconds": 120,
+  "max_wait_seconds": 300,
   "submitted_by": "umbra"
 }
 ```
+
+**Timeout Settings:**
+- **Default**: 300 seconds (5 minutes)
+- **Minimum**: 10 seconds
+- **Maximum**: 1800 seconds (30 minutes)
 
 ## Response Structure
 

@@ -22,8 +22,8 @@ class AskClaudeCodeArgs(BaseModel):
         description=f"Type of task to perform. Must be one of: {', '.join(APPROVED_TASK_TYPES.keys())}"
     )
     max_wait_seconds: Optional[int] = Field(
-        default=120,
-        description="Maximum seconds to wait for response (default: 120)"
+        default=300,
+        description="Maximum seconds to wait for response (default: 300, max: 1800)"
     )
 
     @validator('task_type')
@@ -36,15 +36,15 @@ class AskClaudeCodeArgs(BaseModel):
 
     @validator('max_wait_seconds')
     def validate_wait_time(cls, v):
-        if v < 10 or v > 600:
-            raise ValueError("max_wait_seconds must be between 10 and 600")
+        if v < 10 or v > 1800:
+            raise ValueError("max_wait_seconds must be between 10 and 1800")
         return v
 
 
 def ask_claude_code(
     prompt: str,
     task_type: str,
-    max_wait_seconds: int = 120
+    max_wait_seconds: int = 300
 ) -> str:
     """
     Send a coding task to a local Claude Code instance and receive the response.
@@ -68,7 +68,7 @@ def ask_claude_code(
     Args:
         prompt: Detailed description of the coding task to perform
         task_type: Category of task (must be from approved list above)
-        max_wait_seconds: Maximum time to wait for response (10-600 seconds)
+        max_wait_seconds: Maximum time to wait for response (10-1800 seconds, default: 300)
 
     Returns:
         Response from Claude Code with task completion details
@@ -81,7 +81,7 @@ def ask_claude_code(
         ask_claude_code(
             prompt="Create a simple HTML landing page for umbra with dark theme",
             task_type="website",
-            max_wait_seconds=180
+            max_wait_seconds=300
         )
     """
     import os
