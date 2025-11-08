@@ -47,6 +47,37 @@ bluesky:
   pds_uri: "https://bsky.social"         # Optional: PDS URI (defaults to bsky.social)
 ```
 
+### Cloudflare R2 Configuration (Claude Code Integration)
+```yaml
+cloudflare_r2:
+  account_id: "your-r2-account-id"       # Required: Cloudflare R2 account ID
+  access_key_id: "your-r2-access-key"    # Required: R2 API access key ID
+  secret_access_key: "your-r2-secret"    # Required: R2 API secret access key
+  bucket_name: "umbra-claude-code"       # Required: R2 bucket name
+```
+
+**Setup Instructions**:
+1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Navigate to R2 Object Storage
+3. Create a new bucket named `umbra-claude-code` (or your preferred name)
+4. Create two folders in the bucket: `claude-code-requests/` and `claude-code-responses/`
+5. Go to "Manage R2 API Tokens" and create a new API token with:
+   - Permissions: Read & Write
+   - Bucket: Select your bucket or all buckets
+6. Save the Access Key ID and Secret Access Key
+7. Find your Account ID in the R2 overview page
+
+### Claude Code Configuration
+```yaml
+claude_code:
+  workspace_dir: "~/umbra-projects"      # Directory for Claude Code executions
+  approved_tasks:                        # Allowlist of task types
+    - "website"
+    - "code"
+    - "documentation"
+    - "analysis"
+```
+
 ### Bot Behavior
 ```yaml
 bot:
@@ -103,10 +134,22 @@ logging:
 
 The configuration system still supports environment variables as a fallback:
 
+**Letta Configuration:**
 - `LETTA_API_KEY` - Letta API key
-- `BSKY_USERNAME` - Bluesky username  
+
+**Bluesky Configuration:**
+- `BSKY_USERNAME` - Bluesky username
 - `BSKY_PASSWORD` - Bluesky password
 - `PDS_URI` - Bluesky PDS URI
+
+**Cloudflare R2 Configuration (Claude Code):**
+- `R2_ACCOUNT_ID` - Cloudflare R2 account ID
+- `R2_ACCESS_KEY_ID` - R2 API access key ID
+- `R2_SECRET_ACCESS_KEY` - R2 API secret access key
+- `R2_BUCKET_NAME` - R2 bucket name (defaults to "umbra-claude-code")
+
+**Claude Code Configuration:**
+- `CLAUDE_CODE_WORKSPACE` - Workspace directory (defaults to "~/umbra-projects")
 
 If both config file and environment variables are present, environment variables take precedence.
 

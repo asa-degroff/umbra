@@ -13,3 +13,9 @@ x_queue/
 !x_queue/last_seen_id.json
 !x_queue/processed_mentions.json
 herald.yaml
+
+# Claude Code integration
+umbra-projects/
+claude_code_workspace/
+*.log
+claude_code_poller.log

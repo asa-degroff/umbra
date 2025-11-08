@@ -7,7 +7,7 @@ from typing import List
 from letta_client import Letta
 from rich.console import Console
 from rich.table import Table
-from config_loader import get_letta_config, get_bluesky_config, get_config
+from config_loader import get_letta_config, get_bluesky_config, get_r2_config, get_config
 
 # Import standalone functions and their schemas
 from tools.search import search_bluesky_posts, SearchArgs
@@ -20,6 +20,7 @@ from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
 from tools.ack import annotate_ack, AnnotateAckArgs
 from tools.webpage import fetch_webpage, WebpageArgs
 from tools.flag_memory_deletion import flag_archival_memory_for_deletion, FlagArchivalMemoryForDeletionArgs
+from tools.claude_code import ask_claude_code, AskClaudeCodeArgs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -91,6 +92,12 @@ TOOL_CONFIGS = [
         "description": "Flag an archival memory for deletion based on its exact text content",
         "tags": ["memory", "archival", "delete", "cleanup"]
     },
+    {
+        "func": ask_claude_code,
+        "args_schema": AskClaudeCodeArgs,
+        "description": "Send coding tasks to local Claude Code instance (website building, code writing, documentation, analysis)",
+        "tags": ["claude-code", "development", "website", "code", "local"]
+    },
 ]
 
 
@@ -131,16 +138,37 @@ def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool 
         if set_env:
             try:
                 bsky_config = get_bluesky_config()
+                r2_config = get_r2_config()
+
                 env_vars = {
                     'BSKY_USERNAME': bsky_config['username'],
                     'BSKY_PASSWORD': bsky_config['password'],
                     'PDS_URI': bsky_config['pds_uri']
                 }
 
+                # Add R2 credentials if configured
+                if r2_config['account_id'] and r2_config['access_key_id'] and r2_config['secret_access_key']:
+                    env_vars.update({
+                        'R2_ACCOUNT_ID': r2_config['account_id'],
+                        'R2_ACCESS_KEY_ID': r2_config['access_key_id'],
+                        'R2_SECRET_ACCESS_KEY': r2_config['secret_access_key'],
+                        'R2_BUCKET_NAME': r2_config['bucket_name']
+                    })
+
                 console.print(f"\n[bold cyan]Setting tool execution environment variables:[/bold cyan]")
                 console.print(f"  BSKY_USERNAME: {env_vars['BSKY_USERNAME']}")
                 console.print(f"  PDS_URI: {env_vars['PDS_URI']}")
-                console.print(f"  BSKY_PASSWORD: {'*' * len(env_vars['BSKY_PASSWORD'])}\n")
+                console.print(f"  BSKY_PASSWORD: {'*' * len(env_vars['BSKY_PASSWORD'])}")
+
+                if 'R2_ACCOUNT_ID' in env_vars:
+                    console.print(f"  R2_ACCOUNT_ID: {env_vars['R2_ACCOUNT_ID']}")
+                    console.print(f"  R2_ACCESS_KEY_ID: {env_vars['R2_ACCESS_KEY_ID'][:8]}...")
+                    console.print(f"  R2_SECRET_ACCESS_KEY: {'*' * 20}")
+                    console.print(f"  R2_BUCKET_NAME: {env_vars['R2_BUCKET_NAME']}")
+                else:
+                    console.print(f"  [dim]R2 credentials not configured (Claude Code tool will not work)[/dim]")
+
+                console.print()
 
                 # Modify agent with environment variables
                 client.agents.modify(

@@ -95,6 +95,102 @@ python queue_manager.py delete @example.bsky.social
 python queue_manager.py delete @example.bsky.social --force
 ```
 
+### Claude Code Integration
+
+The Claude Code tool allows umbra to delegate coding tasks to a local Claude Code instance running on the administrator's machine. This enables umbra to build websites, write code, create documentation, and perform analysis.
+
+#### Setup
+
+1. **Configure Cloudflare R2** (see CONFIG.md for detailed setup):
+   - Create an R2 bucket (e.g., `umbra-claude-code`)
+   - Create two folders: `claude-code-requests/` and `claude-code-responses/`
+   - Generate R2 API credentials
+   - Add credentials to `config.yaml`
+
+2. **Create Workspace Directory**:
+   ```bash
+   mkdir -p ~/umbra-projects
+   ```
+
+3. **Test R2 Connection**:
+   ```bash
+   ac && python test_claude_code_tool.py
+   ```
+
+4. **Start the Poller** (in a separate terminal or as a background service):
+   ```bash
+   # Run in foreground
+   ac && python claude_code_poller.py
+
+   # Or run in background with logging
+   ac && python claude_code_poller.py > claude_code_poller.log 2>&1 &
+
+   # Or use systemd/supervisor for production
+   ```
+
+5. **Register the Tool**:
+   ```bash
+   ac && python register_tools.py
+   # This will automatically set R2 environment variables on the agent
+   ```
+
+#### Usage
+
+Once configured, umbra can use the `ask_claude_code` tool with these approved task types:
+
+- **website**: Build, modify, or update website code
+- **code**: Write, refactor, or debug code
+- **documentation**: Create or update documentation
+- **analysis**: Analyze code, data, or text files
+
+Example prompts umbra might use:
+```
+ask_claude_code(
+    prompt="Create a dark-themed landing page for umbra with an About section",
+    task_type="website",
+    max_wait_seconds=180
+)
+```
+
+#### Security
+
+The integration uses an allowlist-based security model:
+- Only approved task types are executed
+- All executions run in a restricted workspace directory (`~/umbra-projects/`)
+- Requests expire after 10 minutes
+- All activity is logged
+- See `CLAUDE_CODE_ALLOWLIST.md` for detailed security documentation
+
+#### Monitoring
+
+Check poller logs to monitor Claude Code execution:
+```bash
+# View live logs if running in background
+tail -f claude_code_poller.log
+
+# View R2 bucket contents
+# Use Cloudflare dashboard or AWS CLI with R2 endpoint
+```
+
+#### Troubleshooting
+
+**Poller not processing requests:**
+- Ensure poller is running: `ps aux | grep claude_code_poller`
+- Check R2 credentials in config.yaml
+- Verify bucket name matches configuration
+- Check poller logs for errors
+
+**Tool returning timeout errors:**
+- Increase `max_wait_seconds` in tool call
+- Check if poller is running
+- Verify Claude Code CLI is installed: `which claude`
+- Check network connectivity to R2
+
+**Invalid task type errors:**
+- Ensure task_type is one of: website, code, documentation, analysis
+- Task types are case-sensitive (use lowercase)
+- See `CLAUDE_CODE_ALLOWLIST.md` for approved types
+
 ## Architecture Overview
 
 ### Core Components
@@ -120,6 +216,9 @@ python queue_manager.py delete @example.bsky.social --force
    - **post.py**: PostToBlueskyTool for creating posts with rich text
    - **feed.py**: GetBlueskyFeedTool for reading feeds
    - **blocks.py**: User block management tools (attach, detach, update)
+   - **claude_code.py**: Claude Code integration for delegating coding tasks to local instance
+
+5. **claude_code_poller.py**: Local daemon that polls R2 for coding requests from umbra and executes them via Claude Code CLI
 
 ### Memory System
 

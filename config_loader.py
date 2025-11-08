@@ -187,6 +187,24 @@ def get_bluesky_config() -> Dict[str, Any]:
         'pds_uri': config.get('bluesky.pds_uri', 'https://bsky.social'),
     }
 
+def get_r2_config() -> Dict[str, Any]:
+    """Get Cloudflare R2 configuration for Claude Code integration."""
+    config = get_config()
+    return {
+        'account_id': config.get('cloudflare_r2.account_id', os.getenv('R2_ACCOUNT_ID', '')),
+        'access_key_id': config.get('cloudflare_r2.access_key_id', os.getenv('R2_ACCESS_KEY_ID', '')),
+        'secret_access_key': config.get('cloudflare_r2.secret_access_key', os.getenv('R2_SECRET_ACCESS_KEY', '')),
+        'bucket_name': config.get('cloudflare_r2.bucket_name', os.getenv('R2_BUCKET_NAME', 'umbra-claude-code')),
+    }
+
+def get_claude_code_config() -> Dict[str, Any]:
+    """Get Claude Code configuration."""
+    config = get_config()
+    return {
+        'workspace_dir': config.get('claude_code.workspace_dir', os.getenv('CLAUDE_CODE_WORKSPACE', '~/umbra-projects')),
+        'approved_tasks': config.get('claude_code.approved_tasks', ['website', 'code', 'documentation', 'analysis']),
+    }
+
 def get_bot_config() -> Dict[str, Any]:
     """Get bot behavior configuration."""
     config = get_config()
