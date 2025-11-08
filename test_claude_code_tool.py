@@ -144,13 +144,23 @@ def test_file_operations(s3_client, bucket_name):
         return False
 
 
-def test_end_to_end(s3_client, bucket_name):
+def test_end_to_end(s3_client, bucket_name, skip_interactive=False):
     """Test end-to-end request/response flow."""
     console.print("\n[bold cyan]Test 3: End-to-End Request/Response Flow[/bold cyan]")
     console.print("  [dim]This test requires the poller (claude_code_poller.py) to be running[/dim]")
 
-    # Ask user if they want to proceed
-    response = console.input("\n  Run end-to-end test? [y/N]: ")
+    # Ask user if they want to proceed (skip if not interactive)
+    if skip_interactive:
+        console.print("  [yellow]Skipped (non-interactive mode)[/yellow]")
+        console.print("  To run end-to-end test: python test_claude_code_tool.py --interactive")
+        return True
+
+    try:
+        response = console.input("\n  Run end-to-end test? [y/N]: ")
+    except (EOFError, OSError):
+        console.print("  [yellow]Skipped (non-interactive environment)[/yellow]")
+        return True
+
     if response.lower() != 'y':
         console.print("  [yellow]Skipped[/yellow]")
         return True
@@ -244,6 +254,11 @@ def main():
         help='Path to config.yaml file',
         default='config.yaml'
     )
+    parser.add_argument(
+        '--interactive',
+        action='store_true',
+        help='Run interactive end-to-end test (requires poller running)'
+    )
 
     args = parser.parse_args()
 
@@ -271,7 +286,11 @@ def main():
         results['file_ops'] = test_file_operations(s3_client, r2_config['bucket_name'])
 
         # Test 3: End-to-end
-        results['end_to_end'] = test_end_to_end(s3_client, r2_config['bucket_name'])
+        results['end_to_end'] = test_end_to_end(
+            s3_client,
+            r2_config['bucket_name'],
+            skip_interactive=not args.interactive
+        )
 
     # Print summary
     console.print("\n" + "=" * 60)
