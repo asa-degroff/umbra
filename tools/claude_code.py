@@ -105,12 +105,9 @@ def ask_claude_code(
                 f"Invalid task_type '{task_type}'. Approved types: {', '.join(APPROVED_TASK_TYPES.keys())}"
             )
 
-        # Import required libraries (using standard library + requests)
-        import hashlib
-        import hmac
-        from urllib.parse import quote
-        from urllib.request import Request, urlopen
-        from urllib.error import HTTPError, URLError
+        # Import boto3 inside function for sandboxing
+        import boto3
+        from botocore.exceptions import ClientError
 
         # Get R2 credentials from environment
         r2_account_id = os.getenv("R2_ACCOUNT_ID")
@@ -124,51 +121,15 @@ def ask_claude_code(
                 "R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY"
             )
 
-        # Helper function for AWS Signature Version 4
-        def sign_request(method, url, headers, payload=''):
-            """Create AWS Signature Version 4 for R2 request."""
-            # Parse URL
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            host = parsed.netloc
-            path = parsed.path or '/'
-
-            # Create canonical request
-            canonical_headers = f'host:{host}\n'
-            signed_headers = 'host'
-            payload_hash = hashlib.sha256(payload.encode('utf-8')).hexdigest()
-            canonical_request = f'{method}\n{path}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}'
-
-            # Create string to sign
-            timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-            date_stamp = timestamp[:8]
-            credential_scope = f'{date_stamp}/auto/s3/aws4_request'
-            string_to_sign = f'AWS4-HMAC-SHA256\n{timestamp}\n{credential_scope}\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'
-
-            # Calculate signature
-            def get_signature_key(key, date, region, service):
-                k_date = hmac.new(f'AWS4{key}'.encode(), date.encode(), hashlib.sha256).digest()
-                k_region = hmac.new(k_date, region.encode(), hashlib.sha256).digest()
-                k_service = hmac.new(k_region, service.encode(), hashlib.sha256).digest()
-                k_signing = hmac.new(k_service, 'aws4_request'.encode(), hashlib.sha256).digest()
-                return k_signing
-
-            signing_key = get_signature_key(r2_secret_access_key, date_stamp, 'auto', 's3')
-            signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
-
-            # Create authorization header
-            authorization = (
-                f'AWS4-HMAC-SHA256 Credential={r2_access_key_id}/{credential_scope}, '
-                f'SignedHeaders={signed_headers}, Signature={signature}'
-            )
-
-            headers['Authorization'] = authorization
-            headers['x-amz-date'] = timestamp
-            headers['x-amz-content-sha256'] = payload_hash
-            return headers
-
-        # R2 endpoint
-        r2_endpoint = f"https://{r2_bucket_name}.{r2_account_id}.r2.cloudflarestorage.com"
+        # Create S3-compatible client for Cloudflare R2
+        r2_endpoint = f"https://{r2_account_id}.r2.cloudflarestorage.com"
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=r2_endpoint,
+            aws_access_key_id=r2_access_key_id,
+            aws_secret_access_key=r2_secret_access_key,
+            region_name='auto'  # R2 uses 'auto' for region
+        )
 
         # Generate unique request ID
         request_id = str(uuid.uuid4())
@@ -186,23 +147,23 @@ def ask_claude_code(
 
         # Upload request to R2
         request_key = f"claude-code-requests/{request_id}.json"
-        request_url = f"{r2_endpoint}/{request_key}"
-        request_body = json.dumps(request_data, indent=2)
 
         try:
-            headers = {'Content-Type': 'application/json'}
-            headers = sign_request('PUT', request_url, headers, request_body)
-
-            req = Request(request_url, data=request_body.encode('utf-8'), headers=headers, method='PUT')
-            with urlopen(req, timeout=30) as response:
-                if response.status not in [200, 201]:
-                    raise Exception(f"Failed to upload request: HTTP {response.status}")
-        except (HTTPError, URLError) as e:
+            s3_client.put_object(
+                Bucket=r2_bucket_name,
+                Key=request_key,
+                Body=json.dumps(request_data, indent=2),
+                ContentType='application/json',
+                Metadata={
+                    'task-type': task_type,
+                    'request-id': request_id
+                }
+            )
+        except ClientError as e:
             raise Exception(f"Failed to upload request to R2: {str(e)}")
 
         # Poll for response with exponential backoff
         response_key = f"claude-code-responses/{request_id}.json"
-        response_url = f"{r2_endpoint}/{response_key}"
         start_time = time.time()
         poll_interval = 2  # Start with 2 seconds
         max_poll_interval = 10  # Cap at 10 seconds
@@ -210,28 +171,16 @@ def ask_claude_code(
         while time.time() - start_time < max_wait_seconds:
             try:
                 # Check if response exists
-                headers = {}
-                headers = sign_request('GET', response_url, headers, '')
-
-                req = Request(response_url, headers=headers, method='GET')
-                with urlopen(req, timeout=30) as response:
-                    response_body = response.read().decode('utf-8')
-                    response_data = json.loads(response_body)
+                response_obj = s3_client.get_object(
+                    Bucket=r2_bucket_name,
+                    Key=response_key
+                )
+                response_data = json.loads(response_obj['Body'].read())
 
                 # Clean up request and response files
                 try:
-                    # Delete request file
-                    delete_url = f"{r2_endpoint}/{request_key}"
-                    del_headers = {}
-                    del_headers = sign_request('DELETE', delete_url, del_headers, '')
-                    del_req = Request(delete_url, headers=del_headers, method='DELETE')
-                    urlopen(del_req, timeout=30)
-
-                    # Delete response file
-                    del_headers2 = {}
-                    del_headers2 = sign_request('DELETE', response_url, del_headers2, '')
-                    del_req2 = Request(response_url, headers=del_headers2, method='DELETE')
-                    urlopen(del_req2, timeout=30)
+                    s3_client.delete_object(Bucket=r2_bucket_name, Key=request_key)
+                    s3_client.delete_object(Bucket=r2_bucket_name, Key=response_key)
                 except:
                     pass  # Ignore cleanup errors
 
@@ -256,8 +205,9 @@ def ask_claude_code(
                     f"Response:\n{claude_response}"
                 )
 
-            except HTTPError as e:
-                if e.code == 404:
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                if error_code in ['NoSuchKey', '404']:
                     # Response not ready yet, wait and retry
                     elapsed = time.time() - start_time
                     remaining = max_wait_seconds - elapsed
@@ -270,19 +220,12 @@ def ask_claude_code(
                     poll_interval = min(poll_interval * 1.5, max_poll_interval)
                     continue
                 else:
-                    # Other HTTP error
-                    raise Exception(f"Error checking for response: HTTP {e.code} - {str(e)}")
-            except URLError as e:
-                # Network error
-                raise Exception(f"Network error checking for response: {str(e)}")
+                    # Other S3 error
+                    raise Exception(f"Error checking for response: {str(e)}")
 
         # Timeout occurred - clean up request file
         try:
-            delete_url = f"{r2_endpoint}/{request_key}"
-            del_headers = {}
-            del_headers = sign_request('DELETE', delete_url, del_headers, '')
-            del_req = Request(delete_url, headers=del_headers, method='DELETE')
-            urlopen(del_req, timeout=30)
+            s3_client.delete_object(Bucket=r2_bucket_name, Key=request_key)
         except:
             pass
 
