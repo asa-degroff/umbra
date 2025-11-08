@@ -119,11 +119,17 @@ The Claude Code tool allows umbra to delegate coding tasks to a local Claude Cod
 
 4. **Start the Poller** (in a separate terminal or as a background service):
    ```bash
-   # Run in foreground
+   # Run in foreground (see Claude Code output in real-time)
+   ac && python claude_code_poller.py --verbose
+
+   # Or run without verbose mode (quieter)
    ac && python claude_code_poller.py
 
    # Or run in background with logging
    ac && python claude_code_poller.py > claude_code_poller.log 2>&1 &
+
+   # Or run in background with verbose logging
+   ac && python claude_code_poller.py --verbose > claude_code_poller.log 2>&1 &
 
    # Or use systemd/supervisor for production
    ```

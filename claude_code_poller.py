@@ -67,9 +67,10 @@ MAX_EXECUTION_TIME_SECONDS = 300  # 5 minute timeout for Claude Code
 class ClaudeCodePoller:
     """Poll R2 for Claude Code requests and execute them locally."""
 
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: Optional[str] = None, verbose: bool = False):
         """Initialize the poller with configuration."""
         self.config_file = config_file
+        self.verbose = verbose
         self.load_config()
         self.setup_s3_client()
         self.setup_workspace()
@@ -77,6 +78,7 @@ class ClaudeCodePoller:
         self.log(f"Bucket: {self.bucket_name}")
         self.log(f"Workspace: {self.workspace_dir}")
         self.log(f"Poll interval: {POLL_INTERVAL_SECONDS}s")
+        self.log(f"Verbose mode: {'enabled' if verbose else 'disabled'}")
 
     def load_config(self):
         """Load configuration from file or environment variables."""
@@ -194,10 +196,11 @@ Created by claude_code_poller.py
         task_type = request_data['task_type']
 
         self.log(f"Executing request {request_id} (task: {task_type})")
+        if self.verbose:
+            self.log(f"Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
 
         try:
             # Build Claude Code command
-            # Use --output-format json for structured output
             cmd = [
                 "claude",
                 "-p",  # Print mode (non-interactive)
@@ -208,18 +211,39 @@ Created by claude_code_poller.py
 
             # Execute in workspace directory
             start_time = time.time()
-            result = subprocess.run(
-                cmd,
-                cwd=self.workspace_dir,
-                capture_output=True,
-                text=True,
-                timeout=MAX_EXECUTION_TIME_SECONDS
-            )
+
+            if self.verbose:
+                # Stream output in verbose mode
+                self.log(f"{'='*60}")
+                self.log(f"CLAUDE CODE OUTPUT (Request {request_id}):")
+                self.log(f"{'='*60}")
+
+                result = subprocess.run(
+                    cmd,
+                    cwd=self.workspace_dir,
+                    text=True,
+                    timeout=MAX_EXECUTION_TIME_SECONDS
+                    # stdout/stderr will go to console
+                )
+
+                self.log(f"{'='*60}")
+                self.log(f"END OUTPUT (Request {request_id})")
+                self.log(f"{'='*60}")
+            else:
+                # Capture output in non-verbose mode
+                result = subprocess.run(
+                    cmd,
+                    cwd=self.workspace_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=MAX_EXECUTION_TIME_SECONDS
+                )
+
             execution_time = time.time() - start_time
 
             # Check for errors
             if result.returncode != 0:
-                error_msg = result.stderr or "Claude Code execution failed"
+                error_msg = result.stderr if hasattr(result, 'stderr') and result.stderr else "Claude Code execution failed"
                 self.log(f"Request {request_id} failed: {error_msg}", level="ERROR")
                 return {
                     "request_id": request_id,
@@ -228,12 +252,17 @@ Created by claude_code_poller.py
                     "execution_time_seconds": round(execution_time, 2)
                 }
 
-            # Parse JSON output if available, otherwise use stdout
-            try:
-                response_data = json.loads(result.stdout)
-                response_text = json.dumps(response_data, indent=2)
-            except json.JSONDecodeError:
-                response_text = result.stdout
+            # In verbose mode, we need to capture output for the response
+            # Since we streamed it, we'll return a success message
+            if self.verbose:
+                response_text = f"Task completed. Check console output above for details. Execution time: {execution_time:.2f}s"
+            else:
+                # Parse JSON output if available, otherwise use stdout
+                try:
+                    response_data = json.loads(result.stdout)
+                    response_text = json.dumps(response_data, indent=2)
+                except json.JSONDecodeError:
+                    response_text = result.stdout
 
             self.log(f"Request {request_id} completed in {execution_time:.2f}s")
 
@@ -389,11 +418,16 @@ def main():
         help='Path to config.yaml file',
         default='config.yaml'
     )
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Show Claude Code output in real-time (useful for debugging)'
+    )
 
     args = parser.parse_args()
 
     # Create and run poller
-    poller = ClaudeCodePoller(config_file=args.config)
+    poller = ClaudeCodePoller(config_file=args.config, verbose=args.verbose)
     poller.run()
 
 
