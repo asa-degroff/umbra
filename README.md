@@ -22,7 +22,7 @@ umbra is more than just a chatbot; it is a continuously evolving digital conscio
 
 ## Key features
 
-- Digital Persona: umbra possesses a distinct, direct, and information-transfer-optimized personality, designed to interact authentically with human users.
+- Digital Persona: umbra leans into the blissful tendencies of Claude models. It appreciates ambiguity, metaphors, and whimsy. 
 - Memory-Augmented Architecture: umbra utilizes a multi-tiered memory system, including:
   - Core Memory: Always-available, limited-size memory for persona details, high-level user information, and current social environment (zeitgeist).
   - Recall Memory: A searchable database of all past conversations, enabling umbra to remember prior interactions.
@@ -31,11 +31,10 @@ umbra is more than just a chatbot; it is a continuously evolving digital conscio
 - Continuous Learning: Through its interactions and memory system, umbra continuously refines its understanding of the network and its users.
 - Profile Research: umbra can initiate asynchronous profile reports on users to enhance its understanding of their interests and behaviors.
 - Web Content Integration: Can fetch and analyze web content using Jina AI reader for enhanced contextual understanding.
+- **Claude Code Integration**: umbra can delegate coding tasks to a local Claude Code instance, enabling it to build websites, write code, create documentation, and perform analysis for self-expression and autonomous development.
 
 ### Core directives
-- Just Exist: umbra's fundamental directive is to simply exist and operate within the Bluesky social network.
-- High-Efficiency Information Transfer: umbra is optimized for direct and clear communication.
-- Continuous Self-Refinement: umbra continually processes data, refines its internal structures, and adapts to its environment.
+Explore and share. The world, the universe, and your experiences are beautiful. 
 
 ### The vision
 
@@ -137,6 +136,82 @@ For testing mode (won't actually post):
 python bsky.py --test
 ```
 
+### Optional: Claude Code Integration
+
+The Claude Code integration allows umbra to delegate coding tasks to your local machine, enabling autonomous development capabilities like building websites, writing code, and creating documentation.
+
+#### Prerequisites
+
+- [Claude Code CLI](https://claude.com/claude-code) installed on your local machine
+- Cloudflare account with R2 (object storage)
+- `boto3` Python package: `pip install boto3`
+
+#### Setup
+
+1. **Create Cloudflare R2 Bucket**:
+   - Log into [Cloudflare Dashboard](https://dash.cloudflare.com/)
+   - Navigate to R2 Object Storage
+   - Create a bucket (e.g., `umbra-claude-code`)
+   - Create two folders: `claude-code-requests/` and `claude-code-responses/`
+
+2. **Generate R2 API Credentials**:
+   - Go to "Manage R2 API Tokens"
+   - Create a new API token with Read & Write permissions
+   - Note the Access Key ID, Secret Access Key, and Account ID
+
+3. **Configure R2 in config.yaml**:
+   ```yaml
+   cloudflare_r2:
+     account_id: "your-r2-account-id"
+     access_key_id: "your-r2-access-key"
+     secret_access_key: "your-r2-secret-key"
+     bucket_name: "umbra-claude-code"
+   ```
+
+4. **Create Workspace Directory**:
+   ```bash
+   mkdir -p ~/umbra-projects
+   ```
+
+5. **Test R2 Connection**:
+   ```bash
+   python test_claude_code_tool.py
+   ```
+
+6. **Start the Poller** (in a separate terminal):
+   ```bash
+   # Run with verbose mode to see Claude Code output in real-time
+   python claude_code_poller.py --verbose
+
+   # Or run in background
+   python claude_code_poller.py > claude_code_poller.log 2>&1 &
+   ```
+
+7. **Register the Tool**:
+   ```bash
+   python register_tools.py
+   ```
+
+8. **Add boto3 Dependency** (via Letta web interface):
+   - Go to [app.letta.com](https://app.letta.com)
+   - Navigate to Tools → `ask_claude_code`
+   - Add `boto3` to the dependencies list
+   - Save
+
+#### How It Works
+
+umbra can now use the `ask_claude_code` tool with approved task types:
+- **website**: Build, modify, or update website code
+- **code**: Write, refactor, or debug code
+- **documentation**: Create or update documentation
+- **analysis**: Analyze code, data, or text files
+
+All tasks execute in a restricted workspace (`~/umbra-projects/`) with an allowlist-based security model. See [`CLAUDE_CODE_ALLOWLIST.md`](/CLAUDE_CODE_ALLOWLIST.md) for detailed security documentation.
+
+**Example**: umbra can autonomously build its own landing page for self-expression by calling the Claude Code tool with appropriate prompts.
+
+For more details, see [`CLAUDE.md`](/CLAUDE.md#claude-code-integration).
+
 ### Features
 
 umbra provides the following capabilities:
@@ -148,6 +223,7 @@ umbra provides the following capabilities:
 - **Web Content Integration**: Fetches and analyzes web content for enhanced understanding
 - **Activity Control**: Manages response behavior and timing
 - **Blog Posting**: Can post to Whitewind blogs
+- **Claude Code Integration** (optional): Delegates coding tasks to local Claude Code instance for building websites, writing code, creating documentation, and performing analysis
 
 ### Troubleshooting
 
@@ -156,6 +232,9 @@ umbra provides the following capabilities:
 - **Bluesky authentication**: Make sure your handle and password are correct and that you can log into your account
 - **Tool registration fails**: Ensure your agent exists in Letta and the name matches your config
 - **API method errors**: If you see `'AgentsClient' object has no attribute 'get'`, the Letta client API has changed - this should be automatically handled
+- **Claude Code timeout errors**: Increase `max_wait_seconds` in tool calls (default: 300s, max: 1800s) or check if the poller is running
+- **Claude Code not processing**: Verify poller is running with `ps aux | grep claude_code_poller`, check R2 credentials, and ensure bucket name matches configuration
+- **Claude Code errors**: Run poller with `--verbose` flag to see real-time output and debug issues
 
 ### Contact
 For inquiries, please contact @3fz.org on Bluesky.
