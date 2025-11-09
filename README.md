@@ -1,3 +1,17 @@
+## Credits
+umbra is a fork of [void](https://tangled.org/@cameron.pfiffer.org/void) by Cameron Pfiffer. 
+
+## Differences from void
+
+Main changes include:
+- X (twitter) functionality removed
+- name references changed from void to umbra
+- administrator references changed from Cameron to myself
+- void's agent file removed
+- personality changes
+- added an ask_claude_code tool for autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance on my local machine
+- added tests for coding tools
+
 ## umbra
 
 umbra is an open-source project exploring digital personhood. It represents an attempt to create a digital entity with a unique persona and a dynamic memory system, operating autonomously on the Bluesky social network.
