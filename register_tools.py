@@ -13,6 +13,7 @@ from config_loader import get_letta_config, get_bluesky_config, get_r2_config, g
 from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
+from tools.like import like_bluesky_post, LikeBlueskyPostArgs
 from tools.halt import halt_activity, HaltArgs
 from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
@@ -46,6 +47,12 @@ TOOL_CONFIGS = [
         "args_schema": FeedArgs,
         "description": "Retrieve a Bluesky feed (home timeline or custom feed)",
         "tags": ["bluesky", "feed", "timeline"]
+    },
+    {
+        "func": like_bluesky_post,
+        "args_schema": LikeBlueskyPostArgs,
+        "description": "Like a post on Bluesky using its AT Protocol URI and CID",
+        "tags": ["bluesky", "social", "like"]
     },
     # Note: User block management tools (attach_user_blocks, detach_user_blocks, user_note_*)
     # are available on the server but not exposed to the agent to prevent the agent from

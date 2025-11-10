@@ -221,6 +221,7 @@ tail -f claude_code_poller.log
    - **search.py**: SearchBlueskyTool for searching posts
    - **post.py**: PostToBlueskyTool for creating posts with rich text
    - **feed.py**: GetBlueskyFeedTool for reading feeds
+   - **like.py**: LikeBlueskyTool for liking posts
    - **blocks.py**: User block management tools (attach, detach, update)
    - **claude_code.py**: Claude Code integration for delegating coding tasks to local instance
 
