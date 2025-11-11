@@ -11,6 +11,8 @@ Main changes include:
 - personality changes
 - added an ask_claude_code tool for autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance on my local machine
 - added tests for coding tools
+- added a like_bluesky_post tool for liking posts
+- notifications include URI and CID metadata for the like tool
 
 ## umbra
 
