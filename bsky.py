@@ -301,10 +301,20 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
             thread_context = f"Error processing thread context: {str(yaml_error)}"
 
         # Create a prompt for the Letta agent with thread context
+        # Extract cid for the notification
+        if isinstance(notification_data, dict):
+            post_cid = notification_data.get('cid', '')
+        else:
+            post_cid = getattr(notification_data, 'cid', '')
+
         prompt = f"""You received a mention on Bluesky from @{author_handle} ({author_name or author_handle}).
 
 MOST RECENT POST (the mention you're responding to):
 "{mention_text}"
+
+POST METADATA:
+- URI: {uri}
+- CID: {post_cid}
 
 FULL THREAD CONTEXT:
 ```yaml
@@ -320,7 +330,9 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
   * The topic requires extended explanation that cannot fit in 300 characters
   * You're explicitly asked for a detailed/long response
   * The conversation naturally benefits from a structured multi-part answer
-- Avoid unnecessary threads - be concise when possible"""
+- Avoid unnecessary threads - be concise when possible
+
+If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above."""
 
         # Extract all handles from notification and thread data
         all_handles = set()
