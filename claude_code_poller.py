@@ -189,35 +189,16 @@ Created by claude_code_poller.py
         """Validate task type against allowlist."""
         return task_type in APPROVED_TASK_TYPES
 
-    def execute_claude_code(self, request_data: Dict) -> Dict:
-        """Execute Claude Code CLI with the request prompt."""
-        request_id = request_data['request_id']
-        prompt = request_data['prompt']
-        task_type = request_data['task_type']
+    def _run_claude_command(self, cmd: list, request_id: str, start_time: float) -> tuple:
+        """
+        Execute a Claude Code command and return (success, result, execution_time, response_text).
 
-        self.log(f"Executing request {request_id} (task: {task_type})")
-        if self.verbose:
-            self.log(f"Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
-
+        Returns:
+            tuple: (success: bool, result: subprocess.CompletedProcess, execution_time: float, response_text: str)
+        """
         try:
-            # Build Claude Code command
-            cmd = [
-                "claude",
-                "-p",  # Print mode (non-interactive)
-                prompt,
-                "--output-format", "json",
-                "--dangerously-skip-permissions"  # Auto-approve for automation
-            ]
-
-            # Execute in workspace directory
-            start_time = time.time()
-
             if self.verbose:
                 # Stream output in verbose mode
-                self.log(f"{'='*60}")
-                self.log(f"CLAUDE CODE OUTPUT (Request {request_id}):")
-                self.log(f"{'='*60}")
-
                 result = subprocess.run(
                     cmd,
                     cwd=self.workspace_dir,
@@ -225,10 +206,6 @@ Created by claude_code_poller.py
                     timeout=MAX_EXECUTION_TIME_SECONDS
                     # stdout/stderr will go to console
                 )
-
-                self.log(f"{'='*60}")
-                self.log(f"END OUTPUT (Request {request_id})")
-                self.log(f"{'='*60}")
             else:
                 # Capture output in non-verbose mode
                 result = subprocess.run(
@@ -243,17 +220,9 @@ Created by claude_code_poller.py
 
             # Check for errors
             if result.returncode != 0:
-                error_msg = result.stderr if hasattr(result, 'stderr') and result.stderr else "Claude Code execution failed"
-                self.log(f"Request {request_id} failed: {error_msg}", level="ERROR")
-                return {
-                    "request_id": request_id,
-                    "error": error_msg,
-                    "response": None,
-                    "execution_time_seconds": round(execution_time, 2)
-                }
+                return (False, result, execution_time, None)
 
-            # In verbose mode, we need to capture output for the response
-            # Since we streamed it, we'll return a success message
+            # Extract response text
             if self.verbose:
                 response_text = f"Task completed. Check console output above for details. Execution time: {execution_time:.2f}s"
             else:
@@ -263,6 +232,83 @@ Created by claude_code_poller.py
                     response_text = json.dumps(response_data, indent=2)
                 except json.JSONDecodeError:
                     response_text = result.stdout
+
+            return (True, result, execution_time, response_text)
+
+        except Exception as e:
+            execution_time = time.time() - start_time
+            return (False, None, execution_time, None)
+
+    def execute_claude_code(self, request_data: Dict) -> Dict:
+        """Execute Claude Code CLI with the request prompt."""
+        request_id = request_data['request_id']
+        prompt = request_data['prompt']
+        task_type = request_data['task_type']
+
+        self.log(f"Executing request {request_id} (task: {task_type})")
+        if self.verbose:
+            self.log(f"Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
+
+        try:
+            # Build base Claude Code command
+            base_cmd = [
+                "claude",
+                "-p",  # Print mode (non-interactive)
+                prompt,
+                "--output-format", "json",
+                "--dangerously-skip-permissions"  # Auto-approve for automation
+            ]
+
+            # Try with --continue first to resume most recent session
+            cmd_with_continue = base_cmd + ["--continue"]
+
+            self.log(f"Attempting to resume previous session (--continue)")
+            start_time = time.time()
+
+            if self.verbose:
+                self.log(f"{'='*60}")
+                self.log(f"CLAUDE CODE OUTPUT (Request {request_id}):")
+                self.log(f"{'='*60}")
+
+            success, result, execution_time, response_text = self._run_claude_command(
+                cmd_with_continue, request_id, start_time
+            )
+
+            # If --continue fails, retry without it
+            if not success:
+                self.log(f"Session resume failed, starting new session", level="WARNING")
+
+                # Reset start time for new attempt
+                start_time = time.time()
+
+                success, result, execution_time, response_text = self._run_claude_command(
+                    base_cmd, request_id, start_time
+                )
+
+                if not success:
+                    error_msg = result.stderr if result and hasattr(result, 'stderr') and result.stderr else "Claude Code execution failed"
+                    self.log(f"Request {request_id} failed: {error_msg}", level="ERROR")
+
+                    if self.verbose:
+                        self.log(f"{'='*60}")
+                        self.log(f"END OUTPUT (Request {request_id})")
+                        self.log(f"{'='*60}")
+
+                    return {
+                        "request_id": request_id,
+                        "error": error_msg,
+                        "response": None,
+                        "execution_time_seconds": round(execution_time, 2)
+                    }
+                else:
+                    self.log(f"New session started successfully")
+            else:
+                self.log(f"Session resumed successfully")
+
+            if self.verbose:
+                self.log(f"{'='*60}")
+                self.log(f"END OUTPUT (Request {request_id})")
+                self.log(f"{'='*60}")
 
             self.log(f"Request {request_id} completed in {execution_time:.2f}s")
 
