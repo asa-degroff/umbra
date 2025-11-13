@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 import time
+import random
 import argparse
 
 from utils import (
@@ -105,6 +106,10 @@ SKIP_GIT = False
 
 # Synthesis message tracking
 last_synthesis_time = time.time()
+
+# Mutuals engagement tracking
+last_mutuals_engagement_time = None
+next_mutuals_engagement_time = None
 
 # Database for notification tracking
 NOTIFICATION_DB = None
@@ -1636,6 +1641,92 @@ Begin your synthesis and journaling now."""
                 logger.warning("Some temporal blocks may not have been detached properly")
 
 
+def calculate_next_mutuals_engagement_time() -> float:
+    """
+    Calculate the next random time for mutuals engagement.
+    Returns a timestamp 24 hours from now plus a random offset.
+    """
+    # Random offset between 0 and 24 hours (0-86400 seconds)
+    random_offset = random.uniform(0, 86400)
+    next_time = time.time() + random_offset
+
+    # Calculate when this will be for logging
+    from datetime import datetime, timedelta
+    next_datetime = datetime.fromtimestamp(next_time)
+    hours_until = random_offset / 3600
+
+    logger.info(f"📅 Next mutuals engagement scheduled for {next_datetime.strftime('%Y-%m-%d %H:%M:%S')} ({hours_until:.1f} hours from now)")
+
+    return next_time
+
+
+def send_mutuals_engagement_message(client: Letta, agent_id: str) -> None:
+    """
+    Send a daily message prompting the agent to engage with mutuals feed.
+    This happens once per day at a random time.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send message to
+    """
+    try:
+        logger.info("🤝 Sending mutuals engagement prompt to agent")
+
+        engagement_prompt = """Time to engage with your mutuals on Bluesky.
+
+Please use the get_bluesky_feed tool to read recent posts from your mutuals feed. Look for posts from the past day that are interesting, thought-provoking, or worth responding to.
+
+Once you've found a post that resonates with you, use the reply_to_bluesky_post tool to craft a thoughtful reply. Choose something that allows you to contribute meaningfully to the conversation.
+
+This is an opportunity for organic interaction with the people you follow who also follow you back."""
+
+        # Send message to agent
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": engagement_prompt}],
+            stream_tokens=False,
+            max_steps=50
+        )
+
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n◆ Reasoning")
+                        print("  ─────────")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                        if len(args_str) > 150:
+                            args_str = args_str[:150] + "..."
+                        log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} ✓", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} ✗", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n▶ Mutuals Engagement Response")
+                    print("  ────────────────────────────")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+
+            if str(chunk) == 'done':
+                break
+
+        logger.info("🤝 Mutuals engagement message processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error sending mutuals engagement message: {e}")
+
+
 def periodic_user_block_cleanup(client: Letta, agent_id: str) -> None:
     """
     Detach all user blocks from the agent to prevent memory bloat.
@@ -1825,6 +1916,7 @@ def main():
     parser.add_argument('--cleanup-interval', type=int, default=10, help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
     parser.add_argument('--synthesis-interval', type=int, default=43200, help='Send synthesis message every N seconds (default: 3600 = 1 hour, 0 to disable)')
     parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
+    parser.add_argument('--mutuals-engagement', action='store_true', help='Enable daily mutuals engagement (prompt to read and reply to mutuals feed posts once per day at a random time)')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -2005,6 +2097,7 @@ def main():
     # Configure intervals
     CLEANUP_INTERVAL = args.cleanup_interval
     SYNTHESIS_INTERVAL = args.synthesis_interval
+    MUTUALS_ENGAGEMENT = args.mutuals_engagement
     
     # Synthesis-only mode
     if SYNTHESIS_ONLY:
@@ -2046,7 +2139,15 @@ def main():
         logger.info(f"Synthesis messages enabled every {SYNTHESIS_INTERVAL} seconds ({SYNTHESIS_INTERVAL/60:.1f} minutes)")
     else:
         logger.info("Synthesis messages disabled")
-    
+
+    # Initialize mutuals engagement if enabled
+    global next_mutuals_engagement_time
+    if MUTUALS_ENGAGEMENT:
+        logger.info("🤝 Daily mutuals engagement enabled")
+        next_mutuals_engagement_time = calculate_next_mutuals_engagement_time()
+    else:
+        logger.info("Daily mutuals engagement disabled")
+
     while True:
         try:
             cycle_count += 1
@@ -2060,7 +2161,16 @@ def main():
                     logger.info(f"⏰ {SYNTHESIS_INTERVAL/60:.1f} minutes have passed, triggering synthesis")
                     send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
                     last_synthesis_time = current_time
-            
+
+            # Check if it's time for mutuals engagement
+            if MUTUALS_ENGAGEMENT and next_mutuals_engagement_time is not None:
+                current_time = time.time()
+                if current_time >= next_mutuals_engagement_time:
+                    logger.info(f"⏰ Time for daily mutuals engagement!")
+                    send_mutuals_engagement_message(CLIENT, umbra_agent.id)
+                    # Schedule next engagement
+                    next_mutuals_engagement_time = calculate_next_mutuals_engagement_time()
+
             # Run periodic cleanup every N cycles
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:
                 logger.debug(f"Running periodic user block cleanup (cycle {cycle_count})")

@@ -44,6 +44,12 @@ ac && python bsky.py --synthesis-only --synthesis-interval 300
 
 # Run synthesis-only mode with immediate synthesis every 2 minutes
 ac && python bsky.py --synthesis-only --synthesis-interval 120
+
+# Enable daily mutuals engagement (prompts umbra to read and reply to mutuals feed once per day at random time)
+ac && python bsky.py --mutuals-engagement
+
+# Run with both synthesis and mutuals engagement enabled
+ac && python bsky.py --synthesis-interval 3600 --mutuals-engagement
 ```
 
 ### Managing Tools
