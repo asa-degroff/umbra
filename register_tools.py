@@ -14,6 +14,7 @@ from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
 from tools.like import like_bluesky_post, LikeBlueskyPostArgs
+from tools.reply import reply_to_bluesky_post, ReplyToBlueskyPostArgs
 from tools.halt import halt_activity, HaltArgs
 from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
@@ -53,6 +54,12 @@ TOOL_CONFIGS = [
         "args_schema": LikeBlueskyPostArgs,
         "description": "Like a post on Bluesky using its AT Protocol URI and CID",
         "tags": ["bluesky", "social", "like"]
+    },
+    {
+        "func": reply_to_bluesky_post,
+        "args_schema": ReplyToBlueskyPostArgs,
+        "description": "Reply to any Bluesky post using its AT Protocol URI and CID (works with feed posts, search results, etc.)",
+        "tags": ["bluesky", "reply", "post", "social"]
     },
     # Note: User block management tools (attach_user_blocks, detach_user_blocks, user_note_*)
     # are available on the server but not exposed to the agent to prevent the agent from
