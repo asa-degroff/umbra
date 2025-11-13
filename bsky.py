@@ -1823,7 +1823,7 @@ def main():
     # --rich option removed as we now use simple text formatting
     parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
     parser.add_argument('--cleanup-interval', type=int, default=10, help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
-    parser.add_argument('--synthesis-interval', type=int, default=21600, help='Send synthesis message every N seconds (default: 3600 = 1 hour, 0 to disable)')
+    parser.add_argument('--synthesis-interval', type=int, default=43200, help='Send synthesis message every N seconds (default: 3600 = 1 hour, 0 to disable)')
     parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
     args = parser.parse_args()
 
