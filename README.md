@@ -13,6 +13,8 @@ Main changes include:
 - added tests for coding tools
 - added a like_bluesky_post tool for liking posts
 - notifications include URI and CID metadata for the like tool
+- added a reply_to_bluesky_post tool, enabling independent replies to posts outside of umbra's notifications
+- added a mutuals engagement feature, where umbra can autonomously reply to posts from mutuals
 
 ## umbra
 
