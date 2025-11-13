@@ -337,7 +337,7 @@ To reply, use the add_post_to_bluesky_reply_thread tool:
   * The conversation naturally benefits from a structured multi-part answer
 - Avoid unnecessary threads - be concise when possible
 
-If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above."""
+If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it if appropriate."""
 
         # Extract all handles from notification and thread data
         all_handles = set()
