@@ -39,7 +39,9 @@ class NotificationDB:
                 parent_uri TEXT,
                 root_uri TEXT,
                 error TEXT,
-                metadata TEXT
+                metadata TEXT,
+                retry_count INTEGER DEFAULT 0,
+                last_retry_at TEXT
             )
         """)
         
@@ -75,58 +77,76 @@ class NotificationDB:
         self.conn.commit()
     
     def add_notification(self, notif_dict: Dict) -> bool:
-        """Add a notification to the database."""
+        """Add a notification to the database atomically."""
         try:
             # Handle None input
             if not notif_dict:
                 return False
-                
+
             # Extract key fields
             uri = notif_dict.get('uri', '')
             if not uri:
                 return False
-            
-            indexed_at = notif_dict.get('indexed_at', '')
-            reason = notif_dict.get('reason', '')
-            author = notif_dict.get('author', {}) if notif_dict.get('author') else {}
-            author_handle = author.get('handle', '') if author else ''
-            author_did = author.get('did', '') if author else ''
-            
-            # Extract text from record if available (handle None records)
-            record = notif_dict.get('record') or {}
-            text = record.get('text', '')[:500] if record else ''
-            
-            # Extract thread info
-            parent_uri = None
-            root_uri = None
-            if record and 'reply' in record and record['reply']:
-                reply_info = record['reply']
-                if reply_info and isinstance(reply_info, dict):
-                    parent_info = reply_info.get('parent', {})
-                    root_info = reply_info.get('root', {})
-                    if parent_info:
-                        parent_uri = parent_info.get('uri')
-                    if root_info:
-                        root_uri = root_info.get('uri')
-            
-            # Store additional metadata as JSON
-            metadata = {
-                'cid': notif_dict.get('cid'),
-                'labels': notif_dict.get('labels', []),
-                'is_read': notif_dict.get('is_read', False)
-            }
-            
-            self.conn.execute("""
-                INSERT OR IGNORE INTO notifications 
-                (uri, indexed_at, reason, author_handle, author_did, text, 
-                 parent_uri, root_uri, status, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-            """, (uri, indexed_at, reason, author_handle, author_did, text,
-                  parent_uri, root_uri, json.dumps(metadata)))
-            
-            self.conn.commit()
-            return True
-        
+
+            # Use BEGIN IMMEDIATE to acquire write lock immediately
+            # This prevents race conditions when checking and inserting
+            self.conn.execute("BEGIN IMMEDIATE")
+
+            try:
+                # Check if already exists (within the transaction)
+                cursor = self.conn.execute("""
+                    SELECT uri FROM notifications WHERE uri = ?
+                """, (uri,))
+                if cursor.fetchone():
+                    self.conn.rollback()
+                    logger.debug(f"Notification already in database: {uri}")
+                    return False
+
+                indexed_at = notif_dict.get('indexed_at', '')
+                reason = notif_dict.get('reason', '')
+                author = notif_dict.get('author', {}) if notif_dict.get('author') else {}
+                author_handle = author.get('handle', '') if author else ''
+                author_did = author.get('did', '') if author else ''
+
+                # Extract text from record if available (handle None records)
+                record = notif_dict.get('record') or {}
+                text = record.get('text', '')[:500] if record else ''
+
+                # Extract thread info
+                parent_uri = None
+                root_uri = None
+                if record and 'reply' in record and record['reply']:
+                    reply_info = record['reply']
+                    if reply_info and isinstance(reply_info, dict):
+                        parent_info = reply_info.get('parent', {})
+                        root_info = reply_info.get('root', {})
+                        if parent_info:
+                            parent_uri = parent_info.get('uri')
+                        if root_info:
+                            root_uri = root_info.get('uri')
+
+                # Store additional metadata as JSON
+                metadata = {
+                    'cid': notif_dict.get('cid'),
+                    'labels': notif_dict.get('labels', []),
+                    'is_read': notif_dict.get('is_read', False)
+                }
+
+                self.conn.execute("""
+                    INSERT INTO notifications
+                    (uri, indexed_at, reason, author_handle, author_did, text,
+                     parent_uri, root_uri, status, metadata, retry_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0)
+                """, (uri, indexed_at, reason, author_handle, author_did, text,
+                      parent_uri, root_uri, json.dumps(metadata)))
+
+                self.conn.commit()
+                return True
+
+            except Exception as e:
+                self.conn.rollback()
+                raise
+
         except Exception as e:
             logger.error(f"Error adding notification to DB: {e}")
             return False
@@ -146,13 +166,41 @@ class NotificationDB:
         """Mark a notification as processed."""
         try:
             self.conn.execute("""
-                UPDATE notifications 
+                UPDATE notifications
                 SET status = ?, processed_at = ?, error = ?
                 WHERE uri = ?
             """, (status, datetime.now().isoformat(), error, uri))
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error marking notification processed: {e}")
+
+    def increment_retry(self, uri: str) -> int:
+        """Increment retry count for a notification and return new count."""
+        try:
+            cursor = self.conn.execute("""
+                UPDATE notifications
+                SET retry_count = retry_count + 1, last_retry_at = ?
+                WHERE uri = ?
+                RETURNING retry_count
+            """, (datetime.now().isoformat(), uri))
+            result = cursor.fetchone()
+            self.conn.commit()
+            return result['retry_count'] if result else 0
+        except Exception as e:
+            logger.error(f"Error incrementing retry count: {e}")
+            return 0
+
+    def get_retry_count(self, uri: str) -> int:
+        """Get the retry count for a notification."""
+        try:
+            cursor = self.conn.execute("""
+                SELECT retry_count FROM notifications WHERE uri = ?
+            """, (uri,))
+            row = cursor.fetchone()
+            return row['retry_count'] if row else 0
+        except Exception as e:
+            logger.error(f"Error getting retry count: {e}")
+            return 0
     
     def get_unprocessed(self, limit: int = 100) -> List[Dict]:
         """Get unprocessed notifications."""

@@ -94,6 +94,9 @@ PROCESSED_NOTIFICATIONS_FILE = None
 # Maximum number of processed notifications to track
 MAX_PROCESSED_NOTIFICATIONS = 10000
 
+# Maximum retry attempts for failed notifications
+MAX_RETRY_COUNT = 3
+
 # Message tracking counters
 message_counters = defaultdict(int)
 start_time = time.time()
@@ -654,8 +657,9 @@ If you want to like this post, use the like_bluesky_post tool with the URI and C
             raise
 
         # Log successful response
-        logger.debug("Successfully received response from Letta API")
+        logger.info(f"✓ Successfully received response from Letta API for @{author_handle}")
         logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
+        logger.debug(f"Mention URI: {uri}")
 
         # Extract successful add_post_to_bluesky_reply_thread tool calls from the agent's response
         reply_candidates = []
@@ -1102,18 +1106,8 @@ def save_notification_to_queue(notification, is_priority=None):
         filename = f"{priority_prefix}{timestamp}_{reason}_{notif_hash}.json"
         filepath = QUEUE_DIR / filename
 
-        # Check if this notification URI is already in the queue
-        for existing_file in QUEUE_DIR.glob("*.json"):
-            if existing_file.name == "processed_notifications.json":
-                continue
-            try:
-                with open(existing_file, 'r') as f:
-                    existing_data = json.load(f)
-                    if existing_data.get('uri') == notification_uri:
-                        logger.debug(f"Notification already queued (URI: {notification_uri})")
-                        return False
-            except:
-                continue
+        # Note: Duplicate checking is now handled atomically in the database (add_notification)
+        # The file-system check has been removed to reduce race conditions
 
         # Write to file
         with open(filepath, 'w') as f:
@@ -1299,11 +1293,37 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                         save_processed_notifications(processed_uris)
                     
                 else:
-                    logger.warning(f"⚠️  Failed to process {filepath.name}, keeping in queue for retry")
+                    # Failed to process - check retry count
+                    if NOTIFICATION_DB:
+                        retry_count = NOTIFICATION_DB.increment_retry(notif_data['uri'])
+                        if retry_count >= MAX_RETRY_COUNT:
+                            logger.error(f"❌ Max retries ({MAX_RETRY_COUNT}) exceeded for {filepath.name}, moving to errors")
+                            error_path = QUEUE_ERROR_DIR / filepath.name
+                            filepath.rename(error_path)
+                            NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error', error=f'Max retries exceeded ({retry_count})')
+                        else:
+                            logger.warning(f"⚠️  Failed to process {filepath.name}, keeping in queue for retry (attempt {retry_count}/{MAX_RETRY_COUNT})")
+                    else:
+                        logger.warning(f"⚠️  Failed to process {filepath.name}, keeping in queue for retry")
 
             except Exception as e:
                 logger.error(f"💥 Error processing queued notification {filepath.name}: {e}")
-                # Keep the file for retry later
+                # Increment retry count and check limit
+                try:
+                    with open(filepath, 'r') as f:
+                        notif_data = json.load(f)
+                    if NOTIFICATION_DB:
+                        retry_count = NOTIFICATION_DB.increment_retry(notif_data['uri'])
+                        if retry_count >= MAX_RETRY_COUNT:
+                            logger.error(f"❌ Max retries ({MAX_RETRY_COUNT}) exceeded after exception, moving to errors")
+                            error_path = QUEUE_ERROR_DIR / filepath.name
+                            filepath.rename(error_path)
+                            NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error', error=str(e))
+                        else:
+                            logger.warning(f"Keeping in queue for retry (attempt {retry_count}/{MAX_RETRY_COUNT})")
+                except:
+                    # If we can't even read the file, keep it for manual inspection
+                    logger.error(f"Could not read notification file for retry tracking")
 
     except Exception as e:
         logger.error(f"Error loading queued notifications: {e}")
