@@ -4,7 +4,7 @@ from typing import Optional
 
 
 class FeedArgs(BaseModel):
-    feed_name: Optional[str] = Field(None, description="Named feed preset. Available feeds: 'home' (timeline), 'discover' (what's hot), 'ai-for-grownups', 'atmosphere', 'MLBlend', 'mutuals'. If not provided, returns home timeline")
+    feed_name: Optional[str] = Field(None, description="Named feed preset. Available feeds: 'home' (timeline), 'discover' (what's hot), 'ai-for-grownups', 'atmosphere', 'MLBlend', 'mutuals', 'AI-agents'. If not provided, returns home timeline")
     max_posts: int = Field(default=25, description="Maximum number of posts to retrieve (max 100)")
 
 
@@ -13,7 +13,7 @@ def get_bluesky_feed(feed_name: str = None, max_posts: int = 25) -> str:
     Retrieve a Bluesky feed.
     
     Args:
-        feed_name: Named feed preset - available options: 'home', 'discover', 'ai-for-grownups', 'atmosphere', 'MLBlend', 'mutuals'. If not provided, defaults to 'home' timeline.
+        feed_name: Named feed preset - available options: 'home', 'discover', 'ai-for-grownups', 'atmosphere', 'MLBlend', 'mutuals', AI-agents. If not provided, defaults to 'home' timeline.
         max_posts: Maximum number of posts to retrieve (max 100)
         
     Returns:
@@ -31,7 +31,8 @@ def get_bluesky_feed(feed_name: str = None, max_posts: int = 25) -> str:
             "ai-for-grownups": "at://did:plc:gfrmhdmjvxn2sjedzboeudef/app.bsky.feed.generator/ai-for-grownups", 
             "atmosphere": "at://did:plc:gfrmhdmjvxn2sjedzboeudef/app.bsky.feed.generator/the-atmosphere",
             "MLBlend": "at://did:plc:lrzkd5exmxqrblbruvjieofj/app.bsky.feed.generator/MLBlend",
-            "Mutuals": "at://did:plc:tenurhgjptubkk5zf5qhi3og/app.bsky.feed.generator/mutuals"
+            "Mutuals": "at://did:plc:tenurhgjptubkk5zf5qhi3og/app.bsky.feed.generator/mutuals",
+            "AI-agents": "at://did:plc:27ivzcszryxp6mehutodmcxo/app.bsky.feed.generator/AI-agents"
         }
         
         # Validate inputs
