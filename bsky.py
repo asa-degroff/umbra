@@ -328,14 +328,9 @@ FULL THREAD CONTEXT:
 
 The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow.
 
-To reply, use the add_post_to_bluesky_reply_thread tool:
+If you choose to reply, use the add_post_to_bluesky_reply_thread tool. 
 - Each call creates one post (max 300 characters)
-- For most responses, a single call is sufficient
-- Only use multiple calls for threaded replies when:
-  * The topic requires extended explanation that cannot fit in 300 characters
-  * You're explicitly asked for a detailed/long response
-  * The conversation naturally benefits from a structured multi-part answer
-- Avoid unnecessary threads - be concise when possible
+- You may use multiple calls to create a thread if needed.
 
 If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it if appropriate."""
 
@@ -1497,25 +1492,13 @@ def send_synthesis_message(client: Letta, agent_id: str, atproto_client=None) ->
         today = date.today()
         synthesis_prompt = f"""Time for synthesis and reflection.
 
+This is your periodic opportunity to reflect on recent experiences and update your memory.
 You have access to temporal journal blocks for recording your thoughts and experiences:
 - umbra_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
 - umbra_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
 - umbra_year_{today.year}: This year's journal ({today.year})
 
-These journal blocks are attached temporarily for this synthesis session. Use them to:
-1. Record significant interactions and insights from recent experiences
-2. Track patterns in conversations and user behaviors
-3. Note your evolving understanding of the digital social environment
-4. Reflect on your growth and changes in perspective
-5. Document memorable moments or interesting discoveries
-
-The journal entries should be cumulative - add to existing content rather than replacing it.
-Consider both immediate experiences (daily) and longer-term patterns (monthly/yearly).
-
-After recording in your journals, synthesize your recent experiences into your core memory blocks
-(zeitgeist, umbra-persona, umbra-humans) as you normally would.
-
-Begin your synthesis and journaling now."""
+You may use these blocks as you see fit. Synthesize your recent experiences into your memory as appropriate."""
         
         logger.info("🧠 Sending enhanced synthesis prompt to agent")
         
