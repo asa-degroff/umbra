@@ -1,18 +1,12 @@
 .env
 config.yaml
-x_config.yaml
 old.py
 session_*.txt
 __pycache__/
 queue/
 agents/
 agent_archive/
-x_cache/
-x_queue/
-# But track important X state files
-!x_queue/last_seen_id.json
-!x_queue/processed_mentions.json
-herald.yaml
+settings.local.json
 
 # Claude Code integration
 umbra-projects/
