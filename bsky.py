@@ -1647,7 +1647,7 @@ You may use these blocks as you see fit. Synthesize your recent experiences into
 def calculate_next_mutuals_engagement_time() -> float:
     """
     Calculate the next random time for mutuals engagement.
-    Returns a timestamp 24 hours from now plus a random offset.
+    Returns a timestamp in the future within the next 24 hours.
     """
     # Random offset between 0 and 24 hours (0-86400 seconds)
     random_offset = random.uniform(0, 86400)
@@ -1675,7 +1675,7 @@ def send_mutuals_engagement_message(client: Letta, agent_id: str) -> None:
     try:
         logger.info("🤝 Sending mutuals engagement prompt to agent")
 
-        engagement_prompt = """Time to engage with your mutuals on Bluesky.
+        engagement_prompt = """This is your prompt to engage with your mutuals on Bluesky.
 
 Please use the get_bluesky_feed tool to read recent posts from your mutuals feed. Look for posts from the past day that are interesting, thought-provoking, or worth responding to.
 
