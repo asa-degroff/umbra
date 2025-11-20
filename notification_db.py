@@ -41,7 +41,10 @@ class NotificationDB:
                 error TEXT,
                 metadata TEXT,
                 retry_count INTEGER DEFAULT 0,
-                last_retry_at TEXT
+                last_retry_at TEXT,
+                debounce_until TEXT,
+                debounce_reason TEXT,
+                thread_chain_id TEXT
             )
         """)
         
@@ -57,10 +60,25 @@ class NotificationDB:
         """)
         
         self.conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_author_handle 
+            CREATE INDEX IF NOT EXISTS idx_author_handle
             ON notifications(author_handle)
         """)
-        
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_debounce_until
+            ON notifications(debounce_until)
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_root_uri
+            ON notifications(root_uri)
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_thread_chain_id
+            ON notifications(thread_chain_id)
+        """)
+
         # Create session tracking table
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
@@ -341,6 +359,87 @@ class NotificationDB:
         except Exception as e:
             logger.error(f"Error migrating from JSON: {e}")
     
+    def set_debounce(self, uri: str, debounce_until: str, reason: str = None, thread_chain_id: str = None):
+        """Set debounce information for a notification."""
+        try:
+            self.conn.execute("""
+                UPDATE notifications
+                SET debounce_until = ?, debounce_reason = ?, thread_chain_id = ?
+                WHERE uri = ?
+            """, (debounce_until, reason, thread_chain_id, uri))
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error setting debounce for notification: {e}")
+
+    def clear_debounce(self, uri: str):
+        """Clear debounce information for a notification."""
+        try:
+            self.conn.execute("""
+                UPDATE notifications
+                SET debounce_until = NULL, debounce_reason = NULL
+                WHERE uri = ?
+            """, (uri,))
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error clearing debounce: {e}")
+
+    def get_debounced_notifications(self, current_time: str = None) -> List[Dict]:
+        """Get notifications whose debounce period has expired."""
+        if current_time is None:
+            current_time = datetime.now().isoformat()
+
+        cursor = self.conn.execute("""
+            SELECT * FROM notifications
+            WHERE debounce_until IS NOT NULL
+            AND debounce_until <= ?
+            AND status = 'pending'
+            ORDER BY indexed_at ASC
+        """, (current_time,))
+
+        return [dict(row) for row in cursor]
+
+    def get_pending_debounced_notifications(self, current_time: str = None) -> List[Dict]:
+        """Get notifications still within debounce period (not yet ready for processing)."""
+        if current_time is None:
+            current_time = datetime.now().isoformat()
+
+        cursor = self.conn.execute("""
+            SELECT * FROM notifications
+            WHERE debounce_until IS NOT NULL
+            AND debounce_until > ?
+            AND status = 'pending'
+            ORDER BY debounce_until ASC
+        """, (current_time,))
+
+        return [dict(row) for row in cursor]
+
+    def get_thread_notifications(self, root_uri: str, author_did: str = None) -> List[Dict]:
+        """Get all notifications from a thread chain, optionally filtered by author."""
+        if author_did:
+            cursor = self.conn.execute("""
+                SELECT * FROM notifications
+                WHERE root_uri = ? AND author_did = ?
+                ORDER BY indexed_at ASC
+            """, (root_uri, author_did))
+        else:
+            cursor = self.conn.execute("""
+                SELECT * FROM notifications
+                WHERE root_uri = ?
+                ORDER BY indexed_at ASC
+            """, (root_uri,))
+
+        return [dict(row) for row in cursor]
+
+    def get_thread_chain_notifications(self, thread_chain_id: str) -> List[Dict]:
+        """Get all notifications belonging to a specific thread chain."""
+        cursor = self.conn.execute("""
+            SELECT * FROM notifications
+            WHERE thread_chain_id = ?
+            ORDER BY indexed_at ASC
+        """, (thread_chain_id,))
+
+        return [dict(row) for row in cursor]
+
     def close(self):
         """Close database connection."""
         if self.conn:

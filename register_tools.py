@@ -23,6 +23,7 @@ from tools.ack import annotate_ack, AnnotateAckArgs
 from tools.webpage import fetch_webpage, WebpageArgs
 from tools.flag_memory_deletion import flag_archival_memory_for_deletion, FlagArchivalMemoryForDeletionArgs
 from tools.claude_code import ask_claude_code, AskClaudeCodeArgs
+from tools.debounce_thread import debounce_thread, DebounceThreadArgs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -111,6 +112,12 @@ TOOL_CONFIGS = [
         "args_schema": AskClaudeCodeArgs,
         "description": "Send coding tasks to local Claude Code instance (website building, code writing, documentation, analysis)",
         "tags": ["claude-code", "development", "website", "code", "local"]
+    },
+    {
+        "func": debounce_thread,
+        "args_schema": DebounceThreadArgs,
+        "description": "Defer processing of a notification to allow multi-post threads to complete before responding",
+        "tags": ["threading", "debounce", "defer", "notification"]
     },
 ]
 

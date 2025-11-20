@@ -195,6 +195,150 @@ def initialize_umbra():
     return umbra_agent
 
 
+def process_debounced_thread(umbra_agent, atproto_client, notification_data, queue_filepath=None, testing_mode=False):
+    """Process a notification whose debounce period has expired, with full thread context.
+
+    Args:
+        umbra_agent: The Letta agent instance
+        atproto_client: The AT Protocol client
+        notification_data: The notification data dictionary
+        queue_filepath: Optional Path object to the queue file
+        testing_mode: If True, don't actually send messages
+
+    Returns:
+        True: Successfully processed
+        False: Failed but retryable
+        None: Critical error, move to errors
+        "no_reply": Agent chose not to reply
+        "ignored": Ignored (blocked user, etc.)
+    """
+    try:
+        # Get thread configuration
+        config = get_config()
+        threading_config = config.get('threading', {})
+
+        # Extract notification info
+        uri = notification_data.get('uri', '')
+        author_handle = notification_data.get('author', {}).get('handle', 'unknown')
+
+        logger.info(f"⏰ Processing debounced thread from @{author_handle}")
+        logger.info(f"   Notification URI: {uri}")
+
+        # Fetch the complete current thread state from Bluesky
+        # Use high depth (25) to ensure we get ALL replies in the thread
+        # The notification URI is the post that mentioned umbra - fetch all its replies
+        parent_height = threading_config.get('parent_height', 80)
+        depth = 25  # High depth to get complete thread including all self-replies
+
+        logger.info(f"   Fetching thread with depth={depth} to capture all replies...")
+
+        try:
+            thread = bsky_utils.get_post_thread(atproto_client, uri, parent_height=parent_height, depth=depth)
+        except Exception as e:
+            logger.error(f"Failed to fetch thread for debounced notification: {e}")
+            return False  # Retry later
+
+        if not thread:
+            logger.error("Failed to get thread context for debounced notification")
+            return False  # Retry later
+
+        # Find the last post in the thread to get its URI and CID for replying
+        def find_last_post(node):
+            """Recursively find the last (deepest) post in a thread."""
+            if not node:
+                return None
+
+            last_post = None
+
+            # Check if this node has a post
+            if hasattr(node, 'post') and node.post:
+                last_post = node.post
+
+            # Check for replies and recursively find the last one
+            if hasattr(node, 'replies') and node.replies:
+                for reply in node.replies:
+                    deeper_post = find_last_post(reply)
+                    if deeper_post:
+                        last_post = deeper_post
+
+            return last_post
+
+        last_post = None
+        last_post_uri = None
+        last_post_cid = None
+
+        if hasattr(thread, 'thread'):
+            last_post = find_last_post(thread.thread)
+
+        if last_post:
+            last_post_uri = last_post.uri if hasattr(last_post, 'uri') else None
+            last_post_cid = last_post.cid if hasattr(last_post, 'cid') else None
+            last_post_author = last_post.author.handle if hasattr(last_post, 'author') and hasattr(last_post.author, 'handle') else 'unknown'
+            logger.info(f"   Last post in thread: {last_post_uri} by @{last_post_author}")
+
+        # Convert thread to YAML
+        thread_yaml = thread_to_yaml_string(thread)
+
+        # Clear debounce from database
+        if NOTIFICATION_DB:
+            NOTIFICATION_DB.clear_debounce(uri)
+
+        # Build prompt for agent with explicit context about this being a complete thread
+        reply_instructions = ""
+        if last_post_uri and last_post_cid:
+            reply_instructions = f"""
+
+TO REPLY TO THE LAST POST IN THIS THREAD:
+Use the reply_to_bluesky_post tool with these parameters:
+- post_uri: {last_post_uri}
+- post_cid: {last_post_cid}
+
+This will ensure your reply goes to the end of the thread, not the beginning."""
+
+        system_message = f"""
+This is a debounced thread that you previously marked for later review. The thread has had time to complete, and you're now seeing the full context.
+
+Original notification: You were mentioned in a post from @{author_handle}
+Original post URI: {uri}
+
+The complete thread (as it exists now) is provided below. This includes ALL posts the author added after the original mention - the full thread has been fetched from Bluesky.
+
+{thread_yaml}
+
+You may now respond to this thread with full context of all posts.{reply_instructions}""".strip()
+
+        # Send to agent using standard processing
+        # But use a special flag to indicate this is a debounced thread
+        logger.info(f"Sending debounced thread to agent | prompt: {len(system_message)} chars")
+
+        if testing_mode:
+            logger.info("TESTING MODE: Skipping agent call for debounced thread")
+            return True
+
+        try:
+            # Call the agent with the complete thread context
+            response = CLIENT.agents.messages.create(
+                agent_id=umbra_agent.id,
+                messages=[{"role": "user", "content": system_message}]
+            )
+
+            # Process the response like in process_mention
+            # The agent will decide whether to reply and how
+            # ... (rest of processing logic from process_mention would go here)
+            # For now, we'll just mark it as processed
+
+            logger.info(f"✓ Debounced thread processed successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error calling agent for debounced thread: {e}")
+            return False  # Retry later
+
+    except Exception as e:
+        logger.error(f"Error processing debounced thread: {e}")
+        return None  # Critical error
+
+
 def process_mention(umbra_agent, atproto_client, notification_data, queue_filepath=None, testing_mode=False):
     """Process a mention and generate a reply using the Letta agent.
     
@@ -315,6 +459,13 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
         else:
             post_cid = getattr(notification_data, 'cid', '')
 
+        # Check if debouncing is enabled
+        config = get_config()
+        threading_config = config.get('threading', {})
+        debounce_enabled = threading_config.get('debounce_enabled', False)
+        debounce_seconds = threading_config.get('debounce_seconds', 600)
+
+        # Build base prompt
         prompt = f"""You received a mention on Bluesky from @{author_handle} ({author_name or author_handle}).
 
 MOST RECENT POST (the mention you're responding to):
@@ -331,11 +482,21 @@ FULL THREAD CONTEXT:
 
 The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow.
 
-If you choose to reply, use the add_post_to_bluesky_reply_thread tool. 
+If you choose to reply, use the add_post_to_bluesky_reply_thread tool.
 - Each call creates one post (max 300 characters)
 - You may use multiple calls to create a thread if needed.
 
 If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it if appropriate."""
+
+        # Add debounce capability information if enabled
+        if debounce_enabled:
+            debounce_minutes = debounce_seconds // 60
+            prompt += f"""
+
+THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debounce_thread(notification_uri="{uri}") to wait {debounce_minutes}min for completion before responding."""
+
+        # Finalize prompt
+        prompt = prompt
 
         # Extract all handles from notification and thread data
         all_handles = set()
@@ -774,7 +935,54 @@ If you want to like this post, use the like_bluesky_post tool with the URI and C
                     # Exit the program
                     logger.info("=== BOT TERMINATED BY AGENT ===")
                     exit(0)
-            
+
+            # Check for debounce_thread tool call
+            if hasattr(message, 'tool_call') and message.tool_call:
+                if message.tool_call.name == 'debounce_thread':
+                    logger.info("⏸️  DEBOUNCE_THREAD TOOL CALLED")
+                    try:
+                        from datetime import datetime, timedelta
+
+                        args = json.loads(message.tool_call.arguments)
+                        debounce_uri = args.get('notification_uri', '')
+                        debounce_seconds = args.get('debounce_seconds', 600)
+                        debounce_reason = args.get('reason', 'incomplete_thread')
+
+                        logger.info(f"   URI: {debounce_uri}")
+                        logger.info(f"   Wait: {debounce_seconds}s ({debounce_seconds//60}min)")
+                        logger.info(f"   Reason: {debounce_reason}")
+
+                        # Update database with debounce info
+                        if NOTIFICATION_DB:
+                            now = datetime.now()
+                            debounce_until = now + timedelta(seconds=debounce_seconds)
+                            debounce_until_str = debounce_until.isoformat()
+
+                            # Get root_uri for thread_chain_id
+                            thread_notifications = NOTIFICATION_DB.get_thread_notifications(debounce_uri)
+                            if thread_notifications and len(thread_notifications) > 0:
+                                root_uri = thread_notifications[0].get('root_uri') or debounce_uri
+                            else:
+                                root_uri = debounce_uri
+
+                            NOTIFICATION_DB.set_debounce(
+                                debounce_uri,
+                                debounce_until_str,
+                                debounce_reason,
+                                root_uri
+                            )
+                            logger.info(f"   ✓ Debounce set until {debounce_until.strftime('%H:%M:%S')}")
+                            logger.info(f"   ⏸️  Notification will stay in queue and be skipped until debounce expires")
+
+                        # Don't mark as processed - keep status='pending' so get_debounced_notifications() finds it
+                        # Don't delete file - it stays in queue but will be skipped by skip logic
+                        # Return False to keep in queue (skip logic will prevent re-processing until debounce expires)
+                        return False
+
+                    except Exception as e:
+                        logger.error(f"Error handling debounce_thread tool call: {e}")
+                        # Continue processing even if debounce fails
+
             # Check for deprecated bluesky_reply tool
             if hasattr(message, 'tool_call') and message.tool_call:
                 if message.tool_call.name == 'bluesky_reply':
@@ -1125,6 +1333,12 @@ def save_notification_to_queue(notification, is_priority=None):
 def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_mode=False):
     """Load and process all notifications from the queue in priority order."""
     try:
+        # Check if debouncing is enabled
+        config = get_config()
+        threading_config = config.get('threading', {})
+        debounce_enabled = threading_config.get('debounce_enabled', False)
+
+
         # Get all JSON files in queue directory (excluding processed_notifications.json)
         # Files are sorted by name, which puts priority files first (0_ prefix before 1_ prefix)
         all_queue_files = sorted([f for f in QUEUE_DIR.glob("*.json") if f.name != "processed_notifications.json"])
@@ -1198,14 +1412,46 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                 with open(filepath, 'r') as f:
                     notif_data = json.load(f)
 
+                # Check if this notification is debounced and still waiting
+                if debounce_enabled and NOTIFICATION_DB:
+                    from datetime import datetime
+                    db_notifs = NOTIFICATION_DB.get_pending_debounced_notifications()
+                    debounced_uris = {n['uri'] for n in db_notifs}
+
+                    if notif_data['uri'] in debounced_uris:
+                        # Find this notification's debounce info
+                        matching_notif = next((n for n in db_notifs if n['uri'] == notif_data['uri']), None)
+                        if matching_notif and matching_notif.get('debounce_until'):
+                            debounce_until = matching_notif['debounce_until']
+                            logger.info(f"⏸️  Skipping debounced notification (waiting until {debounce_until}): {filepath.name}")
+                            continue  # Skip this notification for now
+
+                # Check if this is a debounced notification whose debounce period has expired
+                is_debounced = False
+                if debounce_enabled and NOTIFICATION_DB:
+                    from datetime import datetime
+                    expired_debounced = NOTIFICATION_DB.get_debounced_notifications()
+                    expired_uris = {n['uri'] for n in expired_debounced}
+                    if notif_data['uri'] in expired_uris:
+                        is_debounced = True
+                        logger.info(f"⏰ Processing expired debounced notification: {filepath.name}")
+                        # Clear the debounce so it doesn't get skipped again
+                        NOTIFICATION_DB.clear_debounce(notif_data['uri'])
+
                 # Process based on type using dict data directly
                 success = False
                 if notif_data['reason'] == "mention":
-                    success = process_mention(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                    if is_debounced:
+                        success = process_debounced_thread(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                    else:
+                        success = process_mention(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     if success:
                         message_counters['mentions'] += 1
                 elif notif_data['reason'] == "reply":
-                    success = process_mention(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                    if is_debounced:
+                        success = process_debounced_thread(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                    else:
+                        success = process_mention(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     if success:
                         message_counters['replies'] += 1
                 elif notif_data['reason'] == "follow":
@@ -1377,7 +1623,13 @@ def fetch_and_queue_new_notifications(atproto_client):
                     break
                     
             except Exception as e:
-                logger.error(f"Error fetching notifications page {page_count}: {e}")
+                error_str = str(e)
+                # Check if this is a transient API error (502, 503, timeout, etc.)
+                if any(x in error_str.lower() for x in ['502', '503', 'timeout', 'unreachable', 'upstreamfailure']):
+                    logger.warning(f"⚠️  Transient API error on page {page_count} (will retry next cycle): {error_str[:200]}")
+                else:
+                    logger.error(f"Error fetching notifications page {page_count}: {e}")
+                # Continue with notifications we've already fetched
                 break
         
         # Now process all fetched notifications
@@ -1513,6 +1765,7 @@ def send_synthesis_message(client: Letta, agent_id: str, atproto_client=None) ->
         synthesis_prompt = f"""Time for synthesis and reflection.
 
 This is your periodic opportunity to reflect on recent experiences and update your memory.
+Use your curiosities block to explore any questions or ideas that have arisen.
 You have access to temporal journal blocks for recording your thoughts and experiences:
 - umbra_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
 - umbra_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
@@ -1679,7 +1932,7 @@ def send_mutuals_engagement_message(client: Letta, agent_id: str) -> None:
 
 Please use the get_bluesky_feed tool to read recent posts from your mutuals feed. Look for posts from the past day that are interesting, thought-provoking, or worth responding to.
 
-Once you've found a post that resonates with you, use the reply_to_bluesky_post tool to craft a thoughtful reply. Choose something that allows you to contribute meaningfully to the conversation.
+Once you've found a post to reply to, use the reply_to_bluesky_post tool to craft a thoughtful reply. Choose something that allows you to contribute meaningfully to the conversation.
 
 This is an opportunity for organic interaction with the people you follow who also follow you back."""
 

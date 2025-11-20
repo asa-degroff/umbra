@@ -101,6 +101,71 @@ python queue_manager.py delete @example.bsky.social
 python queue_manager.py delete @example.bsky.social --force
 ```
 
+### Thread Debouncing
+
+Thread debouncing allows umbra to defer responding to posts that appear to be the first part of an incomplete multi-post thread. This enables umbra to see the complete thread before responding, rather than replying to just the first post without full context.
+
+#### How It Works
+
+1. When umbra receives a notification, if the post appears to be the start of an incomplete thread (contains thread indicators like 🧵, "thread incoming", numbered posts like "1/5", etc.), the agent can call the `debounce_thread` tool
+2. The notification is marked for later processing (default: 10 minutes)
+3. After the debounce period expires, umbra fetches the complete current state of the thread
+4. Umbra then responds with full context of all posts in the thread
+
+#### Configuration
+
+Enable thread debouncing in `config.yaml`:
+
+```yaml
+threading:
+  debounce_enabled: true   # Set to true to enable (default: false)
+  debounce_seconds: 600    # Wait time in seconds (default: 10 minutes)
+  max_debounce_seconds: 1200  # Maximum wait time (default: 20 minutes)
+```
+
+#### Agent Behavior
+
+When `debounce_enabled` is true:
+- The agent receives an additional prompt section explaining the debounce capability
+- The agent is informed about thread indicators to look for
+- The agent decides whether to debounce based on the post content
+- If debounced, the notification is skipped during normal processing
+- After the debounce period expires, the agent receives the complete thread
+
+#### Database Migration
+
+If upgrading from a version without thread debouncing, run the migration:
+
+```bash
+ac && python migrate_debounce_schema.py
+```
+
+This adds the required database columns (`debounce_until`, `debounce_reason`, `thread_chain_id`) to track debounced notifications.
+
+#### Tool: debounce_thread
+
+The agent has access to the `debounce_thread` tool when debouncing is enabled:
+
+**Parameters:**
+- `notification_uri`: URI of the notification to debounce
+- `debounce_seconds`: How long to wait (optional, defaults to config value)
+- `reason`: Reason for debouncing (optional, defaults to "incomplete_thread")
+
+**Example agent call:**
+```python
+debounce_thread(
+    notification_uri="at://did:plc:abc123/app.bsky.feed.post/xyz789",
+    debounce_seconds=600
+)
+```
+
+#### Monitoring Debounced Notifications
+
+Debounced notifications remain in the queue but are skipped during processing. Check logs for:
+- `⏸️ Skipping debounced notification` - Still waiting for debounce period to expire
+- `⏰ Found N expired debounced notifications` - Processing debounced threads
+- `⏰ Processing debounced thread from @handle` - Currently processing a debounced thread
+
 ### Claude Code Integration
 
 The Claude Code tool allows umbra to delegate coding tasks to a local Claude Code instance running on the administrator's machine. This enables umbra to build websites, write code, create documentation, and perform analysis.

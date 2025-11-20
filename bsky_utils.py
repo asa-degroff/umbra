@@ -131,11 +131,11 @@ def flatten_thread_structure(thread_data):
         """Recursively traverse the thread structure to collect posts."""
         if not node:
             return
-            
+
         # If this node has a parent, traverse it first (to maintain chronological order)
         if hasattr(node, 'parent') and node.parent:
             traverse_thread(node.parent)
-        
+
         # Then add this node's post
         if hasattr(node, 'post') and node.post:
             # Convert to dict if needed to ensure we can process it
@@ -145,8 +145,13 @@ def flatten_thread_structure(thread_data):
                 post_dict = node.post.copy()
             else:
                 post_dict = {}
-            
+
             posts.append(post_dict)
+
+        # Then traverse any replies (going DOWN the thread)
+        if hasattr(node, 'replies') and node.replies:
+            for reply in node.replies:
+                traverse_thread(reply)
     
     # Handle the thread structure
     if hasattr(thread_data, 'thread'):
@@ -455,19 +460,21 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
         raise
 
 
-def get_post_thread(client: Client, uri: str) -> Optional[Dict[str, Any]]:
+def get_post_thread(client: Client, uri: str, parent_height: int = 80, depth: int = 25) -> Optional[Dict[str, Any]]:
     """
-    Get the thread containing a post to find root post information.
+    Get the thread containing a post including all parent and reply posts.
 
     Args:
         client: Authenticated Bluesky client
         uri: The URI of the post
+        parent_height: How many parent posts to fetch (default: 80)
+        depth: How many reply levels deep to fetch (default: 25 for complete threads)
 
     Returns:
         The thread data or None if not found
     """
     try:
-        thread = client.app.bsky.feed.get_post_thread({'uri': uri, 'parent_height': 60, 'depth': 10})
+        thread = client.app.bsky.feed.get_post_thread({'uri': uri, 'parent_height': parent_height, 'depth': depth})
         return thread
     except Exception as e:
         logger.error(f"Error fetching post thread: {e}")
