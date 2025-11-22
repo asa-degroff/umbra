@@ -1578,13 +1578,12 @@ def save_notification_to_queue(notification, is_priority=None):
                         thread_count, is_mention, high_traffic_config
                     )
 
-                    # Add to database first (will be done below in normal flow)
-                    # We need to do this early to set the debounce
-                    if not NOTIFICATION_DB.add_notification(notif_dict):
-                        logger.warning(f"Failed to add notification to database, skipping: {notification_uri}")
-                        return False
+                    # Try to add to database (may fail if already exists - that's OK!)
+                    # This handles: handler restarts, batch duplicates, concurrent processing
+                    notification_added = NOTIFICATION_DB.add_notification(notif_dict)
 
-                    # Set auto-debounce
+                    # ALWAYS set debounce, even if notification already existed in DB
+                    # This ensures handler restarts and batch duplicates are handled correctly
                     debounce_until = (datetime.now() + timedelta(seconds=debounce_seconds)).isoformat()
                     reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
                     NOTIFICATION_DB.set_auto_debounce(
@@ -1597,7 +1596,12 @@ def save_notification_to_queue(notification, is_priority=None):
 
                     debounce_hours = debounce_seconds / 3600
                     thread_type = "mention" if is_mention else "reply"
-                    logger.info(f"⚡ Auto-debounced high-traffic {thread_type} ({thread_count} notifications, {debounce_hours:.1f}h wait)")
+
+                    if notification_added:
+                        logger.info(f"⚡ Auto-debounced high-traffic {thread_type} ({thread_count} notifications, {debounce_hours:.1f}h wait)")
+                    else:
+                        logger.info(f"⚡ Updated debounce for existing high-traffic {thread_type} ({thread_count} notifications, {debounce_hours:.1f}h wait)")
+
                     logger.debug(f"   Thread root: {root_uri}")
                     logger.debug(f"   Notification: {notification_uri}")
 
@@ -1661,6 +1665,22 @@ def save_notification_to_queue(notification, is_priority=None):
                 author_handle = getattr(notification.author, 'handle', '') if hasattr(notification, 'author') else ''
             # Prioritize 3fz.org responses
             priority_prefix = "0_" if author_handle == "3fz.org" else "1_"
+
+        # Before creating queue file, check if notification already exists in database
+        # This prevents duplicate queue files when notification is re-fetched (e.g., debounced)
+        if NOTIFICATION_DB:
+            cursor = NOTIFICATION_DB.conn.execute(
+                "SELECT uri, status FROM notifications WHERE uri = ?",
+                (notification_uri,)
+            )
+            existing = cursor.fetchone()
+            if existing:
+                status = existing['status']
+                if status == 'pending':
+                    # Already queued and pending, don't create duplicate queue file
+                    logger.debug(f"Notification already pending in database, skipping queue file creation: {notification_uri}")
+                    return True  # Return True to indicate "handled" (not an error)
+                # If status is processed/error/ignored, allow queue file creation for retry
 
         # Create filename with priority, timestamp and hash
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1780,6 +1800,9 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                         if matching_notif and matching_notif.get('debounce_until'):
                             debounce_until = matching_notif['debounce_until']
                             logger.info(f"⏸️  Skipping debounced notification (waiting until {debounce_until}): {filepath.name}")
+                            # Delete the queue file to prevent accumulation
+                            filepath.unlink()
+                            logger.debug(f"Removed queue file for debounced notification: {filepath.name}")
                             continue  # Skip this notification for now
 
                 # Check if this is a debounced notification whose debounce period has expired
