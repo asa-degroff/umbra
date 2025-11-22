@@ -405,6 +405,49 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
                 logger.error(f"Error fetching thread: {e}")
                 raise
 
+        # Find the last consecutive post by the same author in the direct reply chain
+        last_consecutive_post = None
+        is_using_last_consecutive = False
+        if hasattr(thread, 'thread') and thread.thread:
+            last_consecutive_post = bsky_utils.find_last_consecutive_post_in_chain(
+                thread.thread,
+                author_handle
+            )
+
+            if last_consecutive_post:
+                last_uri, last_cid, last_text = last_consecutive_post
+                # Check if it's different from the mention post (i.e., there are consecutive posts)
+                if last_uri != uri:
+                    logger.info(f"[{correlation_id}] Found last consecutive post in chain:", extra={
+                        'correlation_id': correlation_id,
+                        'mention_uri': uri,
+                        'last_consecutive_uri': last_uri,
+                        'consecutive_posts': 'yes'
+                    })
+                    # Update to use last consecutive post's metadata
+                    uri = last_uri
+                    post_cid = last_cid
+                    mention_text = last_text
+                    is_using_last_consecutive = True
+
+                    # IMPORTANT: Update notification_data dict so reply functions use the correct URI/CID
+                    if isinstance(notification_data, dict):
+                        notification_data['uri'] = last_uri
+                        notification_data['cid'] = last_cid
+                        # Also update the text in the record if it exists
+                        if 'record' in notification_data and isinstance(notification_data['record'], dict):
+                            notification_data['record']['text'] = last_text
+                    else:
+                        # For object-based notification data, update attributes
+                        notification_data.uri = last_uri
+                        notification_data.cid = last_cid
+                        if hasattr(notification_data, 'record') and hasattr(notification_data.record, 'text'):
+                            notification_data.record.text = last_text
+                else:
+                    logger.debug(f"[{correlation_id}] No consecutive posts found (mention is last post)")
+            else:
+                logger.debug(f"[{correlation_id}] No consecutive posts found in chain")
+
         # Get thread context as YAML string
         logger.debug("Converting thread to YAML string")
         try:
@@ -453,11 +496,13 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
             thread_context = f"Error processing thread context: {str(yaml_error)}"
 
         # Create a prompt for the Letta agent with thread context
-        # Extract cid for the notification
-        if isinstance(notification_data, dict):
-            post_cid = notification_data.get('cid', '')
-        else:
-            post_cid = getattr(notification_data, 'cid', '')
+        # Note: post_cid and uri may have been updated to the last consecutive post
+        # Extract cid for the notification if we're not using the last consecutive post
+        if not is_using_last_consecutive:
+            if isinstance(notification_data, dict):
+                post_cid = notification_data.get('cid', '')
+            else:
+                post_cid = getattr(notification_data, 'cid', '')
 
         # Check if debouncing is enabled
         config = get_config()
@@ -465,10 +510,17 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
         debounce_enabled = threading_config.get('debounce_enabled', False)
         debounce_seconds = threading_config.get('debounce_seconds', 600)
 
-        # Build base prompt
+        # Build base prompt with different wording based on whether we're using last consecutive post
+        if is_using_last_consecutive:
+            post_description = "LAST POST IN CONSECUTIVE CHAIN (the post you're responding to)"
+            context_note = "The YAML above shows the complete conversation thread. The metadata below points to the LAST POST in the consecutive chain by this author, not the first mention. This allows you to see and respond to their complete thought."
+        else:
+            post_description = "MOST RECENT POST (the mention you're responding to)"
+            context_note = "The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow."
+
         prompt = f"""You received a mention on Bluesky from @{author_handle} ({author_name or author_handle}).
 
-MOST RECENT POST (the mention you're responding to):
+{post_description}:
 "{mention_text}"
 
 POST METADATA:
@@ -480,7 +532,7 @@ FULL THREAD CONTEXT:
 {thread_context}
 ```
 
-The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow.
+{context_note}
 
 If you choose to reply, use the add_post_to_bluesky_reply_thread tool.
 - Each call creates one post (max 300 characters)

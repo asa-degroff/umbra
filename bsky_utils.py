@@ -460,6 +460,101 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
         raise
 
 
+def find_last_consecutive_post_in_chain(thread_node, author_handle: str):
+    """
+    Find the last consecutive post in the direct reply chain by the same author.
+
+    Starting from the given thread node, this function traverses down the direct reply chain
+    (not all branches) to find the last consecutive post made by the specified author.
+
+    Args:
+        thread_node: The thread node to start from (usually the mention post's thread node)
+        author_handle: The handle of the author to match (e.g., "user.bsky.social")
+
+    Returns:
+        Tuple of (uri, cid, text) for the last consecutive post by the author, or None if no consecutive posts
+
+    Example:
+        If the thread structure is:
+        - Post A by @alice (mention) -> thread_node starts here
+          - Post B by @alice (consecutive)
+            - Post C by @alice (consecutive)
+              - Post D by @bob (different author, stop here)
+
+        Returns (uri_C, cid_C, text_C)
+    """
+    if not thread_node:
+        return None
+
+    # Start with the current node's post
+    current_post = None
+    if hasattr(thread_node, 'post') and thread_node.post:
+        current_post = thread_node.post
+
+    if not current_post:
+        return None
+
+    # Check if current post is by the target author
+    current_author = None
+    if hasattr(current_post, 'author') and hasattr(current_post.author, 'handle'):
+        current_author = current_post.author.handle
+
+    if current_author != author_handle:
+        # Current post is not by target author, can't find consecutive posts
+        return None
+
+    # Track the last consecutive post (start with current)
+    last_uri = current_post.uri if hasattr(current_post, 'uri') else None
+    last_cid = current_post.cid if hasattr(current_post, 'cid') else None
+    last_text = ""
+    if hasattr(current_post, 'record') and hasattr(current_post.record, 'text'):
+        last_text = current_post.record.text
+
+    # Traverse down the direct reply chain
+    current_node = thread_node
+    while True:
+        # Check if there are replies to this node
+        if not hasattr(current_node, 'replies') or not current_node.replies:
+            # No more replies, we've found the last consecutive post
+            break
+
+        # For direct chain traversal, we look for replies by the same author
+        # If there are multiple replies, we'll take the first one by the same author
+        next_node = None
+        for reply in current_node.replies:
+            if hasattr(reply, 'post') and reply.post:
+                reply_author = None
+                if hasattr(reply.post, 'author') and hasattr(reply.post.author, 'handle'):
+                    reply_author = reply.post.author.handle
+
+                if reply_author == author_handle:
+                    # Found a consecutive post by same author
+                    next_node = reply
+                    break
+
+        if not next_node:
+            # No more consecutive posts by same author
+            break
+
+        # Update last post info to this consecutive post
+        current_node = next_node
+        current_post = current_node.post
+
+        if hasattr(current_post, 'uri'):
+            last_uri = current_post.uri
+        if hasattr(current_post, 'cid'):
+            last_cid = current_post.cid
+        if hasattr(current_post, 'record') and hasattr(current_post.record, 'text'):
+            last_text = current_post.record.text
+
+    # Return the last consecutive post's metadata
+    # Only return if we actually have valid URI and CID
+    if last_uri and last_cid:
+        return (last_uri, last_cid, last_text)
+
+    return None
+
+
 def get_post_thread(client: Client, uri: str, parent_height: int = 80, depth: int = 25) -> Optional[Dict[str, Any]]:
     """
     Get the thread containing a post including all parent and reply posts.
