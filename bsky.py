@@ -1280,6 +1280,45 @@ def save_notification_to_queue(notification, is_priority=None):
             if NOTIFICATION_DB.is_processed(notification_uri):
                 logger.debug(f"Notification already processed (DB): {notification_uri}")
                 return False
+
+            # Check for duplicate notifications by thread root
+            # Extract root_uri from notification
+            record = notif_dict.get('record', {})
+            root_uri = None
+            if record and 'reply' in record and record['reply']:
+                reply_info = record['reply']
+                if reply_info and isinstance(reply_info, dict):
+                    root_info = reply_info.get('root', {})
+                    if root_info:
+                        root_uri = root_info.get('uri')
+
+            # If no root_uri in reply info, this notification IS the root
+            if not root_uri:
+                root_uri = notification_uri
+
+            # Check if we already have a notification for this thread root
+            existing_notif = NOTIFICATION_DB.has_notification_for_root(root_uri)
+            if existing_notif:
+                existing_reason = existing_notif.get('reason', 'unknown')
+                existing_uri = existing_notif.get('uri', 'unknown')
+                existing_status = existing_notif.get('status', 'unknown')
+                current_reason = notif_dict.get('reason', 'unknown')
+
+                # Only skip if we already have a 'mention' that is still PENDING and this is a 'reply'
+                # If the mention was already processed, this reply is a new conversation turn
+                if existing_reason == 'mention' and current_reason == 'reply' and existing_status == 'pending':
+                    logger.info(f"⏭️  Skipping duplicate 'reply' notification - already have pending 'mention' for same thread root")
+                    logger.debug(f"   Existing: {existing_uri} (reason: {existing_reason}, status: {existing_status})")
+                    logger.debug(f"   Skipped:  {notification_uri} (reason: {current_reason})")
+                    logger.debug(f"   Root URI: {root_uri}")
+                    return False
+                elif existing_reason == 'mention' and current_reason == 'reply' and existing_status != 'pending':
+                    logger.debug(f"Not skipping 'reply' - 'mention' already processed (status: {existing_status}), this is a new conversation turn")
+
+                # Skip if both are the same reason (already handled by URI check above, but log it)
+                if existing_reason == current_reason:
+                    logger.debug(f"Duplicate notification with same reason '{current_reason}' for thread root: {root_uri}")
+
             # Add to database - if this fails, don't queue the notification
             if not NOTIFICATION_DB.add_notification(notif_dict):
                 logger.warning(f"Failed to add notification to database, skipping: {notification_uri}")
@@ -1930,7 +1969,7 @@ def send_mutuals_engagement_message(client: Letta, agent_id: str) -> None:
 
         engagement_prompt = """This is your prompt to engage with your mutuals on Bluesky.
 
-Please use the get_bluesky_feed tool to read recent posts from your mutuals feed. Look for posts from the past day that are interesting, thought-provoking, or worth responding to.
+Please use the get_bluesky_feed tool to read recent posts from your Mutuals feed. Look for posts from the past day that are interesting, thought-provoking, or worth responding to.
 
 Once you've found a post to reply to, use the reply_to_bluesky_post tool to craft a thoughtful reply. Choose something that allows you to contribute meaningfully to the conversation.
 

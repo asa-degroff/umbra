@@ -175,11 +175,39 @@ class NotificationDB:
             SELECT status FROM notifications WHERE uri = ?
         """, (uri,))
         row = cursor.fetchone()
-        
+
         if row:
             return row['status'] in ['processed', 'ignored', 'no_reply']
         return False
-    
+
+    def has_notification_for_root(self, root_uri: str) -> Optional[Dict]:
+        """
+        Check if there's already a notification for the same thread root.
+
+        Returns the existing notification dict if found, None otherwise.
+        Prioritizes 'mention' notifications over 'reply' notifications.
+        """
+        if not root_uri:
+            return None
+
+        cursor = self.conn.execute("""
+            SELECT uri, reason, status, indexed_at
+            FROM notifications
+            WHERE (root_uri = ? OR uri = ?)
+            AND status IN ('pending', 'processed', 'ignored', 'no_reply')
+            ORDER BY
+                CASE reason
+                    WHEN 'mention' THEN 1
+                    WHEN 'reply' THEN 2
+                    ELSE 3
+                END,
+                indexed_at ASC
+            LIMIT 1
+        """, (root_uri, root_uri))
+
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     def mark_processed(self, uri: str, status: str = 'processed', error: str = None):
         """Mark a notification as processed."""
         try:
