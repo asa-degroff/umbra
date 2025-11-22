@@ -11,7 +11,7 @@ Main changes include:
 - personality changes
 
 ### Autonomous Vibe Coding
-- the ask_claude_code tool enables autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance on my local machine
+- the ```ask_claude_code tool``` enables autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance on my local machine
 - added tests for coding tools
 
 ### Increased Social Autonomy
@@ -22,7 +22,8 @@ Main changes include:
 ### Notification handling
 - the ```debounce_thread``` tool enables the agent to mark a post with a mention as the likely start of a thread, and defer response until an elapsed timer, after which the full thread context is retrieved and flattened before passing it to the agent with metadata enabling a reply to the last post 
 - for synchronous thread notifications, when passing the thread to the agent, the metadata for a response points to the last consecutive post in a chain, rather than the one where the agent was mentioned
-These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, rather than creating threads that branch out into trees.
+
+These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, preventing decontextualized replies to top-level posts, and threads that branch out into trees.
 
 
 ## umbra
