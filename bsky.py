@@ -8,7 +8,7 @@ import json
 import hashlib
 import subprocess
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 import time
 import random
@@ -1069,29 +1069,41 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
 
         for message in message_response.messages:
             # Debug: log message type and attributes
-            logger.debug(f"Message type: {message.message_type if hasattr(message, 'message_type') else 'unknown'}")
+            msg_type = getattr(message, 'message_type', 'NO_MESSAGE_TYPE')
+            logger.debug(f"Message type: {msg_type}")
+
+            # Enhanced debug for tool-related messages
+            if hasattr(message, 'message_type') and 'tool' in message.message_type.lower():
+                logger.debug(f"  🔍 Tool message found: {message.message_type}")
+                logger.debug(f"  Available attributes: {[attr for attr in dir(message) if not attr.startswith('_')]}")
+                logger.debug(f"  tool_returns: {getattr(message, 'tool_returns', 'NOT_FOUND')}")
+                logger.debug(f"  tool_call_id: {getattr(message, 'tool_call_id', 'NOT_FOUND')}")
+                logger.debug(f"  status: {getattr(message, 'status', 'NOT_FOUND')}")
+                if hasattr(message, 'tool_returns'):
+                    logger.debug(f"  tool_returns type: {type(message.tool_returns)}")
+                    logger.debug(f"  tool_returns length: {len(message.tool_returns) if message.tool_returns else 0}")
 
             # Check for tool_return_message type (per official Letta API docs)
             if hasattr(message, 'message_type') and message.message_type == 'tool_return_message':
-                # Current format: message.tool_returns is an array of tool return objects
-                if hasattr(message, 'tool_returns') and message.tool_returns:
-                    for tool_ret in message.tool_returns:
-                        tool_call_id = getattr(tool_ret, 'tool_call_id', None)
-                        status = getattr(tool_ret, 'status', 'unknown')
-
-                        if tool_call_id:
-                            tool_call_results[tool_call_id] = status
-                            logger.debug(f"Tool result: {tool_call_id} -> {status}")
-
-                # Fallback: deprecated fields (still supported for backward compatibility)
-                # message.tool_call_id and message.status are deprecated but available
-                elif hasattr(message, 'tool_call_id') and hasattr(message, 'status'):
+                # Primary: Use deprecated message-level fields (simpler and working)
+                if hasattr(message, 'tool_call_id') and hasattr(message, 'status'):
                     tool_call_id = message.tool_call_id
                     status = message.status
 
                     if tool_call_id:
                         tool_call_results[tool_call_id] = status
-                        logger.debug(f"Tool result (deprecated fields): {tool_call_id} -> {status}")
+                        logger.debug(f"Tool result: {tool_call_id} -> {status}")
+
+                # Alternative: Parse tool_returns array (list of dicts, not objects)
+                elif hasattr(message, 'tool_returns') and message.tool_returns:
+                    for tool_ret in message.tool_returns:
+                        # tool_returns is a list of DICTS, not objects - use dict access
+                        tool_call_id = tool_ret.get('tool_call_id') if isinstance(tool_ret, dict) else None
+                        status = tool_ret.get('status', 'unknown') if isinstance(tool_ret, dict) else 'unknown'
+
+                        if tool_call_id:
+                            tool_call_results[tool_call_id] = status
+                            logger.debug(f"Tool result (from array): {tool_call_id} -> {status}")
 
             # Check for ignore_notification tool
             if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
