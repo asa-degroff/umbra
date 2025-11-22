@@ -7,6 +7,7 @@ charset-normalizer==3.4.2
 click==8.2.1
 cryptography==45.0.5
 dnspython==2.7.0
+grapheme==0.6.0
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1

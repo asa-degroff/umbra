@@ -1071,29 +1071,27 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
             # Debug: log message type and attributes
             logger.debug(f"Message type: {message.message_type if hasattr(message, 'message_type') else 'unknown'}")
 
-            # Check for tool_return messages (newer Letta API format)
+            # Check for tool_return_message type (per official Letta API docs)
             if hasattr(message, 'message_type') and message.message_type == 'tool_return_message':
-                if hasattr(message, 'tool_return'):
-                    tool_call_id = getattr(message.tool_return, 'tool_call_id', None)
-                    tool_name = getattr(message.tool_return, 'name', None)
-                    status = getattr(message.tool_return, 'status', 'success')  # Assume success if no status
+                # Current format: message.tool_returns is an array of tool return objects
+                if hasattr(message, 'tool_returns') and message.tool_returns:
+                    for tool_ret in message.tool_returns:
+                        tool_call_id = getattr(tool_ret, 'tool_call_id', None)
+                        status = getattr(tool_ret, 'status', 'unknown')
 
-                    if tool_call_id and tool_name:
-                        if tool_name == 'add_post_to_bluesky_reply_thread':
+                        if tool_call_id:
                             tool_call_results[tool_call_id] = status
-                            logger.debug(f"Tool result (new format): {tool_call_id} -> {status}")
-                        elif tool_name == 'flag_archival_memory_for_deletion':
-                            tool_call_results[tool_call_id] = status
-                            logger.debug(f"Tool result (new format): {tool_call_id} -> {status}")
+                            logger.debug(f"Tool result: {tool_call_id} -> {status}")
 
-            # Also check old format (for backwards compatibility)
-            elif hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
-                if message.name == 'add_post_to_bluesky_reply_thread':
-                    tool_call_results[message.tool_call_id] = message.status
-                    logger.debug(f"Tool result (old format): {message.tool_call_id} -> {message.status}")
-                elif message.name == 'flag_archival_memory_for_deletion':
-                    tool_call_results[message.tool_call_id] = message.status
-                    logger.debug(f"Tool result (old format): {message.tool_call_id} -> {message.status}")
+                # Fallback: deprecated fields (still supported for backward compatibility)
+                # message.tool_call_id and message.status are deprecated but available
+                elif hasattr(message, 'tool_call_id') and hasattr(message, 'status'):
+                    tool_call_id = message.tool_call_id
+                    status = message.status
+
+                    if tool_call_id:
+                        tool_call_results[tool_call_id] = status
+                        logger.debug(f"Tool result (deprecated fields): {tool_call_id} -> {status}")
 
             # Check for ignore_notification tool
             if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
@@ -1264,9 +1262,9 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                     tool_call_id = message.tool_call.tool_call_id
                     tool_status = tool_call_results.get(tool_call_id, 'unknown')
 
-                    # If status is unknown, try to use it anyway (assume success)
-                    # This handles cases where the Letta API structure changed
-                    if tool_status == 'success' or tool_status == 'unknown':
+                    # Only accept explicitly successful tool calls
+                    # Rejecting 'unknown' status prevents failed validations from being sent
+                    if tool_status == 'success':
                         try:
                             args = json.loads(message.tool_call.arguments)
                             reply_text = args.get('text', '')
@@ -1274,14 +1272,15 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
 
                             if reply_text:  # Only add if there's actual content
                                 reply_candidates.append((reply_text, reply_lang))
-                                if tool_status == 'unknown':
-                                    logger.warning(f"⚠️ Using reply despite unknown tool status (assuming success): {reply_text[:50]}...")
-                                else:
-                                    logger.debug(f"Found successful add_post_to_bluesky_reply_thread candidate: {reply_text[:50]}... (lang: {reply_lang})")
+                                logger.debug(f"Found successful add_post_to_bluesky_reply_thread candidate: {reply_text[:50]}... (lang: {reply_lang})")
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to parse tool call arguments: {e}")
                     elif tool_status == 'error':
                         logger.debug(f"Skipping failed add_post_to_bluesky_reply_thread tool call (status: error)")
+                    elif tool_status == 'unknown':
+                        logger.error(f"❌ Skipping add_post_to_bluesky_reply_thread with unknown tool status (tool_call_id: {tool_call_id})")
+                        logger.error(f"   This indicates tool return parsing failed. Check Letta API version and message structure.")
+                        logger.error(f"   Tool call results captured: {list(tool_call_results.keys())}")
 
         # Handle archival memory deletion if any were flagged (only if no halt was received)
         if flagged_memories:
@@ -1389,18 +1388,35 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                         correlation_id=correlation_id
                     )
 
-            if response:
+            # Verify reply was sent successfully
+            # For threaded replies, reply_with_thread_to_notification returns list of responses or None
+            # For single replies, reply_to_notification returns dict or None
+            # In testing mode, response is True
+            reply_sent_successfully = False
+            if response is not None and response is not False:
+                # Additional validation for threaded replies
+                if isinstance(response, list):
+                    # Verify we sent all requested messages
+                    if len(response) == len(reply_messages):
+                        reply_sent_successfully = True
+                    else:
+                        logger.error(f"[{correlation_id}] Threaded reply incomplete: sent {len(response)}/{len(reply_messages)} messages")
+                else:
+                    # Single reply or testing mode
+                    reply_sent_successfully = True
+
+            if reply_sent_successfully:
                 logger.info(f"[{correlation_id}] Successfully replied to @{author_handle}", extra={
                     'correlation_id': correlation_id,
                     'author_handle': author_handle,
                     'reply_count': len(reply_messages)
                 })
-                
+
                 # Acknowledge the post we're replying to with stream.thought.ack
                 try:
                     post_uri = notification_data.get('uri')
                     post_cid = notification_data.get('cid')
-                    
+
                     if post_uri and post_cid:
                         ack_result = bsky_utils.acknowledge_post(
                             client=atproto_client,
@@ -1420,7 +1436,7 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                 except Exception as e:
                     logger.error(f"Error acknowledging post from @{author_handle}: {e}")
                     # Don't fail the entire operation if acknowledgment fails
-                
+
                 return True
             else:
                 logger.error(f"Failed to send reply to @{author_handle}")

@@ -760,11 +760,11 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         responses = []
         current_parent_uri = post_uri
         current_parent_cid = post_cid
-        
+
         for i, message in enumerate(reply_messages):
             thread_correlation_id = f"{correlation_id}-{i+1}"
             logger.info(f"[{thread_correlation_id}] Sending reply {i+1}/{len(reply_messages)}: {message[:50]}...")
-            
+
             # Send this reply
             response = reply_to_post(
                 client=client,
@@ -776,27 +776,13 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
                 lang=lang,
                 correlation_id=thread_correlation_id
             )
-            
+
             if not response:
-                logger.error(f"[{thread_correlation_id}] Failed to send reply {i+1}, posting system failure message")
-                # Try to post a system failure message
-                failure_response = reply_to_post(
-                    client=client,
-                    text="[SYSTEM FAILURE: COULD NOT POST MESSAGE, PLEASE TRY AGAIN]",
-                    reply_to_uri=current_parent_uri,
-                    reply_to_cid=current_parent_cid,
-                    root_uri=root_uri,
-                    root_cid=root_cid,
-                    lang=lang,
-                    correlation_id=f"{thread_correlation_id}-FAIL"
-                )
-                if failure_response:
-                    responses.append(failure_response)
-                    current_parent_uri = failure_response.uri
-                    current_parent_cid = failure_response.cid
-                else:
-                    logger.error(f"[{thread_correlation_id}] Could not even send system failure message, stopping thread")
-                    return responses if responses else None
+                logger.error(f"[{thread_correlation_id}] Failed to send reply {i+1}/{len(reply_messages)}, aborting thread")
+                # Don't send system failure message - just fail cleanly
+                # This allows proper retry logic to handle the failure
+                logger.error(f"[{correlation_id}] Thread send aborted after {len(responses)}/{len(reply_messages)} messages")
+                return None
             else:
                 responses.append(response)
                 # Update parent references for next reply (if any)
