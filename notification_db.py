@@ -143,6 +143,11 @@ class NotificationDB:
                         if root_info:
                             root_uri = root_info.get('uri')
 
+                # If no root_uri in reply info, this notification IS the root
+                # This matches the logic in save_notification_to_queue() for deduplication
+                if not root_uri:
+                    root_uri = uri
+
                 # Store additional metadata as JSON
                 metadata = {
                     'cid': notif_dict.get('cid'),
