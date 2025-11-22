@@ -166,6 +166,78 @@ Debounced notifications remain in the queue but are skipped during processing. C
 - `⏰ Found N expired debounced notifications` - Processing debounced threads
 - `⏰ Processing debounced thread from @handle` - Currently processing a debounced thread
 
+### High-Traffic Thread Debouncing
+
+High-traffic thread debouncing automatically intercepts notifications from very busy threads (10+ notifications per hour) to prevent overwhelming umbra with notifications from the same conversation. Instead of processing each notification individually, umbra waits for the thread to evolve over several hours, then reviews all notifications in a single batch.
+
+#### How It Works
+
+1. **Automatic Detection**: When a thread exceeds the notification threshold (default: 10 notifications in 60 minutes), new notifications from that thread are automatically debounced
+2. **Priority Queue**: Direct mentions receive shorter debounce times (30-60 minutes) than replies (2-6 hours), ensuring umbra remains responsive to direct engagement
+3. **Variable Debounce**: Debounce time scales with thread activity - busier threads get longer debounce periods
+4. **Batch Processing**: After the debounce period expires, all notifications are presented together with full thread context, allowing umbra to selectively respond to interesting posts
+
+#### Configuration
+
+Enable high-traffic detection in `config.yaml`:
+
+```yaml
+threading:
+  high_traffic_detection:
+    enabled: true  # Set to true to enable automatic high-traffic debouncing
+    notification_threshold: 10  # Number of notifications to trigger detection
+    time_window_minutes: 60  # Time window for counting notifications
+
+    # Priority queue: different debounce times for mentions vs replies
+    mention_debounce_min: 30  # Minimum debounce for direct mentions (minutes)
+    mention_debounce_max: 60  # Maximum debounce for very active threads (minutes)
+    reply_debounce_min: 120  # Minimum debounce for replies (2 hours)
+    reply_debounce_max: 360  # Maximum debounce for very active threads (6 hours)
+```
+
+#### Debounce Time Scaling
+
+The system uses variable debounce times based on thread activity:
+
+- **At threshold (10 notifications)**: Minimum debounce time
+  - Mentions: 30 minutes
+  - Replies: 2 hours
+- **2x threshold (20+ notifications)**: Maximum debounce time
+  - Mentions: 60 minutes
+  - Replies: 6 hours
+- **Between threshold and 2x**: Linear interpolation
+
+This ensures umbra remains responsive to moderately active threads while giving very busy threads more time to evolve.
+
+#### Database Migration
+
+If upgrading from a version without high-traffic detection, run the migration:
+
+```bash
+ac && python migrate_high_traffic_schema.py
+```
+
+This adds the required database columns (`auto_debounced`, `high_traffic_thread`) and indexes for efficient thread counting.
+
+#### Monitoring High-Traffic Threads
+
+Check logs for high-traffic detection activity:
+- `⚡ Auto-debounced high-traffic mention (N notifications, X.Xh wait)` - Mention debounced
+- `⚡ Auto-debounced high-traffic reply (N notifications, X.Xh wait)` - Reply debounced
+- `⚡ Processing high-traffic thread batch` - Batch processing started
+- `⚡ Skipping - high-traffic batch already processed` - Duplicate batch skipped
+
+#### How Batch Processing Works
+
+When the debounce period expires:
+1. System fetches ALL debounced notifications for the thread
+2. Fetches current thread context from Bluesky
+3. Presents chronological list of all notifications to umbra
+4. Umbra reviews the complete thread and decides which posts (if any) to respond to
+5. All debounces are cleared and queue files deleted
+
+This approach dramatically reduces API calls while maintaining engagement quality, as umbra can see the full evolution of a conversation before deciding how to participate.
+
 ### Claude Code Integration
 
 The Claude Code tool allows umbra to delegate coding tasks to a local Claude Code instance running on the administrator's machine. This enables umbra to build websites, write code, create documentation, and perform analysis.

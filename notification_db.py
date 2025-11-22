@@ -44,7 +44,9 @@ class NotificationDB:
                 last_retry_at TEXT,
                 debounce_until TEXT,
                 debounce_reason TEXT,
-                thread_chain_id TEXT
+                thread_chain_id TEXT,
+                auto_debounced INTEGER DEFAULT 0,
+                high_traffic_thread INTEGER DEFAULT 0
             )
         """)
         
@@ -77,6 +79,21 @@ class NotificationDB:
         self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_thread_chain_id
             ON notifications(thread_chain_id)
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_root_uri_indexed_at
+            ON notifications(root_uri, indexed_at)
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auto_debounced
+            ON notifications(auto_debounced)
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_high_traffic_thread
+            ON notifications(high_traffic_thread)
         """)
 
         # Create session tracking table
@@ -472,6 +489,135 @@ class NotificationDB:
         """, (thread_chain_id,))
 
         return [dict(row) for row in cursor]
+
+    def get_thread_notification_count(self, root_uri: str, minutes: int = 60) -> int:
+        """
+        Get count of notifications for a thread within time window.
+
+        Args:
+            root_uri: The root URI of the thread
+            minutes: Time window in minutes (default: 60)
+
+        Returns:
+            Count of notifications for this thread in the time window
+        """
+        cutoff_time = (datetime.now() - timedelta(minutes=minutes)).isoformat()
+        cursor = self.conn.execute("""
+            SELECT COUNT(*) as count
+            FROM notifications
+            WHERE root_uri = ? AND indexed_at > ?
+        """, (root_uri, cutoff_time))
+
+        result = cursor.fetchone()
+        return result['count'] if result else 0
+
+    def get_thread_debounced_notifications(self, root_uri: str) -> List[Dict]:
+        """
+        Get all debounced notifications for a specific thread.
+
+        Args:
+            root_uri: The root URI of the thread
+
+        Returns:
+            List of debounced notification dicts for this thread
+        """
+        cursor = self.conn.execute("""
+            SELECT * FROM notifications
+            WHERE root_uri = ?
+            AND debounce_until IS NOT NULL
+            AND status = 'pending'
+            ORDER BY indexed_at ASC
+        """, (root_uri,))
+
+        return [dict(row) for row in cursor]
+
+    def set_auto_debounce(self, uri: str, debounce_until: str, is_high_traffic: bool = True,
+                          reason: str = None, thread_chain_id: str = None):
+        """
+        Set automatic debounce for high-traffic thread detection.
+
+        Args:
+            uri: Notification URI
+            debounce_until: ISO timestamp when debounce expires
+            is_high_traffic: Whether this is a high-traffic thread (default: True)
+            reason: Reason for debouncing
+            thread_chain_id: Thread chain identifier
+        """
+        try:
+            self.conn.execute("""
+                UPDATE notifications
+                SET debounce_until = ?,
+                    debounce_reason = ?,
+                    thread_chain_id = ?,
+                    auto_debounced = ?,
+                    high_traffic_thread = ?
+                WHERE uri = ?
+            """, (debounce_until, reason, thread_chain_id,
+                  1 if debounce_until else 0,
+                  1 if is_high_traffic else 0,
+                  uri))
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error setting auto-debounce for notification: {e}")
+
+    def clear_batch_debounce(self, root_uri: str) -> int:
+        """
+        Clear debounce for all notifications in a thread batch.
+
+        Args:
+            root_uri: The root URI of the thread
+
+        Returns:
+            Number of notifications cleared
+        """
+        try:
+            cursor = self.conn.execute("""
+                UPDATE notifications
+                SET debounce_until = NULL,
+                    debounce_reason = NULL,
+                    auto_debounced = 0
+                WHERE root_uri = ?
+                AND debounce_until IS NOT NULL
+            """, (root_uri,))
+            self.conn.commit()
+            return cursor.rowcount
+        except Exception as e:
+            logger.error(f"Error clearing batch debounce: {e}")
+            return 0
+
+    def calculate_variable_debounce(self, thread_count: int, is_mention: bool, config: Dict) -> int:
+        """
+        Calculate variable debounce time based on thread activity level.
+
+        Args:
+            thread_count: Number of notifications in the thread
+            is_mention: True if this is a direct mention, False if reply
+            config: High-traffic detection config dict
+
+        Returns:
+            Debounce time in seconds
+        """
+        if is_mention:
+            min_seconds = config.get('mention_debounce_min', 30) * 60
+            max_seconds = config.get('mention_debounce_max', 60) * 60
+        else:
+            min_seconds = config.get('reply_debounce_min', 120) * 60
+            max_seconds = config.get('reply_debounce_max', 360) * 60
+
+        # Get threshold for scaling
+        threshold = config.get('notification_threshold', 10)
+
+        # Linear scaling: more activity = longer debounce
+        # If at threshold, use min_seconds
+        # If 3x threshold or more, use max_seconds
+        if thread_count <= threshold:
+            return min_seconds
+        elif thread_count >= threshold * 3:
+            return max_seconds
+        else:
+            # Linear interpolation between min and max
+            ratio = (thread_count - threshold) / threshold
+            return int(min_seconds + (max_seconds - min_seconds) * ratio)
 
     def close(self):
         """Close database connection."""

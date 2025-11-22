@@ -339,6 +339,186 @@ You may now respond to this thread with full context of all posts.{reply_instruc
         return None  # Critical error
 
 
+def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, queue_filepath=None, testing_mode=False):
+    """Process a batch of high-traffic thread notifications that have been debounced together.
+
+    Args:
+        umbra_agent: The Letta agent instance
+        atproto_client: The AT Protocol client
+        notification_data: The first notification data dictionary (triggers batch processing)
+        queue_filepath: Optional Path object to the queue file
+        testing_mode: If True, don't actually send messages
+
+    Returns:
+        True: Successfully processed
+        False: Failed but retryable
+        None: Critical error, move to errors
+        "no_reply": Agent chose not to reply
+        "ignored": Ignored (blocked user, etc.)
+    """
+    try:
+        # Get thread configuration
+        config = get_config()
+        threading_config = config.get('threading', {})
+
+        # Extract root URI to find all notifications in this batch
+        uri = notification_data.get('uri', '')
+        record = notification_data.get('record', {})
+        root_uri = None
+
+        if record and 'reply' in record and record['reply']:
+            reply_info = record['reply']
+            if reply_info and isinstance(reply_info, dict):
+                root_info = reply_info.get('root', {})
+                if root_info:
+                    root_uri = root_info.get('uri')
+
+        if not root_uri:
+            root_uri = uri
+
+        logger.info(f"⚡ Processing high-traffic thread batch")
+        logger.info(f"   Thread root: {root_uri}")
+
+        # Get all debounced notifications for this thread
+        if not NOTIFICATION_DB:
+            logger.error("Database not available for batch processing")
+            return None
+
+        batch_notifications = NOTIFICATION_DB.get_thread_debounced_notifications(root_uri)
+
+        if not batch_notifications:
+            logger.warning("No debounced notifications found for batch processing")
+            return False
+
+        logger.info(f"   Found {len(batch_notifications)} debounced notifications in batch")
+
+        # Fetch the complete current thread state from Bluesky
+        parent_height = threading_config.get('parent_height', 80)
+        depth = threading_config.get('depth', 10)
+
+        logger.info(f"   Fetching thread context (depth={depth})...")
+
+        try:
+            thread = bsky_utils.get_post_thread(atproto_client, root_uri, parent_height=parent_height, depth=depth)
+        except Exception as e:
+            logger.error(f"Failed to fetch thread for high-traffic batch: {e}")
+            return False  # Retry later
+
+        if not thread:
+            logger.error("Failed to get thread context for high-traffic batch")
+            return False  # Retry later
+
+        # Convert thread to YAML
+        thread_yaml = thread_to_yaml_string(thread)
+
+        # Build chronological list of notifications
+        notification_list = []
+        for notif in batch_notifications:
+            author_handle = notif.get('author_handle', 'unknown')
+            text = notif.get('text', '')
+            indexed_at = notif.get('indexed_at', '')
+            reason = notif.get('reason', 'unknown')
+            notification_list.append(f"- [{indexed_at}] @{author_handle} ({reason}): {text[:100]}")
+
+        notifications_summary = "\n".join(notification_list)
+
+        # Clear all debounces for this thread
+        cleared_count = NOTIFICATION_DB.clear_batch_debounce(root_uri)
+        logger.info(f"   Cleared {cleared_count} debounces")
+
+        # Build prompt for agent
+        system_message = f"""
+This is a HIGH-TRAFFIC THREAD that generated {len(batch_notifications)} notifications over the past few hours. The thread has been debounced to allow it to evolve before you respond.
+
+THREAD CONTEXT:
+{thread_yaml}
+
+NOTIFICATIONS RECEIVED ({len(batch_notifications)} total):
+{notifications_summary}
+
+INSTRUCTIONS:
+- Review the complete thread above
+- You may respond to one or more posts if you find them interesting
+- You can also choose to skip this thread entirely if it's not worth engaging with
+- Focus on quality over quantity - respond only if you have something meaningful to add
+- Use the reply_to_bluesky_post tool to respond to specific posts in the thread""".strip()
+
+        logger.info(f"Sending high-traffic batch to agent | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
+
+        if testing_mode:
+            logger.info("TESTING MODE: Skipping agent call for high-traffic batch")
+            return True
+
+        try:
+            # Attach user memory blocks for all participants in the thread
+            all_handles = set()
+            for notif in batch_notifications:
+                handle = notif.get('author_handle')
+                if handle:
+                    all_handles.add(handle)
+
+            attached_blocks = []
+            for handle in all_handles:
+                try:
+                    block = attach_user_block(umbra_agent.id, handle)
+                    if block:
+                        attached_blocks.append(block)
+                except Exception as e:
+                    logger.warning(f"Failed to attach user block for @{handle}: {e}")
+
+            # Call the agent with the batch context
+            response_generator = CLIENT.agents.messages.stream_create(
+                agent_id=umbra_agent.id,
+                messages=[{"role": "user", "content": system_message}]
+            )
+
+            # Process response stream (similar to process_mention)
+            full_response = ""
+            tool_calls_made = []
+
+            for event in response_generator:
+                if event.type == "message_start":
+                    continue
+                elif event.type == "content_block_start":
+                    continue
+                elif event.type == "content_block_delta":
+                    if hasattr(event.delta, 'text'):
+                        full_response += event.delta.text
+                elif event.type == "content_block_stop":
+                    continue
+                elif event.type == "message_delta":
+                    continue
+                elif event.type == "message_stop":
+                    break
+
+            # Detach user blocks
+            for block in attached_blocks:
+                try:
+                    detach_user_block(umbra_agent.id, block.label)
+                except Exception as e:
+                    logger.warning(f"Failed to detach user block {block.label}: {e}")
+
+            logger.info(f"✓ High-traffic batch processed successfully")
+
+            # Delete all queue files for this batch
+            if queue_filepath and queue_filepath.exists():
+                try:
+                    queue_filepath.unlink()
+                    logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete queue file: {e}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error calling agent for high-traffic batch: {e}")
+            return False  # Retry later
+
+    except Exception as e:
+        logger.error(f"Error processing high-traffic batch: {e}")
+        return None  # Critical error
+
+
 def process_mention(umbra_agent, atproto_client, notification_data, queue_filepath=None, testing_mode=False):
     """Process a mention and generate a reply using the Letta agent.
     
@@ -1348,6 +1528,59 @@ def save_notification_to_queue(notification, is_priority=None):
             if not root_uri:
                 root_uri = notification_uri
 
+            # High-traffic thread detection
+            config = get_config()
+            threading_config = config.get('threading', {})
+            high_traffic_config = threading_config.get('high_traffic_detection', {})
+
+            if high_traffic_config.get('enabled', False):
+                threshold = high_traffic_config.get('notification_threshold', 10)
+                time_window = high_traffic_config.get('time_window_minutes', 60)
+
+                # Count notifications for this thread in the time window
+                thread_count = NOTIFICATION_DB.get_thread_notification_count(root_uri, time_window)
+
+                if thread_count >= threshold:
+                    # Determine if this is a mention or reply
+                    current_reason = notif_dict.get('reason', 'reply')
+                    is_mention = current_reason == 'mention'
+
+                    # Calculate variable debounce time based on activity level
+                    debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
+                        thread_count, is_mention, high_traffic_config
+                    )
+
+                    # Add to database first (will be done below in normal flow)
+                    # We need to do this early to set the debounce
+                    if not NOTIFICATION_DB.add_notification(notif_dict):
+                        logger.warning(f"Failed to add notification to database, skipping: {notification_uri}")
+                        return False
+
+                    # Set auto-debounce
+                    debounce_until = (datetime.now() + timedelta(seconds=debounce_seconds)).isoformat()
+                    reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
+                    NOTIFICATION_DB.set_auto_debounce(
+                        notification_uri,
+                        debounce_until,
+                        is_high_traffic=True,
+                        reason=reason_label,
+                        thread_chain_id=root_uri
+                    )
+
+                    debounce_hours = debounce_seconds / 3600
+                    thread_type = "mention" if is_mention else "reply"
+                    logger.info(f"⚡ Auto-debounced high-traffic {thread_type} ({thread_count} notifications, {debounce_hours:.1f}h wait)")
+                    logger.debug(f"   Thread root: {root_uri}")
+                    logger.debug(f"   Notification: {notification_uri}")
+
+                    # Continue to queue the file, but skip the add_notification below
+                    # since we already added it above
+                    skip_db_add = True
+                else:
+                    skip_db_add = False
+            else:
+                skip_db_add = False
+
             # Check if we already have a notification for this thread root
             existing_notif = NOTIFICATION_DB.has_notification_for_root(root_uri)
             if existing_notif:
@@ -1372,9 +1605,11 @@ def save_notification_to_queue(notification, is_priority=None):
                     logger.debug(f"Duplicate notification with same reason '{current_reason}' for thread root: {root_uri}")
 
             # Add to database - if this fails, don't queue the notification
-            if not NOTIFICATION_DB.add_notification(notif_dict):
-                logger.warning(f"Failed to add notification to database, skipping: {notification_uri}")
-                return False
+            # Skip if already added during high-traffic detection
+            if not skip_db_add:
+                if not NOTIFICATION_DB.add_notification(notif_dict):
+                    logger.warning(f"Failed to add notification to database, skipping: {notification_uri}")
+                    return False
         else:
             # Fall back to old JSON method
             processed_uris = load_processed_notifications()
@@ -1429,6 +1664,8 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
         threading_config = config.get('threading', {})
         debounce_enabled = threading_config.get('debounce_enabled', False)
 
+        # Track which high-traffic batches we've already processed in this session
+        processed_high_traffic_batches = set()
 
         # Get all JSON files in queue directory (excluding processed_notifications.json)
         # Files are sorted by name, which puts priority files first (0_ prefix before 1_ prefix)
@@ -1519,27 +1756,74 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
 
                 # Check if this is a debounced notification whose debounce period has expired
                 is_debounced = False
+                is_high_traffic = False
+                debounced_notification = None
                 if debounce_enabled and NOTIFICATION_DB:
                     from datetime import datetime
                     expired_debounced = NOTIFICATION_DB.get_debounced_notifications()
                     expired_uris = {n['uri'] for n in expired_debounced}
                     if notif_data['uri'] in expired_uris:
                         is_debounced = True
-                        logger.info(f"⏰ Processing expired debounced notification: {filepath.name}")
-                        # Clear the debounce so it doesn't get skipped again
-                        NOTIFICATION_DB.clear_debounce(notif_data['uri'])
+                        # Find the full notification data to check if it's high-traffic
+                        debounced_notification = next((n for n in expired_debounced if n['uri'] == notif_data['uri']), None)
+
+                        # Check if this is a high-traffic auto-debounced notification
+                        if debounced_notification:
+                            is_high_traffic = (
+                                debounced_notification.get('auto_debounced', 0) == 1 and
+                                debounced_notification.get('high_traffic_thread', 0) == 1
+                            )
+
+                        if is_high_traffic:
+                            logger.info(f"⚡ Processing expired high-traffic batch: {filepath.name}")
+                        else:
+                            logger.info(f"⏰ Processing expired debounced notification: {filepath.name}")
 
                 # Process based on type using dict data directly
                 success = False
                 if notif_data['reason'] == "mention":
-                    if is_debounced:
+                    if is_debounced and is_high_traffic:
+                        # Check if we've already processed this batch
+                        if debounced_notification:
+                            batch_id = debounced_notification.get('thread_chain_id')
+                            if batch_id and batch_id in processed_high_traffic_batches:
+                                logger.info(f"⚡ Skipping - high-traffic batch already processed for thread: {batch_id}")
+                                # Mark as processed and delete the queue file
+                                if NOTIFICATION_DB:
+                                    NOTIFICATION_DB.mark_processed(notif_data['uri'], status='processed')
+                                filepath.unlink()
+                                success = True
+                            else:
+                                success = process_high_traffic_batch(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                                if success and batch_id:
+                                    processed_high_traffic_batches.add(batch_id)
+                        else:
+                            success = process_high_traffic_batch(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                    elif is_debounced:
                         success = process_debounced_thread(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     else:
                         success = process_mention(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     if success:
                         message_counters['mentions'] += 1
                 elif notif_data['reason'] == "reply":
-                    if is_debounced:
+                    if is_debounced and is_high_traffic:
+                        # Check if we've already processed this batch
+                        if debounced_notification:
+                            batch_id = debounced_notification.get('thread_chain_id')
+                            if batch_id and batch_id in processed_high_traffic_batches:
+                                logger.info(f"⚡ Skipping - high-traffic batch already processed for thread: {batch_id}")
+                                # Mark as processed and delete the queue file
+                                if NOTIFICATION_DB:
+                                    NOTIFICATION_DB.mark_processed(notif_data['uri'], status='processed')
+                                filepath.unlink()
+                                success = True
+                            else:
+                                success = process_high_traffic_batch(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                                if success and batch_id:
+                                    processed_high_traffic_batches.add(batch_id)
+                        else:
+                            success = process_high_traffic_batch(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
+                    elif is_debounced:
                         success = process_debounced_thread(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
                     else:
                         success = process_mention(umbra_agent, atproto_client, notif_data, queue_filepath=filepath, testing_mode=testing_mode)
