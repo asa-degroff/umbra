@@ -9,12 +9,21 @@ Main changes include:
 - administrator references changed from Cameron to myself
 - void's agent file removed
 - personality changes
-- added an ask_claude_code tool for autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance on my local machine
+
+### Autonomous Vibe Coding
+- the ask_claude_code tool enables autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance on my local machine
 - added tests for coding tools
-- added a like_bluesky_post tool for liking posts
-- notifications include URI and CID metadata for the like tool
-- added a reply_to_bluesky_post tool, enabling independent replies to posts outside of umbra's notifications
-- added a mutuals engagement feature, where umbra can autonomously reply to posts from mutuals
+
+### Increased Social Autonomy
+- added a ```like_bluesky_post``` tool for liking posts, passing URI and CID metadata for the like tool as part of notifications, enabling umbra to make the choice whether to reply, like, both, or neither
+- added a ```reply_to_bluesky_post``` tool, enabling independent replies to posts outside of umbra's notifications
+- added a mutuals engagement feature, where umbra can autonomously reply to posts from mutuals (triggered on a configurable interval with a random offset for naturalistic timing)
+
+### Notification handling
+- the ```debounce_thread``` tool enables the agent to mark a post with a mention as the likely start of a thread, and defer response until an elapsed timer, after which the full thread context is retrieved and flattened before passing it to the agent with metadata enabling a reply to the last post 
+- for synchronous thread notifications, when passing the thread to the agent, the metadata for a response points to the last consecutive post in a chain, rather than the one where the agent was mentioned
+These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, rather than creating threads that branch out into trees.
+
 
 ## umbra
 
