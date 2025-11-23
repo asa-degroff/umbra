@@ -21,17 +21,6 @@ BLUESKY_TOOLS = {
     'user_note_view',
 }
 
-X_TOOLS = {
-    'add_post_to_x_thread',
-    'search_x_posts',
-    'attach_x_user_blocks',
-    'detach_x_user_blocks',
-    'x_user_note_append',
-    'x_user_note_replace',
-    'x_user_note_set',
-    'x_user_note_view',
-}
-
 # Common tools shared across platforms
 COMMON_TOOLS = {
     'halt_activity',
@@ -44,21 +33,20 @@ COMMON_TOOLS = {
 
 def ensure_platform_tools(platform: str, agent_id: str = None, api_key: str = None) -> None:
     """
-    Ensure the correct tools are attached for the specified platform.
+    Ensure the correct tools are attached for Bluesky.
 
     This function will:
-    1. Detach tools that belong to other platforms
-    2. Keep common tools attached
-    3. Ensure platform-specific tools are attached
+    1. Keep common tools attached
+    2. Ensure Bluesky-specific tools are attached
 
     Args:
-        platform: Either 'bluesky' or 'x'
+        platform: Must be 'bluesky' (kept for backward compatibility)
         agent_id: Agent ID to manage tools for (uses config default if None)
         api_key: Letta API key to use (uses config default if None)
     """
-    if platform not in ['bluesky', 'x']:
-        raise ValueError(f"Platform must be 'bluesky' or 'x', got '{platform}'")
-    
+    if platform != 'bluesky':
+        raise ValueError(f"Only 'bluesky' platform is supported, got '{platform}'")
+
     letta_config = get_letta_config()
     agent_config = get_agent_config()
 
@@ -76,60 +64,32 @@ def ensure_platform_tools(platform: str, agent_id: str = None, api_key: str = No
         if letta_config.get('base_url'):
             client_params['base_url'] = letta_config['base_url']
         client = Letta(**client_params)
-        
+
         # Get the agent
         try:
             agent = client.agents.retrieve(agent_id=agent_id)
-            logger.info(f"Managing tools for agent '{agent.name}' ({agent_id}) for platform '{platform}'")
+            logger.info(f"Managing tools for agent '{agent.name}' ({agent_id}) for Bluesky")
         except Exception as e:
             logger.error(f"Could not retrieve agent {agent_id}: {e}")
             return
-        
+
         # Get current attached tools
         current_tools = client.agents.tools.list(agent_id=str(agent.id))
         current_tool_names = {tool.name for tool in current_tools}
-        current_tool_mapping = {tool.name: tool for tool in current_tools}
-        
-        # Determine which tools to keep and which to remove
-        if platform == 'bluesky':
-            tools_to_keep = BLUESKY_TOOLS | COMMON_TOOLS
-            tools_to_remove = X_TOOLS
-            required_tools = BLUESKY_TOOLS
-        else:  # platform == 'x'
-            tools_to_keep = X_TOOLS | COMMON_TOOLS
-            tools_to_remove = BLUESKY_TOOLS
-            required_tools = X_TOOLS
-        
-        # Detach tools that shouldn't be on this platform
-        tools_to_detach = tools_to_remove & current_tool_names
-        for tool_name in tools_to_detach:
-            try:
-                tool = current_tool_mapping[tool_name]
-                client.agents.tools.detach(
-                    agent_id=str(agent.id),
-                    tool_id=str(tool.id)
-                )
-                logger.info(f"Detached {tool_name} (not needed for {platform})")
-            except Exception as e:
-                logger.error(f"Failed to detach {tool_name}: {e}")
-        
+
         # Check which required tools are missing
+        required_tools = BLUESKY_TOOLS
         missing_tools = required_tools - current_tool_names
-        
+
         if missing_tools:
-            logger.info(f"Missing {len(missing_tools)} {platform} tools: {missing_tools}")
-            logger.info(f"Please run the appropriate registration script:")
-            if platform == 'bluesky':
-                logger.info("  python register_tools.py")
-            else:
-                logger.info("  python register_x_tools.py")
+            logger.info(f"Missing {len(missing_tools)} Bluesky tools: {missing_tools}")
+            logger.info(f"Please run: python register_tools.py")
         else:
-            logger.info(f"All required {platform} tools are already attached")
-        
+            logger.info(f"All required Bluesky tools are already attached")
+
         # Log final state
-        remaining_tools = (current_tool_names - tools_to_detach) & tools_to_keep
-        logger.info(f"Tools configured for {platform}: {len(remaining_tools)} tools active")
-        
+        logger.info(f"Tools configured for Bluesky: {len(current_tool_names)} tools active")
+
     except Exception as e:
         logger.error(f"Error managing platform tools: {e}")
         raise
@@ -173,14 +133,13 @@ def get_attached_tools(agent_id: str = None, api_key: str = None) -> Set[str]:
 
 if __name__ == "__main__":
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Manage platform-specific tools for Void agent")
-    parser.add_argument("platform", choices=['bluesky', 'x'], nargs='?', help="Platform to configure tools for")
+
+    parser = argparse.ArgumentParser(description="Manage tools for Bluesky agent")
     parser.add_argument("--agent-id", help="Agent ID (default: from config)")
     parser.add_argument("--list", action="store_true", help="List current tools without making changes")
-    
+
     args = parser.parse_args()
-    
+
     if args.list:
         tools = get_attached_tools(args.agent_id)
         print(f"\nCurrently attached tools ({len(tools)}):")
@@ -188,12 +147,8 @@ if __name__ == "__main__":
             platform_indicator = ""
             if tool in BLUESKY_TOOLS:
                 platform_indicator = " [Bluesky]"
-            elif tool in X_TOOLS:
-                platform_indicator = " [X]"
             elif tool in COMMON_TOOLS:
                 platform_indicator = " [Common]"
             print(f"  - {tool}{platform_indicator}")
     else:
-        if not args.platform:
-            parser.error("platform is required when not using --list")
-        ensure_platform_tools(args.platform, args.agent_id)
+        ensure_platform_tools('bluesky', args.agent_id)

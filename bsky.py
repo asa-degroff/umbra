@@ -1,5 +1,4 @@
 # Rich imports removed - using simple text formatting
-from time import sleep
 from letta_client import Letta
 from bsky_utils import thread_to_yaml_string
 import os
@@ -8,7 +7,7 @@ import json
 import hashlib
 import subprocess
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from collections import defaultdict
 import time
 import random
@@ -22,7 +21,6 @@ from config_loader import get_letta_config, get_config, get_queue_config
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
-from datetime import date
 from notification_db import NotificationDB
 
 def extract_handles_from_data(data):
@@ -457,14 +455,14 @@ INSTRUCTIONS:
                 if handle:
                     all_handles.add(handle)
 
-            attached_blocks = []
-            for handle in all_handles:
+            attached_handles = []
+            if all_handles:
                 try:
-                    block = attach_user_block(umbra_agent.id, handle)
-                    if block:
-                        attached_blocks.append(block)
+                    attach_result = attach_user_blocks(list(all_handles), umbra_agent)
+                    attached_handles = list(all_handles)
+                    logger.debug(f"Attach result: {attach_result}")
                 except Exception as e:
-                    logger.warning(f"Failed to attach user block for @{handle}: {e}")
+                    logger.warning(f"Failed to attach user blocks: {e}")
 
             # Call the agent with the batch context
             response_generator = CLIENT.agents.messages.stream_create(
@@ -492,11 +490,12 @@ INSTRUCTIONS:
                     break
 
             # Detach user blocks
-            for block in attached_blocks:
+            if attached_handles:
                 try:
-                    detach_user_block(umbra_agent.id, block.label)
+                    detach_result = detach_user_blocks(attached_handles, umbra_agent)
+                    logger.debug(f"Detach result: {detach_result}")
                 except Exception as e:
-                    logger.warning(f"Failed to detach user block {block.label}: {e}")
+                    logger.warning(f"Failed to detach user blocks: {e}")
 
             logger.info(f"✓ High-traffic batch processed successfully")
 
@@ -737,36 +736,7 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
         unique_handles = list(all_handles)
         
         logger.debug(f"Found {len(unique_handles)} unique handles in thread: {unique_handles}")
-        
-        # Check if any handles are in known_bots list
-        from tools.bot_detection import check_known_bots, should_respond_to_bot_thread, CheckKnownBotsArgs
-        import json
-        
-        try:
-            # Check for known bots in thread
-            bot_check_result = check_known_bots(unique_handles, umbra_agent)
-            bot_check_data = json.loads(bot_check_result)
-            
-            # TEMPORARILY DISABLED: Bot detection causing issues with normal users
-            # TODO: Re-enable after debugging why normal users are being flagged as bots
-            if False:  # bot_check_data.get("bot_detected", False):
-                detected_bots = bot_check_data.get("detected_bots", [])
-                logger.info(f"Bot detected in thread: {detected_bots}")
-                
-                # Decide whether to respond (10% chance)
-                if not should_respond_to_bot_thread():
-                    logger.info(f"Skipping bot thread (90% skip rate). Detected bots: {detected_bots}")
-                    # Return False to keep in queue for potential later processing
-                    return False
-                else:
-                    logger.info(f"Responding to bot thread (10% response rate). Detected bots: {detected_bots}")
-            else:
-                logger.debug("Bot detection disabled - processing all notifications")
-                
-        except Exception as bot_check_error:
-            logger.warning(f"Error checking for bots: {bot_check_error}")
-            # Continue processing if bot check fails
-        
+
         # Attach user blocks before agent call
         attached_handles = []
         if unique_handles:
@@ -2797,7 +2767,7 @@ def main():
                 
                 # Wait for next interval
                 logger.info(f"Waiting {SYNTHESIS_INTERVAL} seconds until next synthesis...")
-                sleep(SYNTHESIS_INTERVAL)
+                time.sleep(SYNTHESIS_INTERVAL)
                 
             except KeyboardInterrupt:
                 logger.info("=== SYNTHESIS MODE STOPPED BY USER ===")
@@ -2805,7 +2775,7 @@ def main():
             except Exception as e:
                 logger.error(f"Error in synthesis loop: {e}")
                 logger.info(f"Sleeping for {SYNTHESIS_INTERVAL} seconds due to error...")
-                sleep(SYNTHESIS_INTERVAL)
+                time.sleep(SYNTHESIS_INTERVAL)
     
     # Normal mode with notification processing
     logger.info(f"Starting notification monitoring, checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds")
@@ -2881,7 +2851,7 @@ def main():
             
             if total_messages > 0:
                 logger.info(f"Cycle {cycle_count} complete. Session totals: {total_messages} messages ({message_counters['mentions']} mentions, {message_counters['replies']} replies) | {messages_per_minute:.1f} msg/min")
-            sleep(FETCH_NOTIFICATIONS_DELAY_SEC)
+            time.sleep(FETCH_NOTIFICATIONS_DELAY_SEC)
 
         except KeyboardInterrupt:
             # Final stats
@@ -2908,7 +2878,7 @@ def main():
             logger.error(f"Error details: {e}")
             # Wait a bit longer on errors
             logger.info(f"Sleeping for {FETCH_NOTIFICATIONS_DELAY_SEC * 2} seconds due to error...")
-            sleep(FETCH_NOTIFICATIONS_DELAY_SEC * 2)
+            time.sleep(FETCH_NOTIFICATIONS_DELAY_SEC * 2)
 
 
 if __name__ == "__main__":

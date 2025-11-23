@@ -1,20 +1,21 @@
 """Thread tool for adding posts to Bluesky threads atomically."""
 from typing import Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 import grapheme
 
 
 class ReplyThreadPostArgs(BaseModel):
     text: str = Field(
-        ..., 
+        ...,
         description="Text content for the post (max 300 characters)"
     )
     lang: Optional[str] = Field(
         default="en-US",
         description="Language code for the post (e.g., 'en-US', 'es', 'ja', 'th'). Defaults to 'en-US'"
     )
-    
-    @validator('text')
+
+    @field_validator('text')
+    @classmethod
     def validate_text_length(cls, v):
         grapheme_count = grapheme.length(v)
         if grapheme_count > 300:
