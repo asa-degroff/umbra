@@ -1576,30 +1576,30 @@ def save_notification_to_queue(notification, is_priority=None):
                     # This handles: handler restarts, batch duplicates, concurrent processing
                     add_result = NOTIFICATION_DB.add_notification(notif_dict)
 
-                    # ALWAYS set debounce, even if notification already existed in DB
-                    # This ensures handler restarts and batch duplicates are handled correctly
-                    debounce_until = (datetime.now() + timedelta(seconds=debounce_seconds)).isoformat()
-                    reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
-                    NOTIFICATION_DB.set_auto_debounce(
-                        notification_uri,
-                        debounce_until,
-                        is_high_traffic=True,
-                        reason=reason_label,
-                        thread_chain_id=root_uri
-                    )
-
+                    # Only set debounce for NEW notifications, not duplicates
+                    # This prevents the debounce timer from being reset on every fetch cycle
                     debounce_hours = debounce_seconds / 3600
                     thread_type = "mention" if is_mention else "reply"
 
                     if add_result == "added":
+                        # New notification - set debounce
+                        debounce_until = (datetime.now() + timedelta(seconds=debounce_seconds)).isoformat()
+                        reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
+                        NOTIFICATION_DB.set_auto_debounce(
+                            notification_uri,
+                            debounce_until,
+                            is_high_traffic=True,
+                            reason=reason_label,
+                            thread_chain_id=root_uri
+                        )
                         logger.info(f"⚡ Auto-debounced high-traffic {thread_type} ({thread_count} notifications, {debounce_hours:.1f}h wait)")
+                        logger.debug(f"   Thread root: {root_uri}")
+                        logger.debug(f"   Notification: {notification_uri}")
                     elif add_result == "duplicate":
-                        logger.info(f"⚡ Updated debounce for existing high-traffic {thread_type} ({thread_count} notifications, {debounce_hours:.1f}h wait)")
+                        # Duplicate - don't reset debounce timer
+                        logger.debug(f"⚡ Skipping debounce update for duplicate high-traffic {thread_type}: {notification_uri}")
                     else:  # "error"
-                        logger.error(f"⚡ Error adding high-traffic {thread_type} to database, but debounce still set")
-
-                    logger.debug(f"   Thread root: {root_uri}")
-                    logger.debug(f"   Notification: {notification_uri}")
+                        logger.error(f"⚡ Error adding high-traffic {thread_type} to database: {notification_uri}")
 
                     # Continue to queue the file, but skip the add_notification below
                     # since we already added it above
