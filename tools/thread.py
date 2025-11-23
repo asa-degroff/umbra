@@ -1,25 +1,22 @@
 """Thread tool for adding posts to Bluesky threads atomically."""
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
-import grapheme
+from pydantic import BaseModel, Field, validator
 
 
 class ReplyThreadPostArgs(BaseModel):
     text: str = Field(
-        ...,
+        ..., 
         description="Text content for the post (max 300 characters)"
     )
     lang: Optional[str] = Field(
         default="en-US",
         description="Language code for the post (e.g., 'en-US', 'es', 'ja', 'th'). Defaults to 'en-US'"
     )
-
-    @field_validator('text')
-    @classmethod
+    
+    @validator('text')
     def validate_text_length(cls, v):
-        grapheme_count = grapheme.length(v)
-        if grapheme_count > 300:
-            raise ValueError(f"Text exceeds 300 grapheme limit (current: {grapheme_count} graphemes, {len(v)} characters)")
+        if len(v) > 300:
+            raise ValueError(f"Text exceeds 300 character limit (current: {len(v)} characters)")
         return v
 
 
@@ -45,10 +42,9 @@ def add_post_to_bluesky_reply_thread(text: str, lang: str = "en-US") -> str:
         Exception: If text exceeds character limit. On failure, the post will be omitted 
                   from the reply thread and the agent may try again with corrected text.
     """
-    # Validate input using grapheme count (Unicode-aware)
-    grapheme_count = grapheme.length(text)
-    if grapheme_count > 300:
-        raise Exception(f"Text exceeds 300 grapheme limit (current: {grapheme_count} graphemes, {len(text)} characters). This post will be omitted from the thread. You may try again with shorter text.")
+    # Validate input
+    if len(text) > 300:
+        raise Exception(f"Text exceeds 300 character limit (current: {len(text)} characters). This post will be omitted from the thread. You may try again with shorter text.")
     
     # Return confirmation - the actual posting will be handled by bsky.py
     return f"Post queued for reply thread: {text[:50]}{'...' if len(text) > 50 else ''} (Language: {lang})"

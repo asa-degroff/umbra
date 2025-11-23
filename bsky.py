@@ -1029,7 +1029,8 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
         tool_call_results = {}  # Map tool_call_id to status
         ack_note = None  # Track any note from annotate_ack tool
         flagged_memories = []  # Track memories flagged for deletion
-        
+        direct_reply_posted = False  # Track if reply_to_bluesky_post was called successfully
+
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
         
         # First pass: collect tool return statuses
@@ -1264,6 +1265,22 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                         logger.error(f"   This indicates tool return parsing failed. Check Letta API version and message structure.")
                         logger.error(f"   Tool call results captured: {list(tool_call_results.keys())}")
 
+                # Track reply_to_bluesky_post tool calls - these post DIRECTLY to Bluesky, not via handler
+                elif message.tool_call.name == 'reply_to_bluesky_post':
+                    tool_call_id = message.tool_call.tool_call_id
+                    tool_status = tool_call_results.get(tool_call_id, 'unknown')
+
+                    # Only accept explicitly successful tool calls
+                    # NOTE: This tool posts directly to Bluesky, so we don't add to reply_candidates
+                    # (that would cause duplicate posting). We just track that a reply was posted.
+                    if tool_status == 'success':
+                        direct_reply_posted = True
+                        logger.debug(f"Detected successful reply_to_bluesky_post (posted directly to Bluesky)")
+                    elif tool_status == 'error':
+                        logger.debug(f"Skipping failed reply_to_bluesky_post tool call (status: error)")
+                    elif tool_status == 'unknown':
+                        logger.error(f"❌ Skipping reply_to_bluesky_post with unknown tool status (tool_call_id: {tool_call_id})")
+
         # Handle archival memory deletion if any were flagged (only if no halt was received)
         if flagged_memories:
             logger.info(f"Processing {len(flagged_memories)} flagged memories for deletion")
@@ -1432,6 +1449,13 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                     'ignore_category': ignore_category
                 })
                 return "ignored"
+            # Check if a direct reply was posted (via reply_to_bluesky_post tool)
+            elif direct_reply_posted:
+                logger.info(f"[{correlation_id}] Direct reply was posted to @{author_handle} via reply_to_bluesky_post tool", extra={
+                    'correlation_id': correlation_id,
+                    'author_handle': author_handle
+                })
+                return True  # Treat as successful reply
             else:
                 logger.warning(f"[{correlation_id}] No reply generated for mention from @{author_handle}, moving to no_reply folder", extra={
                     'correlation_id': correlation_id,
@@ -1550,7 +1574,7 @@ def save_notification_to_queue(notification, is_priority=None):
 
                     # Try to add to database (may fail if already exists - that's OK!)
                     # This handles: handler restarts, batch duplicates, concurrent processing
-                    notification_added = NOTIFICATION_DB.add_notification(notif_dict)
+                    add_result = NOTIFICATION_DB.add_notification(notif_dict)
 
                     # ALWAYS set debounce, even if notification already existed in DB
                     # This ensures handler restarts and batch duplicates are handled correctly
@@ -1567,10 +1591,12 @@ def save_notification_to_queue(notification, is_priority=None):
                     debounce_hours = debounce_seconds / 3600
                     thread_type = "mention" if is_mention else "reply"
 
-                    if notification_added:
+                    if add_result == "added":
                         logger.info(f"⚡ Auto-debounced high-traffic {thread_type} ({thread_count} notifications, {debounce_hours:.1f}h wait)")
-                    else:
+                    elif add_result == "duplicate":
                         logger.info(f"⚡ Updated debounce for existing high-traffic {thread_type} ({thread_count} notifications, {debounce_hours:.1f}h wait)")
+                    else:  # "error"
+                        logger.error(f"⚡ Error adding high-traffic {thread_type} to database, but debounce still set")
 
                     logger.debug(f"   Thread root: {root_uri}")
                     logger.debug(f"   Notification: {notification_uri}")
@@ -1608,10 +1634,38 @@ def save_notification_to_queue(notification, is_priority=None):
 
             # Add to database - if this fails, don't queue the notification
             # Skip if already added during high-traffic detection
+            # Track if this is a newly added notification to skip duplicate queue file check
+            just_added_to_db = skip_db_add  # True if added during high-traffic detection
+
             if not skip_db_add:
-                if not NOTIFICATION_DB.add_notification(notif_dict):
-                    logger.warning(f"Failed to add notification to database, skipping: {notification_uri}")
+                add_result = NOTIFICATION_DB.add_notification(notif_dict)
+
+                if add_result == "error":
+                    logger.warning(f"Database error adding notification, skipping: {notification_uri}")
                     return False
+                elif add_result == "duplicate":
+                    # Check if this is an expired debounced notification that should be processed
+                    existing = NOTIFICATION_DB.get_notification(notification_uri)
+                    if existing and existing.get('debounce_until'):
+                        debounce_until = existing['debounce_until']
+                        current_time = datetime.now().isoformat()
+
+                        # If debounce has expired, allow processing
+                        if debounce_until <= current_time:
+                            logger.info(f"⏰ Processing expired debounced notification from @{existing.get('author_handle', 'unknown')}")
+                            logger.debug(f"   Debounce expired: {debounce_until}")
+                            logger.debug(f"   Current time: {current_time}")
+                            # Don't return False - allow it to continue to queue creation below
+                        else:
+                            logger.debug(f"⏸️ Skipping debounced notification (still waiting): {notification_uri}")
+                            return False
+                    else:
+                        # Duplicate without debounce - already processed or being processed
+                        logger.debug(f"Duplicate notification (no debounce), skipping: {notification_uri}")
+                        return False
+                elif add_result == "added":
+                    # This is a newly added notification
+                    just_added_to_db = True
         else:
             # Fall back to old JSON method
             processed_uris = load_processed_notifications()
@@ -1638,18 +1692,34 @@ def save_notification_to_queue(notification, is_priority=None):
 
         # Before creating queue file, check if notification already exists in database
         # This prevents duplicate queue files when notification is re-fetched (e.g., debounced)
-        if NOTIFICATION_DB:
+        # Skip this check for newly added notifications (they definitely don't have queue files yet)
+        if NOTIFICATION_DB and not just_added_to_db:
             cursor = NOTIFICATION_DB.conn.execute(
-                "SELECT uri, status FROM notifications WHERE uri = ?",
+                "SELECT uri, status, debounce_until FROM notifications WHERE uri = ?",
                 (notification_uri,)
             )
             existing = cursor.fetchone()
             if existing:
                 status = existing['status']
+                debounce_until = existing['debounce_until']
+
+                # Check if this is an expired debounced notification
+                is_expired_debounce = False
+                if debounce_until:
+                    current_time = datetime.now().isoformat()
+                    is_expired_debounce = debounce_until <= current_time
+
                 if status == 'pending':
-                    # Already queued and pending, don't create duplicate queue file
-                    logger.debug(f"Notification already pending in database, skipping queue file creation: {notification_uri}")
-                    return True  # Return True to indicate "handled" (not an error)
+                    # If this is an expired debounced notification, allow queue file creation
+                    if is_expired_debounce:
+                        logger.debug(f"Creating queue file for expired debounced notification: {notification_uri}")
+                        # Clear the debounce to prevent re-queueing on next fetch cycle
+                        NOTIFICATION_DB.clear_debounce(notification_uri)
+                        # Continue to queue file creation below
+                    else:
+                        # Already queued and pending, don't create duplicate queue file
+                        logger.debug(f"Notification already pending in database, skipping queue file creation: {notification_uri}")
+                        return True  # Return True to indicate "handled" (not an error)
                 # If status is processed/error/ignored, allow queue file creation for retry
 
         # Create filename with priority, timestamp and hash

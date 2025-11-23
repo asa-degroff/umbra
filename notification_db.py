@@ -111,17 +111,26 @@ class NotificationDB:
         
         self.conn.commit()
     
-    def add_notification(self, notif_dict: Dict) -> bool:
-        """Add a notification to the database atomically."""
+    def add_notification(self, notif_dict: Dict) -> str:
+        """
+        Add a notification to the database atomically.
+
+        Returns:
+            "added" - Successfully added new notification
+            "duplicate" - Notification already exists in database
+            "error" - Failed to add due to error
+        """
         try:
             # Handle None input
             if not notif_dict:
-                return False
+                logger.error("add_notification called with empty notif_dict")
+                return "error"
 
             # Extract key fields
             uri = notif_dict.get('uri', '')
             if not uri:
-                return False
+                logger.error("add_notification called with missing URI")
+                return "error"
 
             # Use BEGIN IMMEDIATE to acquire write lock immediately
             # This prevents race conditions when checking and inserting
@@ -135,7 +144,7 @@ class NotificationDB:
                 if cursor.fetchone():
                     self.conn.rollback()
                     logger.debug(f"Notification already in database: {uri}")
-                    return False
+                    return "duplicate"
 
                 indexed_at = notif_dict.get('indexed_at', '')
                 reason = notif_dict.get('reason', '')
@@ -181,16 +190,36 @@ class NotificationDB:
                       parent_uri, root_uri, json.dumps(metadata)))
 
                 self.conn.commit()
-                return True
+                return "added"
 
             except Exception as e:
                 self.conn.rollback()
                 raise
 
         except Exception as e:
-            logger.error(f"Error adding notification to DB: {e}")
-            return False
-    
+            logger.error(f"Error adding notification to DB ({uri if 'uri' in locals() else 'unknown'}): {type(e).__name__}: {e}")
+            return "error"
+
+    def get_notification(self, uri: str) -> Optional[Dict]:
+        """
+        Get a notification by URI.
+
+        Args:
+            uri: Notification URI to look up
+
+        Returns:
+            Dict with notification data if found, None otherwise
+        """
+        try:
+            cursor = self.conn.execute("""
+                SELECT * FROM notifications WHERE uri = ?
+            """, (uri,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error getting notification from DB: {e}")
+            return None
+
     def is_processed(self, uri: str) -> bool:
         """Check if a notification has been processed."""
         cursor = self.conn.execute("""
