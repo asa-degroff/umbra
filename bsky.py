@@ -582,76 +582,110 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             logger.error("Failed to get thread context for high-traffic batch")
             return False  # Retry later
 
-        # Convert thread to YAML
-        thread_yaml = thread_to_yaml_string(thread)
-
-        # Extract per-post metadata for agent to use when responding
+        # Extract all posts from thread
         flattened = bsky_utils.flatten_thread_structure(thread)
         posts = flattened.get('posts', [])
 
-        post_metadata_list = []
-        for idx, post in enumerate(posts, 1):
-            # Extract key metadata
-            uri = post.get('uri', 'unknown')
-            cid = post.get('cid', 'unknown')
+        # Create set of notification URIs to identify which posts are notifications
+        notification_uris = {notif['uri'] for notif in batch_notifications}
 
-            # Get author handle
-            author = post.get('author', {})
-            if isinstance(author, dict):
-                author_handle = author.get('handle', 'unknown')
+        # Split posts into context (before notifications) and notification posts
+        context_posts = []
+        notification_posts_data = []  # Will match with batch_notifications
+
+        for post in posts:
+            if post.get('uri') in notification_uris:
+                notification_posts_data.append(post)
             else:
-                author_handle = 'unknown'
+                context_posts.append(post)
 
-            # Get timestamp
-            created_at = post.get('record', {}).get('createdAt', 'unknown') if isinstance(post.get('record'), dict) else 'unknown'
+        # Build THREAD CONTEXT section (posts before notifications)
+        if context_posts:
+            import yaml
+            context_data = {'posts': context_posts}
+            # Convert to YAML directly (data is already in dict form)
+            pre_notification_yaml = yaml.dump(context_data, indent=2, allow_unicode=True, default_flow_style=False)
+        else:
+            pre_notification_yaml = "(No context posts - notifications start the thread)"
 
-            # Get text preview
-            record = post.get('record', {})
-            if isinstance(record, dict):
-                text = record.get('text', '')
+        # Build NOTIFICATIONS section with full text and metadata
+        notification_entries = []
+        for idx, notif in enumerate(batch_notifications, 1):
+            # Find matching post to get full text and complete metadata
+            matching_post = next((p for p in notification_posts_data if p.get('uri') == notif['uri']), None)
+
+            if matching_post:
+                # Extract full metadata
+                uri = matching_post.get('uri', 'unknown')
+                cid = matching_post.get('cid', 'unknown')
+
+                # Get author info
+                author = matching_post.get('author', {})
+                author_handle = author.get('handle', 'unknown') if isinstance(author, dict) else 'unknown'
+
+                # Get FULL text (not truncated)
+                record = matching_post.get('record', {})
+                full_text = record.get('text', '') if isinstance(record, dict) else ''
+
+                # Get timestamps
+                indexed_at = notif.get('indexed_at', 'unknown')  # When umbra received notification
+                created_at = record.get('createdAt', 'unknown') if isinstance(record, dict) else 'unknown'  # When post was created
+
+                reason = notif.get('reason', 'unknown')
+
+                # Build entry
+                entry = f"""[Notification {idx}] @{author_handle} ({reason}) - Received: {indexed_at}
+  Post: "{full_text}"
+  URI: {uri}
+  CID: {cid}
+  Posted: {created_at}"""
+
+                notification_entries.append(entry)
             else:
-                text = ''
-            text_preview = text[:100] + "..." if len(text) > 100 else text
+                # Fallback if post not found (shouldn't happen)
+                author_handle = notif.get('author_handle', 'unknown')
+                text = notif.get('text', '(text unavailable)')
+                uri = notif.get('uri', 'unknown')
+                indexed_at = notif.get('indexed_at', 'unknown')
+                reason = notif.get('reason', 'unknown')
 
-            # Build metadata entry
-            metadata_entry = f"[Post {idx}] @{author_handle} at {created_at}\n  URI: {uri}\n  CID: {cid}\n  Text: {text_preview}"
-            post_metadata_list.append(metadata_entry)
+                entry = f"""[Notification {idx}] @{author_handle} ({reason}) - Received: {indexed_at}
+  Post: "{text}"
+  URI: {uri}
+  CID: (unavailable)"""
 
-        post_metadata_table = "\n\n".join(post_metadata_list)
+                notification_entries.append(entry)
 
-        # Also build notification summary (who engaged with the thread)
-        notification_list = []
-        for notif in batch_notifications:
-            author_handle = notif.get('author_handle', 'unknown')
-            text = notif.get('text', '')
-            indexed_at = notif.get('indexed_at', '')
-            reason = notif.get('reason', 'unknown')
-            notification_list.append(f"- [{indexed_at}] @{author_handle} ({reason}): {text[:100]}")
+        notifications_section = "\n\n".join(notification_entries)
 
-        notifications_summary = "\n".join(notification_list)
-
-        # Build prompt for agent
+        # Build prompt for agent with new two-section format
+        separator = "━" * 80
         system_message = f"""
-This is a HIGH-TRAFFIC THREAD that generated {len(batch_notifications)} notifications over the past few hours. The thread has been debounced to allow it to evolve before you respond.
+This is a HIGH-TRAFFIC THREAD that generated {len(batch_notifications)} notifications over the past few hours.
 
-THREAD CONTEXT (Complete thread in chronological order):
-{thread_yaml}
+{separator}
+1. THREAD CONTEXT (Pre-notification history)
+{separator}
 
-POST METADATA (Use this to respond to specific posts):
-{post_metadata_table}
+These posts were in the thread BEFORE you received your notifications:
 
-NOTIFICATIONS RECEIVED ({len(batch_notifications)} total):
-{notifications_summary}
+{pre_notification_yaml}
 
-INSTRUCTIONS:
-- Review the complete thread context above to understand the full conversation
-- You can respond to ANY post(s) in the thread using the metadata provided
-- Reference posts by their Post number (e.g., "Post 3") when selecting which to engage with
-- You may respond to 0-3 posts depending on what you find interesting
-- Focus on quality over quantity - only respond if you have something meaningful to add
-- Use the reply_to_bluesky_post tool with the URI and CID from the metadata table
+{separator}
+2. NOTIFICATIONS ({len(batch_notifications)} posts you were notified about)
+{separator}
 
-Example: To respond to Post 5, use the URI and CID listed under [Post 5] in the metadata above.""".strip()
+{notifications_section}
+
+{separator}
+RESPONSE INSTRUCTIONS
+{separator}
+
+- Review THREAD CONTEXT to understand the conversation history
+- You received {len(batch_notifications)} NOTIFICATIONS - these are the posts that might warrant a response
+- Respond to 0-3 notifications depending on what's interesting
+- Use reply_to_bluesky_post with the URI and CID from the notification you want to reply to
+- Example: To respond to Notification 2, use the URI and CID listed under [Notification 2]""".strip()
 
         logger.info(f"Sending high-traffic batch to agent | {len(posts)} posts in thread | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
 
