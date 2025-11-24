@@ -17,7 +17,7 @@ from utils import (
     upsert_block,
     upsert_agent
 )
-from config_loader import get_letta_config, get_config, get_queue_config
+from config_loader import get_letta_config, get_config, get_queue_config, get_bluesky_config
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
@@ -1751,20 +1751,27 @@ def save_notification_to_queue(notification, is_priority=None):
                 logger.debug(f"Notification already processed (DB): {notification_uri}")
                 return False
 
-            # Check for duplicate notifications by thread root
-            # Extract root_uri from notification
+            # Extract thread URIs from notification
             record = notif_dict.get('record', {})
             root_uri = None
+            parent_uri = None
             if record and 'reply' in record and record['reply']:
                 reply_info = record['reply']
                 if reply_info and isinstance(reply_info, dict):
                     root_info = reply_info.get('root', {})
+                    parent_info = reply_info.get('parent', {})
                     if root_info:
                         root_uri = root_info.get('uri')
+                    if parent_info:
+                        parent_uri = parent_info.get('uri')
 
             # If no root_uri in reply info, this notification IS the root
             if not root_uri:
                 root_uri = notification_uri
+            # For parent, if no parent_uri, use notification_uri as well
+            # (a post without a parent is its own parent for deduplication purposes)
+            if not parent_uri:
+                parent_uri = notification_uri
 
             # High-traffic thread detection
             config = get_config()
@@ -1812,10 +1819,28 @@ def save_notification_to_queue(notification, is_priority=None):
                         logger.debug(f"   Thread root: {root_uri}")
                         logger.debug(f"   Notification: {notification_uri}")
                     elif add_result == "duplicate":
-                        # Duplicate - don't reset debounce timer
-                        logger.debug(f"⚡ Skipping debounce update for duplicate high-traffic {thread_type}: {notification_uri}")
+                        # Duplicate - check if it's debounced and skip queue file creation
+                        existing = NOTIFICATION_DB.get_notification(notification_uri)
+                        if existing and existing.get('debounce_until'):
+                            debounce_until = existing['debounce_until']
+                            current_time = datetime.now().isoformat()
+
+                            if debounce_until > current_time:
+                                # Still debounced - skip queue file creation to prevent re-queuing
+                                logger.debug(f"⚡ Skipping queue file for debounced high-traffic {thread_type}: {notification_uri}")
+                                return False
+                            else:
+                                # Debounce expired - allow queue file creation
+                                logger.debug(f"⚡ Creating queue file for expired debounced high-traffic {thread_type}: {notification_uri}")
+                                # Clear debounce to prevent re-queueing on next cycle
+                                NOTIFICATION_DB.clear_debounce(notification_uri)
+                        else:
+                            # Duplicate without debounce - likely already processed
+                            logger.debug(f"⚡ Skipping queue file for duplicate high-traffic {thread_type} (no debounce): {notification_uri}")
+                            return False
                     else:  # "error"
                         logger.error(f"⚡ Error adding high-traffic {thread_type} to database: {notification_uri}")
+                        return False
 
                     # Continue to queue the file, but skip the add_notification below
                     # since we already added it above
@@ -1825,8 +1850,10 @@ def save_notification_to_queue(notification, is_priority=None):
             else:
                 skip_db_add = False
 
-            # Check if we already have a notification for this thread root
-            existing_notif = NOTIFICATION_DB.has_notification_for_root(root_uri)
+            # Check if we already have a notification for the same parent post
+            # This prevents duplicate notifications about the same post while allowing
+            # new conversation turns in the same thread
+            existing_notif = NOTIFICATION_DB.has_notification_for_parent(parent_uri)
             if existing_notif:
                 existing_reason = existing_notif.get('reason', 'unknown')
                 existing_uri = existing_notif.get('uri', 'unknown')
@@ -1836,17 +1863,17 @@ def save_notification_to_queue(notification, is_priority=None):
                 # Only skip if we already have a 'mention' that is still PENDING and this is a 'reply'
                 # If the mention was already processed, this reply is a new conversation turn
                 if existing_reason == 'mention' and current_reason == 'reply' and existing_status == 'pending':
-                    logger.info(f"⏭️  Skipping duplicate 'reply' notification - already have pending 'mention' for same thread root")
+                    logger.info(f"⏭️  Skipping duplicate 'reply' notification - already have pending 'mention' for same parent post")
                     logger.debug(f"   Existing: {existing_uri} (reason: {existing_reason}, status: {existing_status})")
                     logger.debug(f"   Skipped:  {notification_uri} (reason: {current_reason})")
-                    logger.debug(f"   Root URI: {root_uri}")
+                    logger.debug(f"   Parent URI: {parent_uri}")
                     return False
                 elif existing_reason == 'mention' and current_reason == 'reply' and existing_status != 'pending':
                     logger.debug(f"Not skipping 'reply' - 'mention' already processed (status: {existing_status}), this is a new conversation turn")
 
                 # Skip if both are the same reason (already handled by URI check above, but log it)
                 if existing_reason == current_reason:
-                    logger.debug(f"Duplicate notification with same reason '{current_reason}' for thread root: {root_uri}")
+                    logger.debug(f"Duplicate notification with same reason '{current_reason}' for parent post: {parent_uri}")
 
             # Add to database - if this fails, don't queue the notification
             # Skip if already added during high-traffic detection

@@ -77,6 +77,11 @@ class NotificationDB:
         """)
 
         self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_parent_uri
+            ON notifications(parent_uri)
+        """)
+
+        self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_thread_chain_id
             ON notifications(thread_chain_id)
         """)
@@ -255,6 +260,38 @@ class NotificationDB:
                 indexed_at ASC
             LIMIT 1
         """, (root_uri, root_uri))
+
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def has_notification_for_parent(self, parent_uri: str) -> Optional[Dict]:
+        """
+        Check if there's already a notification for the same parent post.
+
+        This is used for deduplication to avoid processing multiple notifications
+        about the same post. Unlike has_notification_for_root(), this only checks
+        for notifications that are direct replies to the same parent post.
+
+        Returns the existing notification dict if found, None otherwise.
+        Prioritizes 'mention' notifications over 'reply' notifications.
+        """
+        if not parent_uri:
+            return None
+
+        cursor = self.conn.execute("""
+            SELECT uri, reason, status, indexed_at
+            FROM notifications
+            WHERE (parent_uri = ? OR uri = ?)
+            AND status IN ('pending', 'processed', 'ignored', 'no_reply')
+            ORDER BY
+                CASE reason
+                    WHEN 'mention' THEN 1
+                    WHEN 'reply' THEN 2
+                    ELSE 3
+                END,
+                indexed_at ASC
+            LIMIT 1
+        """, (parent_uri, parent_uri))
 
         row = cursor.fetchone()
         return dict(row) if row else None
