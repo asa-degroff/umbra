@@ -22,6 +22,7 @@ Main changes include:
 ### Notification handling
 - the ```debounce_thread``` tool enables the agent to mark a post with a mention as the likely start of a thread, and defer response until an elapsed timer, after which the full thread context is retrieved and flattened before passing it to the agent with metadata enabling a reply to the last post 
 - for synchronous thread notifications, when passing the thread to the agent, the metadata for a response points to the last consecutive post in a chain, rather than the one where the agent was mentioned
+- high-traffic thread detection triggers an automatic debounce mechanism, which intercepts notifications for a time period (dynamic, based on thread activity), after which the flattened thread including context that has evolved since the debounce was triggered is passed to the agent in a single message, with the option to reposond to its favorites
 
 These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, preventing decontextualized replies to top-level posts, and threads that branch out into trees.
 

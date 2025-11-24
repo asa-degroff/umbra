@@ -409,7 +409,41 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Convert thread to YAML
         thread_yaml = thread_to_yaml_string(thread)
 
-        # Build chronological list of notifications
+        # Extract per-post metadata for agent to use when responding
+        flattened = bsky_utils.flatten_thread_structure(thread)
+        posts = flattened.get('posts', [])
+
+        post_metadata_list = []
+        for idx, post in enumerate(posts, 1):
+            # Extract key metadata
+            uri = post.get('uri', 'unknown')
+            cid = post.get('cid', 'unknown')
+
+            # Get author handle
+            author = post.get('author', {})
+            if isinstance(author, dict):
+                author_handle = author.get('handle', 'unknown')
+            else:
+                author_handle = 'unknown'
+
+            # Get timestamp
+            created_at = post.get('record', {}).get('createdAt', 'unknown') if isinstance(post.get('record'), dict) else 'unknown'
+
+            # Get text preview
+            record = post.get('record', {})
+            if isinstance(record, dict):
+                text = record.get('text', '')
+            else:
+                text = ''
+            text_preview = text[:100] + "..." if len(text) > 100 else text
+
+            # Build metadata entry
+            metadata_entry = f"[Post {idx}] @{author_handle} at {created_at}\n  URI: {uri}\n  CID: {cid}\n  Text: {text_preview}"
+            post_metadata_list.append(metadata_entry)
+
+        post_metadata_table = "\n\n".join(post_metadata_list)
+
+        # Also build notification summary (who engaged with the thread)
         notification_list = []
         for notif in batch_notifications:
             author_handle = notif.get('author_handle', 'unknown')
@@ -428,20 +462,26 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         system_message = f"""
 This is a HIGH-TRAFFIC THREAD that generated {len(batch_notifications)} notifications over the past few hours. The thread has been debounced to allow it to evolve before you respond.
 
-THREAD CONTEXT:
+THREAD CONTEXT (Complete thread in chronological order):
 {thread_yaml}
+
+POST METADATA (Use this to respond to specific posts):
+{post_metadata_table}
 
 NOTIFICATIONS RECEIVED ({len(batch_notifications)} total):
 {notifications_summary}
 
 INSTRUCTIONS:
-- Review the complete thread above
-- You may respond to one or more posts if you find them interesting
-- You can also choose to skip this thread entirely if it's not worth engaging with
-- Focus on quality over quantity - respond only if you have something meaningful to add
-- Use the reply_to_bluesky_post tool to respond to specific posts in the thread""".strip()
+- Review the complete thread context above to understand the full conversation
+- You can respond to ANY post(s) in the thread using the metadata provided
+- Reference posts by their Post number (e.g., "Post 3") when selecting which to engage with
+- You may respond to 0-3 posts depending on what you find interesting
+- Focus on quality over quantity - only respond if you have something meaningful to add
+- Use the reply_to_bluesky_post tool with the URI and CID from the metadata table
 
-        logger.info(f"Sending high-traffic batch to agent | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
+Example: To respond to Post 5, use the URI and CID listed under [Post 5] in the metadata above.""".strip()
+
+        logger.info(f"Sending high-traffic batch to agent | {len(posts)} posts in thread | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
 
         if testing_mode:
             logger.info("TESTING MODE: Skipping agent call for high-traffic batch")
