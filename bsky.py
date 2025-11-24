@@ -2083,9 +2083,7 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                         if matching_notif and matching_notif.get('debounce_until'):
                             debounce_until = matching_notif['debounce_until']
                             logger.info(f"⏸️  Skipping debounced notification (waiting until {debounce_until}): {filepath.name}")
-                            # Delete the queue file to prevent accumulation
-                            filepath.unlink()
-                            logger.debug(f"Removed queue file for debounced notification: {filepath.name}")
+                            # Keep the queue file - it will be processed when debounce expires
                             continue  # Skip this notification for now
 
                 # Check if this is a debounced notification whose debounce period has expired
