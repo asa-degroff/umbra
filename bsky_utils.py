@@ -138,13 +138,54 @@ def flatten_thread_structure(thread_data):
 
         # Then add this node's post
         if hasattr(node, 'post') and node.post:
-            # Convert to dict if needed to ensure we can process it
-            if hasattr(node.post, '__dict__'):
-                post_dict = node.post.__dict__.copy()
-            elif isinstance(node.post, dict):
-                post_dict = node.post.copy()
-            else:
-                post_dict = {}
+            # Extract post data by accessing properties directly (not __dict__)
+            # AT Protocol objects store data in properties, not __dict__
+            post = node.post
+
+            # Build post dict with proper property access
+            post_dict = {}
+
+            # Extract basic fields
+            if hasattr(post, 'uri'):
+                post_dict['uri'] = post.uri
+            if hasattr(post, 'cid'):
+                post_dict['cid'] = post.cid
+
+            # Extract author info
+            if hasattr(post, 'author') and post.author:
+                author = post.author
+                post_dict['author'] = {
+                    'handle': getattr(author, 'handle', 'unknown'),
+                    'display_name': getattr(author, 'display_name', 'unknown'),
+                    'did': getattr(author, 'did', 'unknown')
+                }
+
+            # Extract record info (text, created_at, etc.)
+            if hasattr(post, 'record') and post.record:
+                record = post.record
+                record_dict = {
+                    'text': getattr(record, 'text', ''),
+                    'createdAt': getattr(record, 'created_at', 'unknown')
+                }
+
+                # Extract facets if present
+                if hasattr(record, 'facets') and record.facets:
+                    record_dict['facets'] = [
+                        {
+                            'index': {
+                                'byte_start': getattr(f.index, 'byte_start', 0) if hasattr(f, 'index') else 0,
+                                'byte_end': getattr(f.index, 'byte_end', 0) if hasattr(f, 'index') else 0
+                            },
+                            'features': [str(feat) for feat in f.features] if hasattr(f, 'features') else []
+                        }
+                        for f in record.facets
+                    ]
+
+                # Extract embed if present
+                if hasattr(record, 'embed') and record.embed:
+                    record_dict['embed'] = str(record.embed)[:200]  # Summary
+
+                post_dict['record'] = record_dict
 
             posts.append(post_dict)
 

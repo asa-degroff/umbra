@@ -597,6 +597,32 @@ class NotificationDB:
 
         return [dict(row) for row in cursor]
 
+    def get_thread_earliest_debounce(self, root_uri: str) -> Optional[Dict]:
+        """
+        Get the earliest debounce timer for a thread (if any).
+
+        This is used to implement single-timer-per-thread behavior for high-traffic
+        debouncing. When a new notification arrives for a thread that already has
+        a debounce timer, we reuse the existing timer instead of creating a new one.
+
+        Args:
+            root_uri: The root URI of the thread
+
+        Returns:
+            Dict with notification data (including debounce_until) if found, None otherwise
+        """
+        cursor = self.conn.execute("""
+            SELECT * FROM notifications
+            WHERE root_uri = ?
+            AND debounce_until IS NOT NULL
+            AND status = 'pending'
+            ORDER BY debounce_until ASC
+            LIMIT 1
+        """, (root_uri,))
+
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     def set_auto_debounce(self, uri: str, debounce_until: str, is_high_traffic: bool = True,
                           reason: str = None, thread_chain_id: str = None):
         """
