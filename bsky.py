@@ -630,10 +630,6 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
 
         notifications_summary = "\n".join(notification_list)
 
-        # Clear all debounces for this thread
-        cleared_count = NOTIFICATION_DB.clear_batch_debounce(root_uri)
-        logger.info(f"   Cleared {cleared_count} debounces")
-
         # Build prompt for agent
         system_message = f"""
 This is a HIGH-TRAFFIC THREAD that generated {len(batch_notifications)} notifications over the past few hours. The thread has been debounced to allow it to evolve before you respond.
@@ -680,29 +676,37 @@ Example: To respond to Post 5, use the URI and CID listed under [Post 5] in the 
                 except Exception as e:
                     logger.warning(f"Failed to attach user blocks: {e}")
 
-            # Call the agent with the batch context
-            response_generator = CLIENT.agents.messages.stream_create(
+            # Call the agent with the batch context using streaming
+            message_stream = CLIENT.agents.messages.create_stream(
                 agent_id=umbra_agent.id,
-                messages=[{"role": "user", "content": system_message}]
+                messages=[{"role": "user", "content": system_message}],
+                stream_tokens=False,  # Step streaming only (faster than token streaming)
+                max_steps=100
             )
 
-            # Process response stream (similar to process_mention)
-            full_response = ""
-            tool_calls_made = []
+            # Process response stream (message-based pattern)
+            all_messages = []
+            for chunk in message_stream:
+                # Log condensed chunk info
+                if hasattr(chunk, 'message_type'):
+                    if chunk.message_type == 'reasoning_message':
+                        logger.debug(f"⚡ Reasoning: {chunk.reasoning[:100]}...")
+                    elif chunk.message_type == 'tool_call_message':
+                        tool_name = chunk.tool_call.name
+                        logger.info(f"⚡ Tool call: {tool_name}")
+                    elif chunk.message_type == 'tool_return_message':
+                        logger.debug(f"⚡ Tool result: {chunk.name} - {chunk.status}")
+                    elif chunk.message_type == 'assistant_message':
+                        logger.info(f"⚡ Assistant: {chunk.content[:100]}...")
+                    elif chunk.message_type == 'error_message':
+                        logger.error(f"⚡ Agent error: {chunk}")
+                    else:
+                        # Filter out verbose message types
+                        if chunk.message_type not in ['usage_statistics', 'stop_reason']:
+                            logger.debug(f"⚡ {chunk.message_type}: {str(chunk)[:100]}...")
 
-            for event in response_generator:
-                if event.type == "message_start":
-                    continue
-                elif event.type == "content_block_start":
-                    continue
-                elif event.type == "content_block_delta":
-                    if hasattr(event.delta, 'text'):
-                        full_response += event.delta.text
-                elif event.type == "content_block_stop":
-                    continue
-                elif event.type == "message_delta":
-                    continue
-                elif event.type == "message_stop":
+                all_messages.append(chunk)
+                if str(chunk) == 'done':
                     break
 
             # Detach user blocks
@@ -712,6 +716,10 @@ Example: To respond to Post 5, use the URI and CID listed under [Post 5] in the 
                     logger.debug(f"Detach result: {detach_result}")
                 except Exception as e:
                     logger.warning(f"Failed to detach user blocks: {e}")
+
+            # Clear all debounces for this thread (only after successful processing)
+            cleared_count = NOTIFICATION_DB.clear_batch_debounce(root_uri)
+            logger.info(f"⚡ Cleared {cleared_count} debounces after successful processing")
 
             logger.info(f"✓ High-traffic batch processed successfully")
 
@@ -1246,6 +1254,8 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
         ack_note = None  # Track any note from annotate_ack tool
         flagged_memories = []  # Track memories flagged for deletion
         direct_reply_posted = False  # Track if reply_to_bluesky_post was called successfully
+        agent_error_occurred = False  # Track if agent returned error_message
+        agent_error_details = None  # Store error content if available
 
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
         
