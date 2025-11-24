@@ -1179,6 +1179,14 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                         # Indent response text
                         for line in chunk.content.split('\n'):
                             print(f"  {line}")
+                    elif chunk.message_type == 'error_message':
+                        # Agent returned an error - log it prominently
+                        if hasattr(chunk, 'content') and chunk.content:
+                            logger.error(f"❌ Agent error: {chunk.content}")
+                            log_with_panel(chunk.content, "Agent Error", "red")
+                        else:
+                            logger.error(f"❌ Agent error (no details provided)")
+                            logger.debug(f"Full error object: {chunk}")
                     else:
                         # Filter out verbose message types
                         if chunk.message_type not in ['usage_statistics', 'stop_reason']:
@@ -1268,6 +1276,16 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
             # Debug: log message type and attributes
             msg_type = getattr(message, 'message_type', 'NO_MESSAGE_TYPE')
             logger.debug(f"Message type: {msg_type}")
+
+            # Check for error_message type
+            if hasattr(message, 'message_type') and message.message_type == 'error_message':
+                agent_error_occurred = True
+                if hasattr(message, 'content') and message.content:
+                    agent_error_details = message.content
+                    logger.error(f"Error detected in message processing: {message.content}")
+                else:
+                    logger.error(f"Error detected in message processing (no details)")
+                    logger.debug(f"Full error message object: {message}")
 
             # Enhanced debug for tool-related messages
             if hasattr(message, 'message_type') and 'tool' in message.message_type.lower():
@@ -1667,8 +1685,23 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                 logger.error(f"Failed to send reply to @{author_handle}")
                 return False
         else:
+            # Check if agent returned an error first (before checking for intentional no-reply)
+            if agent_error_occurred:
+                if agent_error_details:
+                    logger.error(f"[{correlation_id}] Agent error for @{author_handle}: {agent_error_details}", extra={
+                        'correlation_id': correlation_id,
+                        'author_handle': author_handle,
+                        'error': agent_error_details
+                    })
+                else:
+                    logger.error(f"[{correlation_id}] Agent error for @{author_handle} (no details provided)", extra={
+                        'correlation_id': correlation_id,
+                        'author_handle': author_handle
+                    })
+                # Return False to trigger retry (will move to errors folder after max retries)
+                return False
             # Check if notification was explicitly ignored
-            if ignored_notification:
+            elif ignored_notification:
                 logger.info(f"[{correlation_id}] Notification from @{author_handle} was explicitly ignored (category: {ignore_category})", extra={
                     'correlation_id': correlation_id,
                     'author_handle': author_handle,
@@ -1759,6 +1792,14 @@ def save_notification_to_queue(notification, is_priority=None):
         if NOTIFICATION_DB:
             if NOTIFICATION_DB.is_processed(notification_uri):
                 logger.debug(f"Notification already processed (DB): {notification_uri}")
+                return False
+
+            # Filter out umbra's own posts to prevent processing self-replies
+            author_handle = notif_dict.get('author', {}).get('handle', '') if notif_dict.get('author') else ''
+            config = get_config()
+            umbra_handle = config.get('bluesky', {}).get('username', '')
+            if author_handle and umbra_handle and author_handle == umbra_handle:
+                logger.debug(f"Skipping self-notification from umbra: {notification_uri}")
                 return False
 
             # Extract thread URIs from notification
@@ -1966,8 +2007,8 @@ def save_notification_to_queue(notification, is_priority=None):
                     # If this is an expired debounced notification, allow queue file creation
                     if is_expired_debounce:
                         logger.debug(f"Creating queue file for expired debounced notification: {notification_uri}")
-                        # Clear the debounce to prevent re-queueing on next fetch cycle
-                        NOTIFICATION_DB.clear_debounce(notification_uri)
+                        # Don't clear debounce here - preserve flags for routing in queue processing
+                        # Debounce will be cleared after successful processing
                         # Continue to queue file creation below
                     else:
                         # Already queued and pending, don't create duplicate queue file
@@ -2215,6 +2256,11 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                     else:
                         filepath.unlink()
                         logger.info(f"Successfully processed and removed: {filepath.name}")
+
+                        # Clear debounce flags now that processing is complete
+                        if NOTIFICATION_DB and is_debounced:
+                            NOTIFICATION_DB.clear_debounce(notif_data['uri'])
+                            logger.debug(f"Cleared debounce flags for: {notif_data['uri']}")
                     
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name
