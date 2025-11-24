@@ -1855,9 +1855,20 @@ def save_notification_to_queue(notification, is_priority=None):
         
         # Check if already processed (using database if available)
         if NOTIFICATION_DB:
-            if NOTIFICATION_DB.is_processed(notification_uri):
-                logger.debug(f"Notification already processed (DB): {notification_uri}")
-                return False
+            # Get detailed status for diagnostic logging
+            cursor = NOTIFICATION_DB.conn.execute(
+                "SELECT status FROM notifications WHERE uri = ?",
+                (notification_uri,)
+            )
+            row = cursor.fetchone()
+            if row:
+                db_status = row['status']
+                logger.debug(f"🔍 Notification DB status check: uri={notification_uri}, status={db_status}")
+                if db_status in ['processed', 'ignored', 'no_reply', 'in_progress']:
+                    logger.debug(f"Notification already processed (DB status={db_status}): {notification_uri}")
+                    return False
+            else:
+                logger.debug(f"🔍 Notification not in DB: {notification_uri}")
 
             # Filter out umbra's own posts to prevent processing self-replies
             author_handle = notif_dict.get('author', {}).get('handle', '') if notif_dict.get('author') else ''
@@ -1964,9 +1975,8 @@ def save_notification_to_queue(notification, is_priority=None):
                                 return False
                             else:
                                 # Debounce expired - allow queue file creation
+                                # Note: debounce is cleared after successful processing in process_high_traffic_batch()
                                 logger.debug(f"⚡ Creating queue file for expired debounced high-traffic {thread_type}: {notification_uri}")
-                                # Clear debounce to prevent re-queueing on next cycle
-                                NOTIFICATION_DB.clear_debounce(notification_uri)
                         else:
                             # Duplicate without debounce - likely already processed
                             logger.debug(f"⚡ Skipping queue file for duplicate high-traffic {thread_type} (no debounce): {notification_uri}")
@@ -2204,6 +2214,15 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                 with open(filepath, 'r') as f:
                     notif_data = json.load(f)
 
+                # Check if this notification has already been processed (duplicate queue file cleanup)
+                # This handles legacy duplicate queue files that were created before deduplication was fixed
+                if NOTIFICATION_DB:
+                    existing_notif = NOTIFICATION_DB.get_notification(notif_data['uri'])
+                    if existing_notif and existing_notif.get('status') in ['processed', 'in_progress']:
+                        logger.info(f"🗑️ Deleting duplicate queue file (notification already {existing_notif.get('status')}): {filepath.name}")
+                        filepath.unlink()
+                        continue  # Skip to next queue file
+
                 # Check if this notification is debounced and still waiting
                 if debounce_enabled and NOTIFICATION_DB:
                     from datetime import datetime
@@ -2243,6 +2262,11 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                             logger.info(f"⚡ Processing expired high-traffic batch: {filepath.name}")
                         else:
                             logger.info(f"⏰ Processing expired debounced notification: {filepath.name}")
+
+                # Mark notification as in_progress to prevent re-queuing during processing
+                # This closes the window where Bluesky might re-surface the notification
+                if NOTIFICATION_DB:
+                    NOTIFICATION_DB.mark_in_progress(notif_data['uri'])
 
                 # Process based on type using dict data directly
                 success = False
@@ -2500,35 +2524,36 @@ def fetch_and_queue_new_notifications(atproto_client):
             
             # Queue all new notifications (except likes)
             for notif in all_notifications:
-                # Skip if older than last processed (when we have timestamp filtering)
-                if last_processed_time and hasattr(notif, 'indexed_at'):
-                    if notif.indexed_at <= last_processed_time:
-                        skipped_old_timestamp += 1
-                        logger.debug(f"Skipping old notification (indexed_at {notif.indexed_at} <= {last_processed_time})")
-                        continue
-                
-                # Debug: Log is_read status but DON'T skip based on it
-                if hasattr(notif, 'is_read') and notif.is_read:
-                    skipped_read += 1
-                    logger.debug(f"Notification has is_read=True (but processing anyway): {notif.uri if hasattr(notif, 'uri') else 'unknown'}")
-                
-                # Skip likes
+                # 1. Skip likes first (fast check)
                 if hasattr(notif, 'reason') and notif.reason == 'like':
                     skipped_likes += 1
                     continue
-                    
+
                 notif_dict = notif.model_dump() if hasattr(notif, 'model_dump') else notif
-                
+
                 # Skip likes in dict form too
                 if notif_dict.get('reason') == 'like':
                     continue
-                
-                # Check if already processed
+
+                # 2. Check if already processed (deduplication - check BEFORE timestamp)
+                # This ensures processed notifications are filtered regardless of timestamp changes
                 notif_uri = notif_dict.get('uri', '')
                 if notif_uri in processed_uris:
                     skipped_processed += 1
                     logger.debug(f"Skipping already processed: {notif_uri}")
                     continue
+
+                # 3. Skip if older than last processed (timestamp filtering)
+                if last_processed_time and hasattr(notif, 'indexed_at'):
+                    if notif.indexed_at <= last_processed_time:
+                        skipped_old_timestamp += 1
+                        logger.debug(f"Skipping old notification (indexed_at {notif.indexed_at} <= {last_processed_time})")
+                        continue
+
+                # 4. Debug: Log is_read status but DON'T skip based on it
+                if hasattr(notif, 'is_read') and notif.is_read:
+                    skipped_read += 1
+                    logger.debug(f"Notification has is_read=True (but processing anyway): {notif.uri if hasattr(notif, 'uri') else 'unknown'}")
                 
                 # Check if it's a priority notification
                 is_priority = False
@@ -2546,9 +2571,13 @@ def fetch_and_queue_new_notifications(atproto_client):
                     if any(keyword in text.lower() for keyword in ['urgent', 'priority', 'important', 'emergency']):
                         is_priority = True
                 
+                # Log when attempting to queue (diagnostic for duplicate detection)
+                indexed_at = notif_dict.get('indexed_at', 'unknown')
+                logger.debug(f"🔍 Attempting to queue notification: uri={notif_uri}, indexed_at={indexed_at}, author=@{author_handle}")
+
                 if save_notification_to_queue(notif_dict, is_priority=is_priority):
                     new_count += 1
-                    logger.debug(f"Queued notification from @{author_handle}: {notif_dict.get('reason', 'unknown')}")
+                    logger.debug(f"✅ Queued notification from @{author_handle}: {notif_dict.get('reason', 'unknown')}")
             
             # Log summary of filtering
             logger.info(f"📊 Notification processing summary:")

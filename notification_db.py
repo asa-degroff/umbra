@@ -233,7 +233,7 @@ class NotificationDB:
         row = cursor.fetchone()
 
         if row:
-            return row['status'] in ['processed', 'ignored', 'no_reply']
+            return row['status'] in ['processed', 'ignored', 'no_reply', 'in_progress']
         return False
 
     def has_notification_for_root(self, root_uri: str) -> Optional[Dict]:
@@ -307,6 +307,24 @@ class NotificationDB:
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error marking notification processed: {e}")
+
+    def mark_in_progress(self, uri: str):
+        """
+        Mark a notification as currently being processed.
+
+        This prevents the notification from being re-queued if Bluesky re-surfaces
+        it during processing (e.g., when replying to a thread updates the notification).
+        """
+        try:
+            self.conn.execute("""
+                UPDATE notifications
+                SET status = 'in_progress'
+                WHERE uri = ? AND status = 'pending'
+            """, (uri,))
+            self.conn.commit()
+            logger.debug(f"Marked notification as in_progress: {uri}")
+        except Exception as e:
+            logger.error(f"Error marking notification in_progress: {e}")
 
     def increment_retry(self, uri: str) -> int:
         """Increment retry count for a notification and return new count."""
