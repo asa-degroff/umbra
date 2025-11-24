@@ -314,19 +314,195 @@ You may now respond to this thread with full context of all posts.{reply_instruc
             return True
 
         try:
+            # Attach user memory block
+            attached_handles = []
+            try:
+                attach_result = attach_user_blocks([author_handle], umbra_agent)
+                attached_handles = [author_handle]
+                logger.debug(f"Attach result: {attach_result}")
+            except Exception as e:
+                logger.warning(f"Failed to attach user blocks: {e}")
+
             # Call the agent with the complete thread context
-            response = CLIENT.agents.messages.create(
+            message_response = CLIENT.agents.messages.create(
                 agent_id=umbra_agent.id,
                 messages=[{"role": "user", "content": system_message}]
             )
 
-            # Process the response like in process_mention
-            # The agent will decide whether to reply and how
-            # ... (rest of processing logic from process_mention would go here)
-            # For now, we'll just mark it as processed
+            logger.info(f"✓ Successfully received response from Letta API for debounced thread")
 
-            logger.info(f"✓ Debounced thread processed successfully")
-            return True
+            # Extract tool calls from the agent's response
+            reply_candidates = []
+            tool_call_results = {}  # Map tool_call_id to status
+            ignored_notification = False
+            ignore_reason = ""
+            ignore_category = ""
+            direct_reply_posted = False  # Track if reply_to_bluesky_post was called
+
+            # First pass: collect tool return statuses
+            for message in message_response.messages:
+                # Check for tool_return_message type
+                if hasattr(message, 'message_type') and message.message_type == 'tool_return_message':
+                    if hasattr(message, 'tool_call_id') and hasattr(message, 'status'):
+                        tool_call_id = message.tool_call_id
+                        status = message.status
+                        if tool_call_id:
+                            tool_call_results[tool_call_id] = status
+
+                # Check for ignore_notification tool
+                if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
+                    if message.name == 'ignore_notification':
+                        if hasattr(message, 'tool_return') and message.status == 'success':
+                            result_str = str(message.tool_return)
+                            if 'IGNORED_NOTIFICATION::' in result_str:
+                                parts = result_str.split('::')
+                                if len(parts) >= 3:
+                                    ignore_category = parts[1]
+                                    ignore_reason = parts[2]
+                                    ignored_notification = True
+                                    logger.info(f"🚫 Debounced thread ignored - Category: {ignore_category}, Reason: {ignore_reason}")
+
+            # Second pass: extract tool calls
+            for message in message_response.messages:
+                if hasattr(message, 'tool_call') and message.tool_call:
+                    # Collect add_post_to_bluesky_reply_thread tool calls
+                    if message.tool_call.name == 'add_post_to_bluesky_reply_thread':
+                        tool_call_id = message.tool_call.tool_call_id
+                        tool_status = tool_call_results.get(tool_call_id, 'unknown')
+
+                        if tool_status == 'success':
+                            try:
+                                args = json.loads(message.tool_call.arguments)
+                                reply_text = args.get('text', '')
+                                reply_lang = args.get('lang', 'en-US')
+
+                                if reply_text:
+                                    reply_candidates.append((reply_text, reply_lang))
+                                    logger.debug(f"Found successful add_post_to_bluesky_reply_thread: {reply_text[:50]}...")
+                            except json.JSONDecodeError as e:
+                                logger.error(f"Failed to parse tool call arguments: {e}")
+
+                    # Track reply_to_bluesky_post tool calls (posts directly to Bluesky)
+                    elif message.tool_call.name == 'reply_to_bluesky_post':
+                        tool_call_id = message.tool_call.tool_call_id
+                        tool_status = tool_call_results.get(tool_call_id, 'unknown')
+
+                        if tool_status == 'success':
+                            direct_reply_posted = True
+                            logger.debug(f"Detected successful reply_to_bluesky_post (posted directly)")
+
+            # Detach user blocks
+            if attached_handles:
+                try:
+                    detach_result = detach_user_blocks(attached_handles, umbra_agent)
+                    logger.debug(f"Detach result: {detach_result}")
+                except Exception as e:
+                    logger.warning(f"Failed to detach user blocks: {e}")
+
+            # Process the extracted tool calls
+            if reply_candidates:
+                # Build reply thread
+                reply_messages = []
+                reply_langs = []
+                for text, lang in reply_candidates:
+                    reply_messages.append(text)
+                    reply_langs.append(lang)
+
+                reply_lang = reply_langs[0] if reply_langs else 'en-US'
+
+                logger.debug(f"Found {len(reply_candidates)} add_post_to_bluesky_reply_thread calls")
+
+                # Send the reply(s)
+                if testing_mode:
+                    logger.info("TESTING MODE: Skipping actual Bluesky post")
+                    response = True
+                else:
+                    if len(reply_messages) == 1:
+                        # Single reply
+                        cleaned_text = bsky_utils.remove_outside_quotes(reply_messages[0])
+                        logger.info(f"Sending single reply to debounced thread: {cleaned_text[:50]}... (lang: {reply_lang})")
+                        response = bsky_utils.reply_to_notification(
+                            client=atproto_client,
+                            notification=notification_data,
+                            reply_text=cleaned_text,
+                            lang=reply_lang
+                        )
+                    else:
+                        # Multiple replies - threaded
+                        cleaned_messages = [bsky_utils.remove_outside_quotes(msg) for msg in reply_messages]
+                        logger.info(f"Sending threaded reply to debounced thread with {len(cleaned_messages)} messages (lang: {reply_lang})")
+                        response = bsky_utils.reply_with_thread_to_notification(
+                            client=atproto_client,
+                            notification=notification_data,
+                            reply_messages=cleaned_messages,
+                            lang=reply_lang
+                        )
+
+                # Verify reply was sent successfully
+                reply_sent_successfully = False
+                if response is not None and response is not False:
+                    if isinstance(response, list):
+                        if len(response) == len(reply_messages):
+                            reply_sent_successfully = True
+                    else:
+                        reply_sent_successfully = True
+
+                if reply_sent_successfully:
+                    logger.info(f"✓ Successfully replied to debounced thread from @{author_handle}")
+
+                    # Delete queue file
+                    if queue_filepath and queue_filepath.exists():
+                        try:
+                            queue_filepath.unlink()
+                            logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to delete queue file: {e}")
+
+                    return True
+                else:
+                    logger.error(f"Failed to send reply to debounced thread from @{author_handle}")
+                    return False
+
+            else:
+                # No reply candidates - check other cases
+                if ignored_notification:
+                    logger.info(f"Debounced thread from @{author_handle} was explicitly ignored (category: {ignore_category})")
+
+                    # Delete queue file
+                    if queue_filepath and queue_filepath.exists():
+                        try:
+                            queue_filepath.unlink()
+                            logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to delete queue file: {e}")
+
+                    return "ignored"
+
+                elif direct_reply_posted:
+                    logger.info(f"Direct reply was posted to debounced thread from @{author_handle} via reply_to_bluesky_post")
+
+                    # Delete queue file
+                    if queue_filepath and queue_filepath.exists():
+                        try:
+                            queue_filepath.unlink()
+                            logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to delete queue file: {e}")
+
+                    return True
+
+                else:
+                    logger.warning(f"No reply generated for debounced thread from @{author_handle}")
+
+                    # Delete queue file and move to no_reply
+                    if queue_filepath and queue_filepath.exists():
+                        try:
+                            queue_filepath.unlink()
+                            logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to delete queue file: {e}")
+
+                    return "no_reply"
 
         except Exception as e:
             logger.error(f"Error calling agent for debounced thread: {e}")
