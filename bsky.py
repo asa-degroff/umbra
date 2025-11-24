@@ -642,17 +642,29 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
 
                 notification_entries.append(entry)
             else:
-                # Fallback if post not found (shouldn't happen)
+                # Fallback if post not found in thread
+                logger.debug(f"Post not found in thread for notification {uri}, using database fallback")
                 author_handle = notif.get('author_handle', 'unknown')
                 text = notif.get('text', '(text unavailable)')
                 uri = notif.get('uri', 'unknown')
                 indexed_at = notif.get('indexed_at', 'unknown')
                 reason = notif.get('reason', 'unknown')
 
+                # Extract CID from metadata JSON if available
+                cid = 'unknown'
+                metadata_str = notif.get('metadata')
+                if metadata_str:
+                    try:
+                        metadata = json.loads(metadata_str)
+                        cid = metadata.get('cid', 'unknown')
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
                 entry = f"""[Notification {idx}] @{author_handle} ({reason}) - Received: {indexed_at}
   Post: "{text}"
   URI: {uri}
-  CID: (unavailable)"""
+  CID: {cid}
+  Posted: {indexed_at}"""
 
                 notification_entries.append(entry)
 
@@ -751,19 +763,38 @@ RESPONSE INSTRUCTIONS
                 except Exception as e:
                     logger.warning(f"Failed to detach user blocks: {e}")
 
-            # Clear all debounces for this thread (only after successful processing)
+            # Mark ALL batch notifications as processed and clear debounces
+            # This is critical: without marking as processed, other notifications in the batch
+            # would be processed individually on the next cycle after debounce flags are cleared
+            batch_uris = [notif['uri'] for notif in batch_notifications]
+            for batch_uri in batch_uris:
+                NOTIFICATION_DB.mark_processed(batch_uri, status='processed')
+            logger.info(f"⚡ Marked {len(batch_uris)} notifications as processed")
+
+            # Clear debounce metadata for this thread
             cleared_count = NOTIFICATION_DB.clear_batch_debounce(root_uri)
             logger.info(f"⚡ Cleared {cleared_count} debounces after successful processing")
 
             logger.info(f"✓ High-traffic batch processed successfully")
 
-            # Delete all queue files for this batch
-            if queue_filepath and queue_filepath.exists():
+            # Delete ALL queue files for this batch (not just the triggering one)
+            # Queue files contain URI hashes, so we need to find them by content
+            deleted_count = 0
+            batch_uri_set = set(batch_uris)
+            for qfile in QUEUE_DIR.glob("*.json"):
+                if qfile.name == "processed_notifications.json":
+                    continue
                 try:
-                    queue_filepath.unlink()
-                    logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                    with open(qfile, 'r') as f:
+                        qdata = json.load(f)
+                    if qdata.get('uri') in batch_uri_set:
+                        qfile.unlink()
+                        deleted_count += 1
+                        logger.debug(f"Deleted queue file for batch notification: {qfile.name}")
                 except Exception as e:
-                    logger.warning(f"Failed to delete queue file: {e}")
+                    logger.warning(f"Failed to check/delete queue file {qfile.name}: {e}")
+
+            logger.info(f"⚡ Deleted {deleted_count} queue files for batch")
 
             return True
 
@@ -1862,6 +1893,10 @@ def save_notification_to_queue(notification, is_priority=None):
             config = get_config()
             threading_config = config.get('threading', {})
             high_traffic_config = threading_config.get('high_traffic_detection', {})
+
+            # Debug: Log config values to diagnose override issues
+            if high_traffic_config.get('enabled', False):
+                logger.debug(f"High-traffic config loaded: {high_traffic_config}")
 
             if high_traffic_config.get('enabled', False):
                 threshold = high_traffic_config.get('notification_threshold', 10)

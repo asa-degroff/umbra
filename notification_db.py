@@ -690,26 +690,39 @@ class NotificationDB:
             Debounce time in seconds
         """
         if is_mention:
-            min_seconds = config.get('mention_debounce_min', 30) * 60
-            max_seconds = config.get('mention_debounce_max', 60) * 60
+            min_minutes = config.get('mention_debounce_min', 15)
+            max_minutes = config.get('mention_debounce_max', 30)
+            min_seconds = min_minutes * 60
+            max_seconds = max_minutes * 60
+            logger.debug(f"Mention debounce config: min={min_minutes}min ({min_seconds}s), max={max_minutes}min ({max_seconds}s)")
         else:
-            min_seconds = config.get('reply_debounce_min', 120) * 60
-            max_seconds = config.get('reply_debounce_max', 360) * 60
+            min_minutes = config.get('reply_debounce_min', 30)
+            max_minutes = config.get('reply_debounce_max', 120)
+            min_seconds = min_minutes * 60
+            max_seconds = max_minutes * 60
+            logger.debug(f"Reply debounce config: min={min_minutes}min ({min_seconds}s), max={max_minutes}min ({max_seconds}s)")
 
         # Get threshold for scaling
         threshold = config.get('notification_threshold', 10)
+        logger.debug(f"Debounce calculation: thread_count={thread_count}, threshold={threshold}")
 
         # Linear scaling: more activity = longer debounce
         # If at threshold, use min_seconds
         # If 3x threshold or more, use max_seconds
         if thread_count <= threshold:
-            return min_seconds
+            result_seconds = min_seconds
+            logger.debug(f"Using minimum debounce: {result_seconds}s ({result_seconds/60:.1f}min)")
+            return result_seconds
         elif thread_count >= threshold * 3:
-            return max_seconds
+            result_seconds = max_seconds
+            logger.debug(f"Using maximum debounce: {result_seconds}s ({result_seconds/60:.1f}min)")
+            return result_seconds
         else:
             # Linear interpolation between min and max
             ratio = (thread_count - threshold) / threshold
-            return int(min_seconds + (max_seconds - min_seconds) * ratio)
+            result_seconds = int(min_seconds + (max_seconds - min_seconds) * ratio)
+            logger.debug(f"Using interpolated debounce (ratio={ratio:.2f}): {result_seconds}s ({result_seconds/60:.1f}min)")
+            return result_seconds
 
     def close(self):
         """Close database connection."""
