@@ -235,7 +235,31 @@ RESPONSE INSTRUCTIONS
    - Full text (not truncated)
    - URI and CID for reply tool
    - Author and timestamps
+   - **Multi-part reply context** (if applicable)
 3. **Instructions**: Clear guidance on how to respond
+
+### Multi-Part Reply Handling
+
+When a notification is part of a multi-part reply (e.g., "1/2" followed by "2/2" as a reply to it), the system automatically detects and includes the preceding parts by the same author:
+
+```
+[Notification 1] @alice.bsky.social (reply) - Received: 2025-11-24T10:15:00
+  [Part 1 by same author]: "This is the first part of my thoughts on..." (Posted: 2025-11-24T10:14:00)
+  [Part 2 by same author]: "...continuing from above, here's more context" (Posted: 2025-11-24T10:14:30)
+  Post: "And finally, my conclusion is that we should..."
+  URI: at://did:plc:xxx/app.bsky.feed.post/abc123
+  CID: bafyxxx
+  Posted: 2025-11-24T10:15:00
+```
+
+This ensures umbra sees the complete context of multi-part replies rather than just the final post that triggered the notification.
+
+#### How Multi-Part Detection Works
+
+1. **Parent Chain Fetching**: For each notification, the system fetches its parent chain (up to 20 levels) via the Bluesky API
+2. **Same-Author Traversal**: Starting from the notification, it traverses upward through parents to find consecutive posts by the same author
+3. **Chronological Display**: Preceding parts are displayed in chronological order (oldest first) before the notification post
+4. **Author Boundary**: The traversal stops when it encounters a post by a different author
 
 ## Processing Flow
 
@@ -329,14 +353,52 @@ Each notification triggers:
 
 Batch processing triggers:
 - 1 query: `get_thread_debounced_notifications()`
-- 1 API call: `get_post_thread()` for context
+- 1 API call: `get_post_thread()` for root context
+- N API calls: `get_post_thread()` for each notification's parent chain (where N = batch size)
 - 1 write: `clear_batch_debounce()`
+
+### API Calls
+
+The multi-part reply detection adds additional API calls during batch processing:
+- One `get_post_thread(notif_uri, parent_height=20, depth=0)` per notification
+- These calls are lightweight (no replies fetched, only parent chain)
+- Results are merged and deduplicated to avoid redundant processing
 
 ### Memory Usage
 
 - Queue files remain on disk until processed
 - No in-memory accumulation of debounced notifications
 - Database indexes ensure efficient thread lookups
+
+## Related Functions
+
+### bsky_utils.py
+
+| Function | Purpose |
+|----------|---------|
+| `flatten_thread_structure()` | Converts nested thread data into a flat list of posts in chronological order |
+| `find_last_consecutive_post_in_chain()` | Traverses DOWN from a post to find consecutive posts by the same author (for reply targeting) |
+| `find_consecutive_parent_posts_by_author()` | Traverses UP through parents to find consecutive posts by the same author (for multi-part reply context) |
+| `get_post_thread()` | Fetches a thread from Bluesky with configurable parent_height and depth |
+
+### bsky.py
+
+| Function | Purpose |
+|----------|---------|
+| `process_high_traffic_batch()` | Main function for processing batched high-traffic notifications |
+| `save_notification_to_queue()` | Handles initial detection and debounce timer creation |
+| `notification_to_dict()` | Converts notification objects to dicts, including reply info for parent chain traversal |
+
+### notification_db.py
+
+| Function | Purpose |
+|----------|---------|
+| `get_thread_notification_count()` | Counts notifications for a thread within a time window |
+| `get_thread_earliest_debounce()` | Gets the earliest debounce timer for a thread (single-timer-per-thread) |
+| `get_thread_debounced_notifications()` | Retrieves all debounced notifications for batch processing |
+| `set_auto_debounce()` | Sets debounce fields on a notification |
+| `clear_batch_debounce()` | Clears debounce flags after successful processing |
+| `calculate_variable_debounce()` | Computes debounce duration based on thread activity |
 
 ## Future Enhancements
 
@@ -345,3 +407,4 @@ Potential improvements:
 2. **Thread priority scoring** to prioritize interesting threads over noise
 3. **Smart response limiting** to cap responses per thread per day
 4. **Batch response preview** before committing to posts
+5. **Parent chain caching** to reduce API calls for notifications in the same branch

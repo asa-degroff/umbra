@@ -767,7 +767,7 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Build prompt for agent with new two-section format
         separator = "━" * 80
         system_message = f"""
-This is a HIGH-TRAFFIC THREAD that generated {len(batch_notifications)} notifications over the past few hours.
+This is a HIGH-TRAFFIC THREAD that generated {len(batch_notifications)} notifications during the debounce period.
 
 {separator}
 1. THREAD CONTEXT (Pre-notification history)
