@@ -596,6 +596,82 @@ def find_last_consecutive_post_in_chain(thread_node, author_handle: str):
     return None
 
 
+def find_consecutive_parent_posts_by_author(thread_node, author_handle: str) -> List[Dict]:
+    """
+    Find consecutive posts by the same author in the parent chain.
+
+    Starting from the given thread node, this function traverses UP the parent chain
+    to find all consecutive posts made by the specified author.
+
+    This is the inverse of find_last_consecutive_post_in_chain which traverses DOWN.
+
+    Args:
+        thread_node: The thread node to start from (the notification post's thread node)
+        author_handle: The handle of the author to match (e.g., "user.bsky.social")
+
+    Returns:
+        List of post dicts for consecutive posts by the author in the parent chain,
+        in chronological order (oldest first). Returns empty list if no parent posts
+        by the same author.
+
+    Example:
+        If the thread structure is:
+        - Post A by @alice (first part)
+          - Post B by @alice (consecutive) <- start from here (notification)
+
+        Returns [Post A dict] (not including Post B since that's the current node)
+    """
+    parent_posts = []
+
+    if not thread_node:
+        return parent_posts
+
+    # Traverse up the parent chain
+    current_node = thread_node
+    while True:
+        # Check if this node has a parent
+        if not hasattr(current_node, 'parent') or not current_node.parent:
+            break
+
+        parent_node = current_node.parent
+        if not hasattr(parent_node, 'post') or not parent_node.post:
+            break
+
+        parent_post = parent_node.post
+
+        # Check if parent is by the same author
+        parent_author = None
+        if hasattr(parent_post, 'author') and hasattr(parent_post.author, 'handle'):
+            parent_author = parent_post.author.handle
+
+        if parent_author != author_handle:
+            # Parent is by different author, stop here
+            break
+
+        # Collect this parent post
+        post_dict = {
+            'uri': getattr(parent_post, 'uri', ''),
+            'cid': getattr(parent_post, 'cid', ''),
+            'author': {
+                'handle': parent_author,
+                'display_name': getattr(parent_post.author, 'display_name', '') if hasattr(parent_post, 'author') else '',
+                'did': getattr(parent_post.author, 'did', '') if hasattr(parent_post, 'author') else ''
+            },
+            'record': {
+                'text': getattr(parent_post.record, 'text', '') if hasattr(parent_post, 'record') else '',
+                'createdAt': getattr(parent_post.record, 'created_at', '') if hasattr(parent_post, 'record') else ''
+            }
+        }
+        parent_posts.append(post_dict)
+
+        # Move up to the next parent
+        current_node = parent_node
+
+    # Return in chronological order (oldest first)
+    parent_posts.reverse()
+    return parent_posts
+
+
 def get_post_thread(client: Client, uri: str, parent_height: int = 80, depth: int = 25) -> Optional[Dict[str, Any]]:
     """
     Get the thread containing a post including all parent and reply posts.

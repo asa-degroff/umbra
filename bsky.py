@@ -585,6 +585,40 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Extract all posts from thread
         flattened = bsky_utils.flatten_thread_structure(thread)
         posts = flattened.get('posts', [])
+        existing_uris = {p.get('uri') for p in posts}
+
+        # For each notification, fetch its parent chain to ensure we have full context
+        # This handles cases where depth limit prevents reaching notification's ancestors
+        for notif in batch_notifications:
+            notif_uri = notif.get('uri')
+            if not notif_uri:
+                continue
+
+            # Fetch notification's thread to get its parent chain
+            try:
+                notif_thread = bsky_utils.get_post_thread(
+                    atproto_client,
+                    notif_uri,
+                    parent_height=20,  # Get up to 20 parents
+                    depth=0            # Don't need replies, just parents
+                )
+                if notif_thread:
+                    # Extract posts from notification's thread (includes parents)
+                    notif_flattened = bsky_utils.flatten_thread_structure(notif_thread)
+                    notif_posts = notif_flattened.get('posts', [])
+
+                    # Add any posts not already in our posts list
+                    for p in notif_posts:
+                        p_uri = p.get('uri')
+                        if p_uri and p_uri not in existing_uris:
+                            posts.append(p)
+                            existing_uris.add(p_uri)
+                            logger.debug(f"   Added missing parent post: {p_uri}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch parent chain for notification {notif_uri}: {e}")
+
+        # Re-sort posts chronologically after merging
+        posts.sort(key=lambda p: p.get('record', {}).get('createdAt', ''))
 
         # Create set of notification URIs to identify which posts are notifications
         notification_uris = {notif['uri'] for notif in batch_notifications}
@@ -633,8 +667,68 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
 
                 reason = notif.get('reason', 'unknown')
 
+                # Find preceding posts by same author (for multi-part replies)
+                # Look for consecutive parent posts by the same author
+                preceding_parts = []
+                current_uri = uri
+                visited_uris = {current_uri}  # Prevent infinite loops
+
+                # Traverse up through parents to find consecutive posts by same author
+                while True:
+                    # Find the current post in our posts list
+                    current_post = next((p for p in posts if p.get('uri') == current_uri), None)
+                    if not current_post:
+                        break
+
+                    # Get parent URI from record.reply.parent
+                    current_record = current_post.get('record', {})
+                    reply_info = current_record.get('reply', {}) if isinstance(current_record, dict) else {}
+                    parent_info = reply_info.get('parent', {}) if isinstance(reply_info, dict) else {}
+                    parent_uri = parent_info.get('uri') if isinstance(parent_info, dict) else None
+
+                    if not parent_uri or parent_uri in visited_uris:
+                        break
+
+                    visited_uris.add(parent_uri)
+
+                    # Find parent post
+                    parent_post = next((p for p in posts if p.get('uri') == parent_uri), None)
+                    if not parent_post:
+                        break
+
+                    # Check if parent is by same author
+                    parent_author = parent_post.get('author', {})
+                    parent_handle = parent_author.get('handle', '') if isinstance(parent_author, dict) else ''
+
+                    if parent_handle != author_handle:
+                        # Different author, stop here
+                        break
+
+                    # Add parent to preceding parts
+                    parent_record = parent_post.get('record', {})
+                    parent_text = parent_record.get('text', '') if isinstance(parent_record, dict) else ''
+                    parent_created = parent_record.get('createdAt', 'unknown') if isinstance(parent_record, dict) else 'unknown'
+                    preceding_parts.append({
+                        'text': parent_text,
+                        'createdAt': parent_created
+                    })
+
+                    # Continue up the chain
+                    current_uri = parent_uri
+
+                # Reverse to get chronological order (oldest first)
+                preceding_parts.reverse()
+
+                # Build entry with preceding parts context if present
+                preceding_context = ""
+                if preceding_parts:
+                    preceding_lines = []
+                    for part_idx, part in enumerate(preceding_parts, 1):
+                        preceding_lines.append(f"  [Part {part_idx} by same author]: \"{part['text']}\" (Posted: {part['createdAt']})")
+                    preceding_context = "\n" + "\n".join(preceding_lines) + "\n"
+
                 # Build entry
-                entry = f"""[Notification {idx}] @{author_handle} ({reason}) - Received: {indexed_at}
+                entry = f"""[Notification {idx}] @{author_handle} ({reason}) - Received: {indexed_at}{preceding_context}
   Post: "{full_text}"
   URI: {uri}
   CID: {cid}
@@ -1808,6 +1902,27 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
 
 def notification_to_dict(notification):
     """Convert a notification object to a dictionary for JSON serialization."""
+    record_dict = {
+        'text': getattr(notification.record, 'text', '') if hasattr(notification, 'record') else ''
+    }
+
+    # Include reply info for parent chain traversal
+    if hasattr(notification, 'record') and hasattr(notification.record, 'reply') and notification.record.reply:
+        reply = notification.record.reply
+        reply_dict = {}
+        if hasattr(reply, 'root') and reply.root:
+            reply_dict['root'] = {
+                'uri': getattr(reply.root, 'uri', None),
+                'cid': getattr(reply.root, 'cid', None)
+            }
+        if hasattr(reply, 'parent') and reply.parent:
+            reply_dict['parent'] = {
+                'uri': getattr(reply.parent, 'uri', None),
+                'cid': getattr(reply.parent, 'cid', None)
+            }
+        if reply_dict:
+            record_dict['reply'] = reply_dict
+
     return {
         'uri': notification.uri,
         'cid': notification.cid,
@@ -1819,9 +1934,7 @@ def notification_to_dict(notification):
             'display_name': notification.author.display_name,
             'did': notification.author.did
         },
-        'record': {
-            'text': getattr(notification.record, 'text', '') if hasattr(notification, 'record') else ''
-        }
+        'record': record_dict
     }
 
 
