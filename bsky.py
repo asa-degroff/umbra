@@ -980,9 +980,11 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
                 last_uri, last_cid, last_text = last_consecutive_post
                 # Check if it's different from the mention post (i.e., there are consecutive posts)
                 if last_uri != uri:
+                    # Save original notification URI before updating
+                    original_mention_uri = uri
                     logger.info(f"[{correlation_id}] Found last consecutive post in chain:", extra={
                         'correlation_id': correlation_id,
-                        'mention_uri': uri,
+                        'mention_uri': original_mention_uri,
                         'last_consecutive_uri': last_uri,
                         'consecutive_posts': 'yes'
                     })
@@ -1005,6 +1007,13 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
                         notification_data.cid = last_cid
                         if hasattr(notification_data, 'record') and hasattr(notification_data.record, 'text'):
                             notification_data.record.text = last_text
+
+                    # Mark the last consecutive post as processed to prevent duplicate processing
+                    # This handles the case where both posts A (1/2) and B (2/2) are notifications
+                    # We're processing A but replying to B, so we should mark B as processed too
+                    if NOTIFICATION_DB:
+                        logger.debug(f"[{correlation_id}] Marking last consecutive post as processed to prevent duplicate: {last_uri}")
+                        NOTIFICATION_DB.mark_processed(last_uri, status='processed')
                 else:
                     logger.debug(f"[{correlation_id}] No consecutive posts found (mention is last post)")
             else:
@@ -2327,6 +2336,10 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                 with open(filepath, 'r') as f:
                     notif_data = json.load(f)
 
+                # Save original URI before any modifications (process_mention may modify notif_data)
+                # This ensures we mark the correct notification as processed, not the last consecutive post
+                original_notification_uri = notif_data['uri']
+
                 # Check if this notification has already been processed (duplicate queue file cleanup)
                 # This handles legacy duplicate queue files that were created before deduplication was fixed
                 if NOTIFICATION_DB:
@@ -2378,8 +2391,9 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
 
                 # Mark notification as in_progress to prevent re-queuing during processing
                 # This closes the window where Bluesky might re-surface the notification
+                # Use original_notification_uri to ensure we mark the correct notification
                 if NOTIFICATION_DB:
-                    NOTIFICATION_DB.mark_in_progress(notif_data['uri'])
+                    NOTIFICATION_DB.mark_in_progress(original_notification_uri)
 
                 # Process based on type using dict data directly
                 success = False
@@ -2392,7 +2406,7 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                                 logger.info(f"⚡ Skipping - high-traffic batch already processed for thread: {batch_id}")
                                 # Mark as processed and delete the queue file
                                 if NOTIFICATION_DB:
-                                    NOTIFICATION_DB.mark_processed(notif_data['uri'], status='processed')
+                                    NOTIFICATION_DB.mark_processed(original_notification_uri, status='processed')
                                 filepath.unlink()
                                 success = True
                             else:
@@ -2416,7 +2430,7 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                                 logger.info(f"⚡ Skipping - high-traffic batch already processed for thread: {batch_id}")
                                 # Mark as processed and delete the queue file
                                 if NOTIFICATION_DB:
-                                    NOTIFICATION_DB.mark_processed(notif_data['uri'], status='processed')
+                                    NOTIFICATION_DB.mark_processed(original_notification_uri, status='processed')
                                 filepath.unlink()
                                 success = True
                             else:
@@ -2462,11 +2476,13 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                 # Handle file based on processing result
                 if success:
                     # Mark as processed to avoid reprocessing (do this even in testing mode)
+                    # Use original_notification_uri to ensure the original notification is marked,
+                    # not a potentially modified URI from consecutive post detection
                     if NOTIFICATION_DB:
-                        NOTIFICATION_DB.mark_processed(notif_data['uri'], status='processed')
+                        NOTIFICATION_DB.mark_processed(original_notification_uri, status='processed')
                     else:
                         processed_uris = load_processed_notifications()
-                        processed_uris.add(notif_data['uri'])
+                        processed_uris.add(original_notification_uri)
                         save_processed_notifications(processed_uris)
 
                     # Delete file in normal mode, keep in testing mode
@@ -2478,57 +2494,57 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
 
                         # Clear debounce flags now that processing is complete
                         if NOTIFICATION_DB and is_debounced:
-                            NOTIFICATION_DB.clear_debounce(notif_data['uri'])
-                            logger.debug(f"Cleared debounce flags for: {notif_data['uri']}")
+                            NOTIFICATION_DB.clear_debounce(original_notification_uri)
+                            logger.debug(f"Cleared debounce flags for: {original_notification_uri}")
                     
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name
                     filepath.rename(error_path)
                     logger.warning(f"Moved {filepath.name} to errors directory")
-                    
+
                     # Also mark as processed to avoid retrying
                     if NOTIFICATION_DB:
-                        NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error')
+                        NOTIFICATION_DB.mark_processed(original_notification_uri, status='error')
                     else:
                         processed_uris = load_processed_notifications()
-                        processed_uris.add(notif_data['uri'])
+                        processed_uris.add(original_notification_uri)
                         save_processed_notifications(processed_uris)
-                    
+
                 elif success == "no_reply":  # Special case for moving to no_reply directory
                     no_reply_path = QUEUE_NO_REPLY_DIR / filepath.name
                     filepath.rename(no_reply_path)
                     logger.info(f"Moved {filepath.name} to no_reply directory")
-                    
+
                     # Also mark as processed to avoid retrying
                     if NOTIFICATION_DB:
-                        NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error')
+                        NOTIFICATION_DB.mark_processed(original_notification_uri, status='error')
                     else:
                         processed_uris = load_processed_notifications()
-                        processed_uris.add(notif_data['uri'])
+                        processed_uris.add(original_notification_uri)
                         save_processed_notifications(processed_uris)
-                    
+
                 elif success == "ignored":  # Special case for explicitly ignored notifications
                     # For ignored notifications, we just delete them (not move to no_reply)
                     filepath.unlink()
                     logger.info(f"🚫 Deleted ignored notification: {filepath.name}")
-                    
+
                     # Also mark as processed to avoid retrying
                     if NOTIFICATION_DB:
-                        NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error')
+                        NOTIFICATION_DB.mark_processed(original_notification_uri, status='ignored')
                     else:
                         processed_uris = load_processed_notifications()
-                        processed_uris.add(notif_data['uri'])
+                        processed_uris.add(original_notification_uri)
                         save_processed_notifications(processed_uris)
-                    
+
                 else:
                     # Failed to process - check retry count
                     if NOTIFICATION_DB:
-                        retry_count = NOTIFICATION_DB.increment_retry(notif_data['uri'])
+                        retry_count = NOTIFICATION_DB.increment_retry(original_notification_uri)
                         if retry_count >= MAX_RETRY_COUNT:
                             logger.error(f"❌ Max retries ({MAX_RETRY_COUNT}) exceeded for {filepath.name}, moving to errors")
                             error_path = QUEUE_ERROR_DIR / filepath.name
                             filepath.rename(error_path)
-                            NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error', error=f'Max retries exceeded ({retry_count})')
+                            NOTIFICATION_DB.mark_processed(original_notification_uri, status='error', error=f'Max retries exceeded ({retry_count})')
                         else:
                             logger.warning(f"⚠️  Failed to process {filepath.name}, keeping in queue for retry (attempt {retry_count}/{MAX_RETRY_COUNT})")
                     else:
@@ -2537,16 +2553,21 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
             except Exception as e:
                 logger.error(f"💥 Error processing queued notification {filepath.name}: {e}")
                 # Increment retry count and check limit
+                # Use original_notification_uri if available (set before processing started)
+                uri_for_retry = original_notification_uri if 'original_notification_uri' in locals() else None
                 try:
-                    with open(filepath, 'r') as f:
-                        notif_data = json.load(f)
-                    if NOTIFICATION_DB:
-                        retry_count = NOTIFICATION_DB.increment_retry(notif_data['uri'])
+                    if not uri_for_retry:
+                        # Re-read file to get URI if we don't have it
+                        with open(filepath, 'r') as f:
+                            notif_data = json.load(f)
+                        uri_for_retry = notif_data['uri']
+                    if NOTIFICATION_DB and uri_for_retry:
+                        retry_count = NOTIFICATION_DB.increment_retry(uri_for_retry)
                         if retry_count >= MAX_RETRY_COUNT:
                             logger.error(f"❌ Max retries ({MAX_RETRY_COUNT}) exceeded after exception, moving to errors")
                             error_path = QUEUE_ERROR_DIR / filepath.name
                             filepath.rename(error_path)
-                            NOTIFICATION_DB.mark_processed(notif_data['uri'], status='error', error=str(e))
+                            NOTIFICATION_DB.mark_processed(uri_for_retry, status='error', error=str(e))
                         else:
                             logger.warning(f"Keeping in queue for retry (attempt {retry_count}/{MAX_RETRY_COUNT})")
                 except:
