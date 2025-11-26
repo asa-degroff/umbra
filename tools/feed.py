@@ -13,7 +13,7 @@ def get_bluesky_feed(feed_name: str = None, max_posts: int = 25) -> str:
     Retrieve a Bluesky feed.
     
     Args:
-        feed_name: Named feed preset - available options: 'home', 'discover', 'ai-for-grownups', 'atmosphere', 'MLBlend', 'mutuals', AI-agents. If not provided, defaults to 'home' timeline.
+        feed_name: Named feed preset - available options: 'home', 'discover', 'ai-for-grownups', 'atmosphere', 'MLBlend', 'Mutuals', AI-agents. If not provided, defaults to 'home' timeline.
         max_posts: Maximum number of posts to retrieve (max 100)
         
     Returns:

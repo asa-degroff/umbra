@@ -22,7 +22,7 @@ def debounce_thread(notification_uri: str, agent_state: "AgentState", debounce_s
     - Phrases like "thread incoming", "a thread", "🧵👇"
     - Numbered posts (1/5, 1/n, etc.)
     - Incomplete thoughts or sentences that suggest continuation
-    - Author pattern of posting multi-post threads
+    - Mentions another user in a way that implies they will have context to add
 
     Args:
         notification_uri: The URI of the notification to debounce
