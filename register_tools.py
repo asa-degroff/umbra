@@ -13,6 +13,7 @@ from config_loader import get_letta_config, get_bluesky_config, get_r2_config, g
 from tools.search import search_bluesky_posts, SearchArgs
 from tools.post import create_new_bluesky_post, PostArgs
 from tools.feed import get_bluesky_feed, FeedArgs
+from tools.author_feed import get_author_feed, AuthorFeedArgs
 from tools.like import like_bluesky_post, LikeBlueskyPostArgs
 from tools.reply import reply_to_bluesky_post, ReplyToBlueskyPostArgs
 from tools.halt import halt_activity, HaltArgs
@@ -49,6 +50,12 @@ TOOL_CONFIGS = [
         "args_schema": FeedArgs,
         "description": "Retrieve a Bluesky feed (home timeline or custom feed)",
         "tags": ["bluesky", "feed", "timeline"]
+    },
+    {
+        "func": get_author_feed,
+        "args_schema": AuthorFeedArgs,
+        "description": "Retrieve recent posts from a Bluesky user's profile",
+        "tags": ["bluesky", "feed", "profile", "author", "posts"]
     },
     {
         "func": like_bluesky_post,
