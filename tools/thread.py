@@ -25,11 +25,13 @@ def add_post_to_bluesky_reply_thread(text: str, lang: str = "en-US") -> str:
     Add a single post to the current Bluesky reply thread. This tool indicates to the handler 
     that it should add this post to the ongoing reply thread context when responding to a notification.
     
-    This is distinct from bluesky_reply which handles the complete reply process. Use this tool 
+    This is distinct from reply_to_bluesky_post which handles the complete reply process. Use this tool 
     when you want to build a reply thread incrementally, adding posts one at a time.
     
     This is an atomic operation - each call adds exactly one post. The handler (bsky.py)
     manages the thread state and ensures proper threading when multiple posts are queued.
+
+    If planning a multi-post response, use ONLY this tool, rather than mixing with reply_to_bluesky_post.
 
     Args:
         text: Text content for the post (max 300 characters)
