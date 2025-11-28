@@ -1,5 +1,6 @@
 import os
 import logging
+import random
 import uuid
 import time
 from typing import Optional, Dict, Any, List
@@ -328,6 +329,38 @@ def remove_outside_quotes(text: str) -> str:
         return text[1:-1]
     
     return text
+
+def apply_response_delay(correlation_id: Optional[str] = None) -> float:
+    """
+    Apply a randomized delay before sending a response to avoid spam detection.
+
+    Returns the delay applied in seconds (0 if disabled).
+    """
+    try:
+        from config_loader import get_config
+        config = get_config()
+
+        enabled = config.get('response_delay.enabled', True)
+        if not enabled:
+            return 0.0
+
+        min_sec = config.get('response_delay.min_seconds', 15)
+        max_sec = config.get('response_delay.max_seconds', 45)
+
+        delay = random.uniform(min_sec, max_sec)
+
+        log_prefix = f"[{correlation_id}] " if correlation_id else ""
+        logger.info(f"{log_prefix}⏳ Applying response delay of {delay:.1f}s...")
+
+        time.sleep(delay)
+        return delay
+
+    except Exception as e:
+        logger.warning(f"Failed to load response delay config: {e}")
+        delay = random.uniform(15, 45)
+        time.sleep(delay)
+        return delay
+
 
 def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: str, root_uri: Optional[str] = None, root_cid: Optional[str] = None, lang: Optional[str] = None, correlation_id: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -716,7 +749,10 @@ def reply_to_notification(client: Client, notification: Any, reply_text: str, la
         'reply_length': len(reply_text),
         'lang': lang
     })
-    
+
+    # Apply response delay before sending
+    apply_response_delay(correlation_id)
+
     try:
         # Get the post URI and CID from the notification (handle both dict and object)
         if isinstance(notification, dict):
@@ -813,7 +849,10 @@ def reply_with_thread_to_notification(client: Client, notification: Any, reply_m
         'total_length': sum(len(msg) for msg in reply_messages),
         'lang': lang
     })
-    
+
+    # Apply response delay before sending (only once, before first message)
+    apply_response_delay(correlation_id)
+
     try:
         # Validate input
         if not reply_messages or len(reply_messages) == 0:
