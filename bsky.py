@@ -564,6 +564,11 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             logger.warning("No debounced notifications found for batch processing")
             return False
 
+        # Mark all batch notifications as in_progress to prevent re-queuing
+        # This must happen AFTER retrieval (otherwise the query would exclude them)
+        for notif in batch_notifications:
+            NOTIFICATION_DB.mark_in_progress(notif['uri'])
+
         logger.info(f"   Found {len(batch_notifications)} debounced notifications in batch")
 
         # Fetch the complete current thread state from Bluesky
@@ -848,6 +853,116 @@ RESPONSE INSTRUCTIONS
                 all_messages.append(chunk)
                 if str(chunk) == 'done':
                     break
+
+            # Extract tool results and calls for threading
+            tool_call_results = {}  # tool_call_id -> status
+            tool_return_data = {}   # tool_call_id -> return message content
+            reply_candidates = []   # (text, lang) tuples
+
+            # First pass: collect tool return statuses and data
+            for message in all_messages:
+                if hasattr(message, 'message_type') and message.message_type == 'tool_return_message':
+                    tool_call_id = getattr(message, 'tool_call_id', None)
+                    status = getattr(message, 'status', None)
+                    if tool_call_id:
+                        tool_call_results[tool_call_id] = status
+                        # Store the full tool_return for reply_to_bluesky_post to extract URI/CID
+                        if hasattr(message, 'tool_return'):
+                            tool_return_data[tool_call_id] = str(message.tool_return)
+
+            # Second pass: extract tool calls
+            last_reply_uri = None  # Track URI from reply_to_bluesky_post for threading
+            last_reply_cid = None  # Track CID from reply_to_bluesky_post for threading
+
+            for message in all_messages:
+                if hasattr(message, 'message_type') and message.message_type == 'tool_call_message':
+                    if not hasattr(message, 'tool_call') or not message.tool_call:
+                        continue
+
+                    tool_name = message.tool_call.name
+                    tool_call_id = message.tool_call.tool_call_id
+                    tool_status = tool_call_results.get(tool_call_id, 'unknown')
+
+                    if tool_status != 'success':
+                        continue
+
+                    if tool_name == 'reply_to_bluesky_post':
+                        # Extract the reply URI and CID from the tool return
+                        tool_return = tool_return_data.get(tool_call_id, '')
+                        # Format: "Successfully posted reply: at://... (CID: ...)"
+                        if 'Successfully posted reply:' in tool_return:
+                            uri_match = re.search(r'at://[^\s]+', tool_return)
+                            cid_match = re.search(r'\(CID: ([^)]+)\)', tool_return)
+                            if uri_match and cid_match:
+                                last_reply_uri = uri_match.group(0)
+                                last_reply_cid = cid_match.group(1)
+                                logger.debug(f"⚡ Captured reply for threading: {last_reply_uri}")
+
+                    elif tool_name == 'add_post_to_bluesky_reply_thread':
+                        try:
+                            args = json.loads(message.tool_call.arguments)
+                            reply_text = args.get('text', '')
+                            reply_lang = args.get('lang', 'en-US')
+
+                            if reply_text:
+                                reply_candidates.append((reply_text, reply_lang))
+                                logger.debug(f"⚡ Found add_post_to_bluesky_reply_thread: {reply_text[:50]}...")
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse tool call arguments: {e}")
+
+            # Post the collected add_post_to_bluesky_reply_thread replies
+            if reply_candidates:
+                reply_messages_list = [text for text, lang in reply_candidates]
+                reply_lang = reply_candidates[0][1] if reply_candidates else 'en-US'
+                cleaned_messages = [bsky_utils.remove_outside_quotes(msg) for msg in reply_messages_list]
+
+                logger.info(f"⚡ Posting {len(cleaned_messages)} threaded posts from high-traffic batch")
+
+                if last_reply_uri and last_reply_cid:
+                    # Chain off the previously posted reply
+                    logger.debug(f"⚡ Chaining thread off reply: {last_reply_uri}")
+                    # Create a synthetic notification for the reply we just posted
+                    synthetic_notif = {
+                        'uri': last_reply_uri,
+                        'cid': last_reply_cid,
+                        'record': {}  # No reply info needed since this IS the new thread head
+                    }
+                    if len(cleaned_messages) == 1:
+                        response = bsky_utils.reply_to_notification(
+                            client=atproto_client,
+                            notification=synthetic_notif,
+                            reply_text=cleaned_messages[0],
+                            lang=reply_lang
+                        )
+                    else:
+                        response = bsky_utils.reply_with_thread_to_notification(
+                            client=atproto_client,
+                            notification=synthetic_notif,
+                            reply_messages=cleaned_messages,
+                            lang=reply_lang
+                        )
+                else:
+                    # No prior reply, use first notification as parent
+                    first_notif = batch_notifications[0]
+                    if len(cleaned_messages) == 1:
+                        response = bsky_utils.reply_to_notification(
+                            client=atproto_client,
+                            notification=first_notif,
+                            reply_text=cleaned_messages[0],
+                            lang=reply_lang
+                        )
+                    else:
+                        response = bsky_utils.reply_with_thread_to_notification(
+                            client=atproto_client,
+                            notification=first_notif,
+                            reply_messages=cleaned_messages,
+                            lang=reply_lang
+                        )
+
+                if response:
+                    logger.info(f"⚡ Successfully posted {len(cleaned_messages)} threaded replies")
+                else:
+                    logger.error(f"⚡ Failed to post threaded replies")
 
             # Detach user blocks
             if attached_handles:
@@ -2392,7 +2507,9 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                 # Mark notification as in_progress to prevent re-queuing during processing
                 # This closes the window where Bluesky might re-surface the notification
                 # Use original_notification_uri to ensure we mark the correct notification
-                if NOTIFICATION_DB:
+                # NOTE: Skip for high-traffic batches - they handle this after retrieving all notifications
+                # (otherwise the triggering notification gets excluded from the batch query)
+                if NOTIFICATION_DB and not (is_debounced and is_high_traffic):
                     NOTIFICATION_DB.mark_in_progress(original_notification_uri)
 
                 # Process based on type using dict data directly

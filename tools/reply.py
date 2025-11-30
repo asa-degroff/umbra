@@ -249,9 +249,10 @@ def reply_to_bluesky_post(uri: str, cid: str, text: str, lang: str = "en-US") ->
 
         response_data = create_response.json()
         reply_uri = response_data.get("uri", "")
+        reply_cid = response_data.get("cid", "")
 
-        # Return success message
-        return f"Successfully posted reply: {reply_uri}"
+        # Return success message with URI and CID (CID needed for thread chaining)
+        return f"Successfully posted reply: {reply_uri} (CID: {reply_cid})"
 
     except requests.exceptions.RequestException as e:
         # Handle network/API errors
