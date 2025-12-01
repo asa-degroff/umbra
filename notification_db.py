@@ -454,8 +454,8 @@ class NotificationDB:
     def get_processed_uris(self, limit: int = 10000) -> Set[str]:
         """Get set of processed URIs for compatibility with existing code."""
         cursor = self.conn.execute("""
-            SELECT uri FROM notifications 
-            WHERE status IN ('processed', 'ignored', 'no_reply')
+            SELECT uri FROM notifications
+            WHERE status IN ('processed', 'ignored', 'no_reply', 'in_progress')
             ORDER BY processed_at DESC
             LIMIT ?
         """, (limit,))
