@@ -564,6 +564,15 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             logger.warning("No debounced notifications found for batch processing")
             return False
 
+        # If only 1 notification in batch, fall back to normal processing
+        # This handles the case where thread activity died down during debounce
+        if len(batch_notifications) == 1:
+            single_uri = batch_notifications[0]['uri']
+            logger.info(f"⚡ High-traffic batch has only 1 notification, falling back to normal processing")
+            # Clear high-traffic flags so it processes normally on next cycle
+            NOTIFICATION_DB.clear_high_traffic_flags(single_uri)
+            return False  # Will be processed normally on next iteration
+
         # Mark all batch notifications as in_progress to prevent re-queuing
         # This must happen AFTER retrieval (otherwise the query would exclude them)
         for notif in batch_notifications:

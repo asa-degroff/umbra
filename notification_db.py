@@ -695,6 +695,27 @@ class NotificationDB:
             logger.error(f"Error clearing batch debounce: {e}")
             return 0
 
+    def clear_high_traffic_flags(self, uri: str):
+        """
+        Clear high-traffic flags for a notification so it can be processed normally.
+
+        This is used when a high-traffic batch contains only 1 notification,
+        allowing it to fall back to normal processing instead of batch processing.
+        """
+        try:
+            self.conn.execute("""
+                UPDATE notifications
+                SET auto_debounced = 0,
+                    high_traffic_thread = 0,
+                    debounce_until = NULL,
+                    debounce_reason = NULL
+                WHERE uri = ?
+            """, (uri,))
+            self.conn.commit()
+            logger.debug(f"Cleared high-traffic flags for: {uri}")
+        except Exception as e:
+            logger.error(f"Error clearing high-traffic flags: {e}")
+
     def calculate_variable_debounce(self, thread_count: int, is_mention: bool, config: Dict) -> int:
         """
         Calculate variable debounce time based on thread activity level.
