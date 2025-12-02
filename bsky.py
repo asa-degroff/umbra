@@ -112,6 +112,10 @@ last_synthesis_time = time.time()
 last_mutuals_engagement_time = None
 next_mutuals_engagement_time = None
 
+# Daily review tracking
+last_daily_review_time = None
+DAILY_REVIEW_INTERVAL = 0
+
 # Database for notification tracking
 NOTIFICATION_DB = None
 
@@ -3117,6 +3121,371 @@ This is an opportunity for organic interaction with the people you follow who al
         logger.error(f"Error sending mutuals engagement message: {e}")
 
 
+def fetch_own_posts_for_review(atproto_client, limit: int = 50) -> str:
+    """
+    Fetch agent's own posts and replies from the past 24 hours for daily review.
+
+    Groups reply chains together and includes parent post context for replies
+    to other users to maintain conversational context.
+
+    Args:
+        atproto_client: Authenticated AT Protocol client
+        limit: Maximum number of posts to fetch (default 50)
+
+    Returns:
+        YAML-formatted string with posts including metadata for follow-up actions,
+        grouped by thread with parent context preserved
+    """
+    import yaml
+    from datetime import datetime, timezone, timedelta
+
+    def fetch_post_text(uri: str) -> tuple[str, str]:
+        """Fetch a post's text and author handle by URI. Returns (text, handle)."""
+        try:
+            # Extract repo and rkey from URI: at://did:plc:xxx/app.bsky.feed.post/rkey
+            parts = uri.replace('at://', '').split('/')
+            if len(parts) >= 3:
+                repo = parts[0]
+                rkey = parts[2]
+                response = atproto_client.app.bsky.feed.post.get({
+                    'repo': repo,
+                    'rkey': rkey
+                })
+                if response and hasattr(response, 'value'):
+                    text = getattr(response.value, 'text', '')
+                    # Try to get the author handle
+                    try:
+                        profile = atproto_client.app.bsky.actor.get_profile({'actor': repo})
+                        handle = getattr(profile, 'handle', repo)
+                    except:
+                        handle = repo
+                    return text, handle
+        except Exception as e:
+            logger.debug(f"Could not fetch post text for {uri}: {e}")
+        return '', ''
+
+    try:
+        # Get the agent's handle from the session
+        session_info = atproto_client.me
+        actor = session_info.handle if hasattr(session_info, 'handle') else session_info.did
+
+        # Calculate 24 hours ago
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+
+        # Fetch author feed - don't filter out replies
+        feed_response = atproto_client.app.bsky.feed.get_author_feed({
+            'actor': actor,
+            'limit': min(limit * 2, 100),  # Request extra to account for time filtering
+            'filter': 'posts_with_replies'  # Include both posts and replies
+        })
+
+        # First pass: collect all posts and their thread info
+        posts_by_uri = {}  # Map uri -> post_data
+        root_to_posts = {}  # Map root_uri -> list of post_data
+
+        for item in feed_response.feed:
+            post = item.post
+            record = post.record
+
+            # Skip reposts
+            if hasattr(item, 'reason') and item.reason:
+                if hasattr(item.reason, 'py_type') and 'reasonRepost' in str(item.reason.py_type):
+                    continue
+
+            # Parse and check created_at
+            created_at_str = record.created_at if hasattr(record, 'created_at') else None
+            if created_at_str:
+                try:
+                    # Parse ISO format timestamp
+                    if created_at_str.endswith('Z'):
+                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    else:
+                        created_at = datetime.fromisoformat(created_at_str)
+
+                    # Skip posts older than 24 hours
+                    if created_at < cutoff_time:
+                        continue
+                except ValueError:
+                    pass  # If we can't parse the date, include the post anyway
+
+            # Build post data
+            post_data = {
+                'text': record.text if hasattr(record, 'text') else '',
+                'created_at': created_at_str,
+                'uri': post.uri,
+                'cid': post.cid,
+                'like_count': post.like_count if hasattr(post, 'like_count') else 0,
+                'repost_count': post.repost_count if hasattr(post, 'repost_count') else 0,
+                'reply_count': post.reply_count if hasattr(post, 'reply_count') else 0,
+            }
+
+            # Track thread structure
+            root_uri = post.uri  # Default: this post is its own root
+            parent_uri = None
+
+            if hasattr(record, 'reply') and record.reply:
+                post_data['is_reply'] = True
+
+                # Get root and parent info
+                if hasattr(record.reply, 'root') and record.reply.root:
+                    root_uri = record.reply.root.uri if hasattr(record.reply.root, 'uri') else post.uri
+
+                if hasattr(record.reply, 'parent') and record.reply.parent:
+                    parent_uri = record.reply.parent.uri if hasattr(record.reply.parent, 'uri') else None
+                    post_data['reply_to'] = {
+                        'uri': parent_uri or '',
+                        'cid': record.reply.parent.cid if hasattr(record.reply.parent, 'cid') else '',
+                    }
+            else:
+                post_data['is_reply'] = False
+
+            post_data['_root_uri'] = root_uri
+            post_data['_parent_uri'] = parent_uri
+
+            posts_by_uri[post.uri] = post_data
+
+            # Group by root
+            if root_uri not in root_to_posts:
+                root_to_posts[root_uri] = []
+            root_to_posts[root_uri].append(post_data)
+
+            # Stop once we have enough posts
+            if len(posts_by_uri) >= limit:
+                break
+
+        # Second pass: fetch parent context for replies to other users
+        # and organize chains
+        threads = []
+        standalone_posts = []
+
+        for root_uri, posts in root_to_posts.items():
+            # Sort posts in this thread by created_at
+            posts.sort(key=lambda x: x.get('created_at', ''))
+
+            if len(posts) == 1 and not posts[0].get('is_reply'):
+                # Single standalone post (not a reply)
+                post = posts[0]
+                # Clean up internal fields
+                post.pop('_root_uri', None)
+                post.pop('_parent_uri', None)
+                standalone_posts.append(post)
+            else:
+                # This is a thread/chain
+                thread_data = {
+                    'thread_root_uri': root_uri,
+                    'posts': []
+                }
+
+                # Check if we need to fetch parent context
+                # (first post in chain is a reply to someone else's post)
+                first_post = posts[0]
+                if first_post.get('is_reply'):
+                    parent_uri = first_post.get('_parent_uri')
+                    if parent_uri and parent_uri not in posts_by_uri:
+                        # Parent is not one of our posts - fetch it for context
+                        parent_text, parent_handle = fetch_post_text(parent_uri)
+                        if parent_text:
+                            thread_data['parent_context'] = {
+                                'author': f"@{parent_handle}",
+                                'text': parent_text
+                            }
+
+                # Add all posts in the chain
+                for post in posts:
+                    # Clean up internal fields
+                    post.pop('_root_uri', None)
+                    post.pop('_parent_uri', None)
+                    thread_data['posts'].append(post)
+
+                threads.append(thread_data)
+
+        # Sort threads and standalone posts by earliest post time
+        def get_earliest_time(item):
+            if 'posts' in item:
+                return item['posts'][0].get('created_at', '') if item['posts'] else ''
+            return item.get('created_at', '')
+
+        threads.sort(key=get_earliest_time)
+        standalone_posts.sort(key=lambda x: x.get('created_at', ''))
+
+        # Build the review data
+        now = datetime.now(timezone.utc)
+        period_start = (now - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M')
+        period_end = now.strftime('%Y-%m-%d %H:%M')
+
+        total_posts = len(posts_by_uri)
+
+        review_data = {
+            'daily_review': {
+                'period': f"{period_start} to {period_end} UTC",
+                'post_count': total_posts,
+                'thread_count': len(threads),
+                'standalone_post_count': len(standalone_posts),
+            }
+        }
+
+        # Add threads if any
+        if threads:
+            review_data['daily_review']['threads'] = threads
+
+        # Add standalone posts if any
+        if standalone_posts:
+            review_data['daily_review']['standalone_posts'] = standalone_posts
+
+        return yaml.dump(review_data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    except Exception as e:
+        logger.error(f"Error fetching posts for daily review: {e}")
+        return yaml.dump({
+            'daily_review': {
+                'error': str(e),
+                'post_count': 0,
+                'posts': []
+            }
+        }, default_flow_style=False)
+
+
+def send_daily_review_message(client: Letta, agent_id: str, atproto_client) -> None:
+    """
+    Send a daily review message to the agent with its posts from the past 24 hours.
+    This allows the agent to reflect on its activity and identify any anomalies.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send message to
+        atproto_client: Authenticated AT Protocol client for fetching posts
+    """
+    # Track attached temporal blocks for cleanup
+    attached_temporal_labels = []
+
+    try:
+        logger.info("📋 Fetching posts for daily review")
+
+        # Fetch agent's posts from the past 24 hours
+        posts_yaml = fetch_own_posts_for_review(atproto_client, limit=50)
+
+        logger.info("📋 Preparing daily review with temporal journal blocks")
+
+        # Attach temporal blocks before review
+        success, attached_temporal_labels = attach_temporal_blocks(client, agent_id)
+        if not success:
+            logger.warning("Failed to attach some temporal blocks, continuing with daily review anyway")
+
+        # Create daily review prompt
+        today = date.today()
+        review_prompt = f"""Time for your daily review.
+
+Below are your posts and replies from the past 24 hours. Review them to:
+- Remember what topics you covered
+- Identify any patterns or themes in your conversations
+- Spot any operational anomalies (duplicate posts, errors)
+- Consider if any posts warrant a follow-up reply
+
+You have access to temporal journal blocks for recording observations:
+- umbra_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
+- umbra_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
+- umbra_year_{today.year}: This year's journal ({today.year})
+
+If you want to follow up on any of your posts, you can use reply_to_bluesky_post with the uri and cid provided below.
+
+---
+YOUR POSTS FROM THE PAST 24 HOURS:
+{posts_yaml}
+---
+
+Reflect on your activity and update your memory as appropriate."""
+
+        logger.info("📋 Sending daily review prompt to agent")
+
+        # Send review message with streaming to show tool use
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": review_prompt}],
+            stream_tokens=False,
+            max_steps=100
+        )
+
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n◆ Reasoning")
+                        print("  ─────────")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+
+                    # Create ATProto record for reasoning (if we have atproto client)
+                    if atproto_client and hasattr(chunk, 'reasoning'):
+                        try:
+                            bsky_utils.create_reasoning_record(atproto_client, chunk.reasoning)
+                        except Exception as e:
+                            logger.debug(f"Failed to create reasoning record during daily review: {e}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+
+                    # Create ATProto record for tool call (if we have atproto client)
+                    if atproto_client:
+                        try:
+                            tool_call_id = chunk.tool_call.tool_call_id if hasattr(chunk.tool_call, 'tool_call_id') else None
+                            bsky_utils.create_tool_call_record(
+                                atproto_client,
+                                tool_name,
+                                chunk.tool_call.arguments,
+                                tool_call_id
+                            )
+                        except Exception as e:
+                            logger.debug(f"Failed to create tool call record during daily review: {e}")
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        if tool_name == 'archival_memory_search':
+                            query = args.get('query', 'unknown')
+                            log_with_panel(f"query: \"{query}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'archival_memory_insert':
+                            content = args.get('content', '')
+                            log_with_panel(content[:200] + "..." if len(content) > 200 else content, f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'update_block':
+                            label = args.get('label', 'unknown')
+                            value_preview = str(args.get('value', ''))[:100] + "..." if len(str(args.get('value', ''))) > 100 else str(args.get('value', ''))
+                            log_with_panel(f"{label}: \"{value_preview}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'reply_to_bluesky_post':
+                            text = args.get('text', '')
+                            uri = args.get('uri', '')[:50]
+                            log_with_panel(f"reply to {uri}...: \"{text[:100]}...\"" if len(text) > 100 else f"reply to {uri}...: \"{text}\"", f"Tool call: {tool_name}", "blue")
+                        else:
+                            args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                            if len(args_str) > 150:
+                                args_str = args_str[:150] + "..."
+                            log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} ✓", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} ✗", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n▶ Daily Review Response")
+                    print("  ─────────────────────")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+
+            if str(chunk) == 'done':
+                break
+
+        logger.info("📋 Daily review message processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error sending daily review message: {e}")
+    finally:
+        # Always detach temporal blocks after review
+        if attached_temporal_labels:
+            logger.info("📋 Detaching temporal journal blocks after daily review")
+            detach_success = detach_temporal_blocks(client, agent_id, attached_temporal_labels)
+            if not detach_success:
+                logger.warning("Some temporal blocks may not have been detached properly")
+
+
 def periodic_user_block_cleanup(client: Letta, agent_id: str) -> None:
     """
     Detach all user blocks from the agent to prevent memory bloat.
@@ -3307,6 +3676,7 @@ def main():
     parser.add_argument('--synthesis-interval', type=int, default=43200, help='Send synthesis message every N seconds (default: 3600 = 1 hour, 0 to disable)')
     parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
     parser.add_argument('--mutuals-engagement', action='store_true', help='Enable daily mutuals engagement (prompt to read and reply to mutuals feed posts once per day at a random time)')
+    parser.add_argument('--daily-review-interval', type=int, default=0, help='Send daily review every N seconds (default: 0 = disabled, 86400 = 24 hours)')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -3488,6 +3858,8 @@ def main():
     CLEANUP_INTERVAL = args.cleanup_interval
     SYNTHESIS_INTERVAL = args.synthesis_interval
     MUTUALS_ENGAGEMENT = args.mutuals_engagement
+    global DAILY_REVIEW_INTERVAL, last_daily_review_time
+    DAILY_REVIEW_INTERVAL = args.daily_review_interval
     
     # Synthesis-only mode
     if SYNTHESIS_ONLY:
@@ -3538,6 +3910,13 @@ def main():
     else:
         logger.info("Daily mutuals engagement disabled")
 
+    # Initialize daily review if enabled
+    if DAILY_REVIEW_INTERVAL > 0:
+        last_daily_review_time = time.time()  # Initialize to current time so first review waits for full interval
+        logger.info(f"📋 Daily review enabled every {DAILY_REVIEW_INTERVAL} seconds ({DAILY_REVIEW_INTERVAL/3600:.1f} hours)")
+    else:
+        logger.info("Daily review disabled")
+
     while True:
         try:
             cycle_count += 1
@@ -3560,6 +3939,14 @@ def main():
                     send_mutuals_engagement_message(CLIENT, umbra_agent.id)
                     # Schedule next engagement
                     next_mutuals_engagement_time = calculate_next_mutuals_engagement_time()
+
+            # Check if daily review interval has passed
+            if DAILY_REVIEW_INTERVAL > 0 and last_daily_review_time is not None:
+                current_time = time.time()
+                if current_time - last_daily_review_time >= DAILY_REVIEW_INTERVAL:
+                    logger.info(f"⏰ {DAILY_REVIEW_INTERVAL/3600:.1f} hours have passed, triggering daily review")
+                    send_daily_review_message(CLIENT, umbra_agent.id, atproto_client)
+                    last_daily_review_time = current_time
 
             # Run periodic cleanup every N cycles
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:
