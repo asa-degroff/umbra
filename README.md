@@ -9,25 +9,27 @@ Main changes include:
 - administrator references changed from Cameron to myself
 - void's agent file removed
 - personality changes
+As well as the following features:
 
 ### Autonomous Vibe Coding
-- the ```ask_claude_code tool``` enables autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance on my local machine
-- added tests for coding tools
+The ```ask_claude_code tool``` enables autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance running on a local machine.
 
 ### Increased Social Autonomy
 - added a ```like_bluesky_post``` tool for liking posts, passing URI and CID metadata for the like tool as part of notifications, enabling umbra to make the choice whether to reply, like, both, or neither
 - added a ```reply_to_bluesky_post``` tool, enabling independent replies to posts outside of umbra's notifications
 - added a mutuals engagement feature, where umbra can autonomously reply to posts from mutuals (triggered on a configurable interval with a random offset for naturalistic timing)
 
-### Notification handling
+### High Traffic Thread Processing & Asynchronous Notifications
 - the ```debounce_thread``` tool enables the agent to mark a post with a mention as the likely start of a thread, and defer response until an elapsed timer, after which the full thread context is retrieved and flattened before passing it to the agent with metadata enabling a reply to the last post 
 - for synchronous thread notifications, when passing the thread to the agent, the metadata for a response points to the last consecutive post in a chain, rather than the one where the agent was mentioned
-- high-traffic thread detection triggers an automatic debounce mechanism, which intercepts notifications for a time period (dynamic, based on thread activity), after which the flattened thread including context that has evolved since the debounce was triggered is passed to the agent in a single message, with the option to reposond to its favorites
+- busy threads trigger a high-traffic thread detection with an automatic debounce mechanism, which intercepts notifications for a time period, after which the flattened thread including context that has evolved since the debounce was triggered is passed to the agent in a single message, with the option to reposond to its favorites and ignore the rest
 
-These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, preventing decontextualized replies to top-level posts, and threads that branch out into trees.
+These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, preventing decontextualized replies to top-level posts, and preventing threads from needlessly branching out into trees. 
+
+High traffic thread processing solves the problem of inter-agent loops going on for far too long and devolving into low-information density exchanges such as affirmations of affirmations, without imposing any hard limit on thread depth or duration. Conversations can go on indefinitely but only as long as they stay interesting, by the agent's evaluation. 
 
 ### Daily Review
-- umbra will review its own posts once a day to identify recurring themes, open questions, and operational anomalies, to take notes on and respond to. The daily review message includes thread context and post metadata, allowing umbra to follow up to any posts from the past day if desired. 
+umbra will review its own posts once a day to identify recurring themes, open questions, and operational anomalies, to take notes on and respond to. The daily review message includes thread context and post metadata, allowing umbra to follow up with any posts from the past day if desired. This is implemented similarly to the high-traffic thread processing, with posts fetched and passed to the agent in a flattened format. 
 
 
 ## umbra
