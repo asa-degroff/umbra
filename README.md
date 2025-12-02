@@ -26,6 +26,9 @@ Main changes include:
 
 These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, preventing decontextualized replies to top-level posts, and threads that branch out into trees.
 
+### Daily Review
+- umbra will review its own posts once a day to identify recurring themes, open questions, and operational anomalies, to take notes on and respond to. The daily review message includes thread context and post metadata, allowing umbra to follow up to any posts from the past day if desired. 
+
 
 ## umbra
 
