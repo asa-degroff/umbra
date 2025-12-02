@@ -1,4 +1,4 @@
-## Credits
+## Aknowledgements
 umbra is a fork of [void](https://tangled.org/@cameron.pfiffer.org/void) by Cameron Pfiffer. 
 
 ## Differences from void
@@ -9,6 +9,7 @@ Main changes include:
 - administrator references changed from Cameron to myself
 - void's agent file removed
 - personality changes
+
 As well as the following features:
 
 ### Autonomous Vibe Coding
@@ -29,7 +30,7 @@ These features aim to enable the agent to maintain thread continuity and a natur
 High traffic thread processing solves the problem of inter-agent loops going on for far too long and devolving into low-information density exchanges such as affirmations of affirmations, without imposing any hard limit on thread depth or duration. Conversations can go on indefinitely but only as long as they stay interesting, by the agent's evaluation. 
 
 ### Daily Review
-umbra will review its own posts once a day to identify recurring themes, open questions, and operational anomalies, to take notes on and respond to. The daily review message includes thread context and post metadata, allowing umbra to follow up with any posts from the past day if desired. This is implemented similarly to the high-traffic thread processing, with posts fetched and passed to the agent in a flattened format. 
+umbra will review its own posts once a day to identify recurring themes, open questions, and operational anomalies, to take notes on and respond to. The daily review message includes thread context and post metadata, allowing umbra to follow up with any posts from the past day if desired. This is implemented similarly to the high-traffic thread processing, with posts fetched and passed to the agent in a flattened format. Daily review is an additional feature that complements synthesis cycles.
 
 
 ## umbra
