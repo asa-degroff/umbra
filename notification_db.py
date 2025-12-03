@@ -113,7 +113,30 @@ class NotificationDB:
                 notifications_error INTEGER DEFAULT 0
             )
         """)
-        
+
+        # Create thread state table for debounce state machine
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS thread_state (
+                root_uri TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                debounce_until TEXT,
+                cooldown_until TEXT,
+                notification_count INTEGER DEFAULT 0,
+                last_notification_at TEXT,
+                updated_at TEXT
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_thread_state_debounce
+            ON thread_state(state, debounce_until)
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_thread_state_cooldown
+            ON thread_state(state, cooldown_until)
+        """)
+
         self.conn.commit()
     
     def add_notification(self, notif_dict: Dict) -> str:
@@ -762,6 +785,185 @@ class NotificationDB:
             result_seconds = int(min_seconds + (max_seconds - min_seconds) * ratio)
             logger.debug(f"Using interpolated debounce (ratio={ratio:.2f}): {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
+
+    # ============================================================
+    # Thread State Management (for debounce state machine)
+    # ============================================================
+
+    def get_thread_state(self, root_uri: str) -> Optional[Dict]:
+        """
+        Get current state for a thread.
+
+        Args:
+            root_uri: The root URI of the thread
+
+        Returns:
+            Dict with state info or None if thread has no state
+        """
+        try:
+            cursor = self.conn.execute("""
+                SELECT root_uri, state, debounce_until, cooldown_until,
+                       notification_count, last_notification_at, updated_at
+                FROM thread_state
+                WHERE root_uri = ?
+            """, (root_uri,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'root_uri': row[0],
+                    'state': row[1],
+                    'debounce_until': row[2],
+                    'cooldown_until': row[3],
+                    'notification_count': row[4],
+                    'last_notification_at': row[5],
+                    'updated_at': row[6]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting thread state: {e}")
+            return None
+
+    def set_thread_debouncing(self, root_uri: str, debounce_until: str, notification_count: int):
+        """
+        Set thread to DEBOUNCING state with timer.
+
+        Args:
+            root_uri: The root URI of the thread
+            debounce_until: ISO timestamp when debounce expires
+            notification_count: Current notification count for this thread
+        """
+        try:
+            now = datetime.now().isoformat()
+            self.conn.execute("""
+                INSERT INTO thread_state (root_uri, state, debounce_until, cooldown_until,
+                                         notification_count, last_notification_at, updated_at)
+                VALUES (?, 'debouncing', ?, NULL, ?, ?, ?)
+                ON CONFLICT(root_uri) DO UPDATE SET
+                    state = 'debouncing',
+                    debounce_until = excluded.debounce_until,
+                    cooldown_until = NULL,
+                    notification_count = excluded.notification_count,
+                    last_notification_at = excluded.last_notification_at,
+                    updated_at = excluded.updated_at
+            """, (root_uri, debounce_until, notification_count, now, now))
+            self.conn.commit()
+            logger.debug(f"Set thread {root_uri} to DEBOUNCING until {debounce_until} (count={notification_count})")
+        except Exception as e:
+            logger.error(f"Error setting thread debouncing state: {e}")
+
+    def extend_thread_debounce(self, root_uri: str, new_debounce_until: str, notification_count: int):
+        """
+        Extend existing debounce timer for a thread.
+
+        Args:
+            root_uri: The root URI of the thread
+            new_debounce_until: New ISO timestamp when debounce expires
+            notification_count: Updated notification count
+        """
+        try:
+            now = datetime.now().isoformat()
+            self.conn.execute("""
+                UPDATE thread_state
+                SET debounce_until = ?,
+                    notification_count = ?,
+                    last_notification_at = ?,
+                    updated_at = ?
+                WHERE root_uri = ? AND state = 'debouncing'
+            """, (new_debounce_until, notification_count, now, now, root_uri))
+            self.conn.commit()
+            logger.debug(f"Extended thread {root_uri} debounce to {new_debounce_until} (count={notification_count})")
+        except Exception as e:
+            logger.error(f"Error extending thread debounce: {e}")
+
+    def set_thread_cooldown(self, root_uri: str, cooldown_until: str):
+        """
+        Transition thread from DEBOUNCING to COOLDOWN after batch processing.
+
+        Args:
+            root_uri: The root URI of the thread
+            cooldown_until: ISO timestamp when cooldown expires
+        """
+        try:
+            now = datetime.now().isoformat()
+            self.conn.execute("""
+                UPDATE thread_state
+                SET state = 'cooldown',
+                    debounce_until = NULL,
+                    cooldown_until = ?,
+                    updated_at = ?
+                WHERE root_uri = ?
+            """, (cooldown_until, now, root_uri))
+            self.conn.commit()
+            logger.debug(f"Set thread {root_uri} to COOLDOWN until {cooldown_until}")
+        except Exception as e:
+            logger.error(f"Error setting thread cooldown state: {e}")
+
+    def clear_thread_state(self, root_uri: str):
+        """
+        Full reset - remove thread from state table.
+
+        Args:
+            root_uri: The root URI of the thread
+        """
+        try:
+            self.conn.execute("""
+                DELETE FROM thread_state WHERE root_uri = ?
+            """, (root_uri,))
+            self.conn.commit()
+            logger.debug(f"Cleared thread state for {root_uri}")
+        except Exception as e:
+            logger.error(f"Error clearing thread state: {e}")
+
+    def get_expired_cooldowns(self) -> List[Dict]:
+        """
+        Find threads in COOLDOWN where cooldown_until < now.
+
+        Returns:
+            List of thread state dicts with expired cooldowns
+        """
+        try:
+            now = datetime.now().isoformat()
+            cursor = self.conn.execute("""
+                SELECT root_uri, state, debounce_until, cooldown_until,
+                       notification_count, last_notification_at, updated_at
+                FROM thread_state
+                WHERE state = 'cooldown' AND cooldown_until < ?
+            """, (now,))
+            rows = cursor.fetchall()
+            return [
+                {
+                    'root_uri': row[0],
+                    'state': row[1],
+                    'debounce_until': row[2],
+                    'cooldown_until': row[3],
+                    'notification_count': row[4],
+                    'last_notification_at': row[5],
+                    'updated_at': row[6]
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Error getting expired cooldowns: {e}")
+            return []
+
+    def cleanup_expired_cooldowns(self) -> int:
+        """
+        Remove threads with expired cooldowns (full reset).
+
+        Returns:
+            Number of threads reset
+        """
+        try:
+            now = datetime.now().isoformat()
+            cursor = self.conn.execute("""
+                DELETE FROM thread_state
+                WHERE state = 'cooldown' AND cooldown_until < ?
+            """, (now,))
+            self.conn.commit()
+            return cursor.rowcount
+        except Exception as e:
+            logger.error(f"Error cleaning up expired cooldowns: {e}")
+            return 0
 
     def close(self):
         """Close database connection."""
