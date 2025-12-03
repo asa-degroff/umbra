@@ -278,8 +278,8 @@ def process_debounced_thread(umbra_agent, atproto_client, notification_data, que
             last_post_author = last_post.author.handle if hasattr(last_post, 'author') and hasattr(last_post.author, 'handle') else 'unknown'
             logger.info(f"   Last post in thread: {last_post_uri} by @{last_post_author}")
 
-        # Convert thread to YAML
-        thread_yaml = thread_to_yaml_string(thread)
+        # Convert thread to YAML (no tree view needed for linear reply chains)
+        thread_yaml = thread_to_yaml_string(thread, include_tree_view=False)
 
         # Clear debounce from database
         if NOTIFICATION_DB:
@@ -1155,7 +1155,7 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
         # Get thread context as YAML string
         logger.debug("Converting thread to YAML string")
         try:
-            thread_context = thread_to_yaml_string(thread)
+            thread_context = thread_to_yaml_string(thread, include_tree_view=False)
             logger.debug(f"Thread context generated, length: {len(thread_context)} characters")
             
             # Check if #umbrastop appears anywhere in the thread
