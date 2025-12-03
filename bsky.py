@@ -654,9 +654,14 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Build THREAD CONTEXT section (posts before notifications)
         if context_posts:
             import yaml
+            # Build tree visualization for context posts
+            tree_view = bsky_utils.build_tree_view(context_posts)
+
+            # Also include full YAML data
             context_data = {'posts': context_posts}
-            # Convert to YAML directly (data is already in dict form)
-            pre_notification_yaml = yaml.dump(context_data, indent=2, allow_unicode=True, default_flow_style=False)
+            yaml_data = yaml.dump(context_data, indent=2, allow_unicode=True, default_flow_style=False)
+
+            pre_notification_yaml = f"Tree View:\n{tree_view}\n\nFull Data:\n{yaml_data}"
         else:
             pre_notification_yaml = "(No context posts - notifications start the thread)"
 

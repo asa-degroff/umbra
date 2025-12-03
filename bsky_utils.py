@@ -214,6 +214,17 @@ def flatten_thread_structure(thread_data):
 
                 post_dict['record'] = record_dict
 
+            # Extract parent_uri for tree visualization
+            parent_uri = None
+            if hasattr(post, 'record') and post.record:
+                record_obj = post.record
+                if hasattr(record_obj, 'reply') and record_obj.reply:
+                    reply_ref = record_obj.reply
+                    if hasattr(reply_ref, 'parent') and reply_ref.parent:
+                        if hasattr(reply_ref.parent, 'uri'):
+                            parent_uri = reply_ref.parent.uri
+            post_dict['parent_uri'] = parent_uri
+
             posts.append(post_dict)
 
         # Then traverse any replies (going DOWN the thread)
@@ -232,20 +243,123 @@ def flatten_thread_structure(thread_data):
     return {'posts': posts}
 
 
-def thread_to_yaml_string(thread, strip_metadata=True):
+def compute_tree_prefixes(posts: List[Dict]) -> Dict[str, str]:
+    """
+    Compute tree-style prefixes based on parent relationships.
+
+    Args:
+        posts: List of post dicts, each with 'uri' and 'parent_uri' keys
+
+    Returns:
+        Dict mapping uri -> prefix string (e.g., "├─ ", "│  └─ ")
+    """
+    if not posts:
+        return {}
+
+    uri_to_post = {p.get('uri'): p for p in posts if p.get('uri')}
+    children_map: Dict[str, List[str]] = {}  # parent_uri -> [child_uris]
+    root_uris: List[str] = []
+
+    for post in posts:
+        uri = post.get('uri')
+        if not uri:
+            continue
+        parent_uri = post.get('parent_uri')
+        if not parent_uri or parent_uri not in uri_to_post:
+            root_uris.append(uri)
+        else:
+            children_map.setdefault(parent_uri, []).append(uri)
+
+    prefixes: Dict[str, str] = {}
+    visited: set = set()
+
+    def compute_recursive(uri: str, ancestors_last: List[bool]):
+        if uri in visited:
+            return
+        visited.add(uri)
+
+        prefix_parts = []
+        for is_last in ancestors_last[:-1]:
+            prefix_parts.append("   " if is_last else "│  ")
+        if ancestors_last:
+            prefix_parts.append("└─ " if ancestors_last[-1] else "├─ ")
+        prefixes[uri] = "".join(prefix_parts)
+
+        children = children_map.get(uri, [])
+        for i, child_uri in enumerate(children):
+            compute_recursive(child_uri, ancestors_last + [i == len(children) - 1])
+
+    for i, root_uri in enumerate(root_uris):
+        if len(root_uris) == 1:
+            prefixes[root_uri] = ""
+            children = children_map.get(root_uri, [])
+            for j, child_uri in enumerate(children):
+                compute_recursive(child_uri, [j == len(children) - 1])
+        else:
+            compute_recursive(root_uri, [i == len(root_uris) - 1])
+
+    return prefixes
+
+
+def build_tree_view(posts: List[Dict], max_text_length: int = 200) -> str:
+    """
+    Build a tree-style text visualization of a thread.
+
+    Args:
+        posts: List of post dicts with uri, parent_uri, author, record fields
+        max_text_length: Maximum text length before truncation
+
+    Returns:
+        Multi-line string showing thread structure with tree prefixes
+    """
+    if not posts:
+        return "(empty thread)"
+
+    prefixes = compute_tree_prefixes(posts)
+    lines = []
+
+    for post in posts:
+        uri = post.get('uri', '')
+        prefix = prefixes.get(uri, '')
+
+        author = post.get('author', {})
+        handle = author.get('handle', 'unknown')
+        record = post.get('record', {})
+        text = record.get('text', '').replace('\n', ' | ')
+        if len(text) > max_text_length:
+            text = text[:max_text_length - 3] + "..."
+
+        lines.append(f"{prefix}@{handle}: {text}")
+
+    return "\n".join(lines)
+
+
+def thread_to_yaml_string(thread, strip_metadata=True, include_tree_view=True):
     """
     Convert thread data to a YAML-formatted string for LLM parsing.
 
     Args:
         thread: The thread data from get_post_thread
         strip_metadata: Whether to strip metadata fields for cleaner output
+        include_tree_view: Whether to prepend a tree visualization of the thread
 
     Returns:
-        YAML-formatted string representation of the thread
+        String representation of the thread with optional tree view and YAML data
     """
     # First flatten the thread structure to avoid deep nesting
     flattened = flatten_thread_structure(thread)
-    
+    posts = flattened.get('posts', [])
+
+    output_parts = []
+
+    # Build tree visualization if requested
+    if include_tree_view and posts:
+        tree_view = build_tree_view(posts)
+        output_parts.append("THREAD STRUCTURE:")
+        output_parts.append(tree_view)
+        output_parts.append("")
+        output_parts.append("FULL POST DATA:")
+
     # Convert complex objects to basic types
     basic_thread = convert_to_basic_types(flattened)
 
@@ -255,7 +369,10 @@ def thread_to_yaml_string(thread, strip_metadata=True):
     else:
         cleaned_thread = basic_thread
 
-    return yaml.dump(cleaned_thread, indent=2, allow_unicode=True, default_flow_style=False)
+    yaml_output = yaml.dump(cleaned_thread, indent=2, allow_unicode=True, default_flow_style=False)
+    output_parts.append(yaml_output)
+
+    return "\n".join(output_parts)
 
 
 
