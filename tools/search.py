@@ -107,7 +107,29 @@ def search_bluesky_posts(query: str, max_results: int = 25, author: str = None, 
                     "uri": record["reply"].get("parent", {}).get("uri", ""),
                     "cid": record["reply"].get("parent", {}).get("cid", ""),
                 }
-            
+
+            # Add links from facets if present
+            facets = record.get("facets", [])
+            if facets:
+                links = []
+                text = record.get("text", "")
+                text_bytes = text.encode('utf-8')
+                for facet in facets:
+                    for feature in facet.get("features", []):
+                        if feature.get("$type") == "app.bsky.richtext.facet#link":
+                            byte_start = facet.get("index", {}).get("byteStart", 0)
+                            byte_end = facet.get("index", {}).get("byteEnd", 0)
+                            try:
+                                link_text = text_bytes[byte_start:byte_end].decode('utf-8')
+                            except (UnicodeDecodeError, IndexError):
+                                link_text = feature.get("uri", "")
+                            links.append({
+                                "url": feature.get("uri", ""),
+                                "text": link_text
+                            })
+                if links:
+                    post_data["links"] = links
+
             results.append(post_data)
         
         return yaml.dump({

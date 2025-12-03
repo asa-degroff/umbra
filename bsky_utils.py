@@ -116,6 +116,36 @@ def strip_fields(obj, strip_field_list):
     return obj
 
 
+def extract_links_from_facets(record_text: str, facets: list) -> list:
+    """
+    Extract link URLs from facets with their associated text.
+
+    Args:
+        record_text: The post text (needed to extract link text using byte offsets)
+        facets: List of facet objects from post record
+
+    Returns:
+        List of dicts with 'url' and 'text' keys
+    """
+    links = []
+    text_bytes = record_text.encode('utf-8')
+
+    for facet in facets:
+        for feature in facet.features:
+            if hasattr(feature, 'uri'):  # Link facet
+                byte_start = facet.index.byte_start
+                byte_end = facet.index.byte_end
+                try:
+                    link_text = text_bytes[byte_start:byte_end].decode('utf-8')
+                except (UnicodeDecodeError, IndexError):
+                    link_text = feature.uri  # Fallback to URL itself
+                links.append({
+                    'url': feature.uri,
+                    'text': link_text
+                })
+    return links
+
+
 def flatten_thread_structure(thread_data):
     """
     Flatten a nested thread structure into a list while preserving all data.
@@ -169,18 +199,14 @@ def flatten_thread_structure(thread_data):
                     'createdAt': getattr(record, 'created_at', 'unknown')
                 }
 
-                # Extract facets if present
+                # Extract links from facets if present
                 if hasattr(record, 'facets') and record.facets:
-                    record_dict['facets'] = [
-                        {
-                            'index': {
-                                'byte_start': getattr(f.index, 'byte_start', 0) if hasattr(f, 'index') else 0,
-                                'byte_end': getattr(f.index, 'byte_end', 0) if hasattr(f, 'index') else 0
-                            },
-                            'features': [str(feat) for feat in f.features] if hasattr(f, 'features') else []
-                        }
-                        for f in record.facets
-                    ]
+                    links = extract_links_from_facets(
+                        getattr(record, 'text', ''),
+                        record.facets
+                    )
+                    if links:
+                        record_dict['links'] = links
 
                 # Extract embed if present
                 if hasattr(record, 'embed') and record.embed:

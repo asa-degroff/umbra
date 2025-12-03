@@ -33,12 +33,12 @@ console = Console()
 
 # Tool configurations: function paired with its args_schema and metadata
 TOOL_CONFIGS = [
-    {
-        "func": search_bluesky_posts,
-        "args_schema": SearchArgs,
-        "description": "Search for posts on Bluesky matching the given criteria",
-        "tags": ["bluesky", "search", "posts"]
-    },
+    # {
+    #     "func": search_bluesky_posts,
+    #     "args_schema": SearchArgs,
+    #     "description": "Search for posts on Bluesky matching the given criteria",
+    #     "tags": ["bluesky", "search", "posts"]
+    # },
     {
         "func": create_new_bluesky_post,
         "args_schema": PostArgs,
@@ -72,12 +72,12 @@ TOOL_CONFIGS = [
     # Note: User block management tools (attach_user_blocks, detach_user_blocks, user_note_*)
     # are available on the server but not exposed to the agent to prevent the agent from
     # managing its own memory blocks. User blocks are managed by bsky.py automatically.
-    {
-        "func": halt_activity,
-        "args_schema": HaltArgs,
-        "description": "Signal to halt all bot activity and terminate bsky.py",
-        "tags": ["control", "halt", "terminate"]
-    },
+    # {
+    #     "func": halt_activity,
+    #     "args_schema": HaltArgs,
+    #     "description": "Signal to halt all bot activity and terminate bsky.py",
+    #     "tags": ["control", "halt", "terminate"]
+    # },
     {
         "func": add_post_to_bluesky_reply_thread,
         "args_schema": ReplyThreadPostArgs,
