@@ -2189,61 +2189,105 @@ def save_notification_to_queue(notification, is_priority=None):
                 # Check if thread is in DEBOUNCING or COOLDOWN state
                 if thread_state:
                     if thread_state['state'] == 'debouncing':
-                        # Thread is debouncing - check for duplicate FIRST before extending
-                        add_result = NOTIFICATION_DB.add_notification(notif_dict)
-                        if add_result == "duplicate":
-                            # Skip extension entirely for duplicates
-                            existing = NOTIFICATION_DB.get_notification(notification_uri)
-                            if existing and existing.get('debounce_until'):
-                                if existing['debounce_until'] > datetime.now().isoformat():
-                                    logger.debug(f"⚡ Skipping duplicate notification in debouncing thread: {notification_uri}")
-                                    return False
-                            logger.debug(f"⚡ Skipping duplicate high-traffic {thread_type}: {notification_uri}")
-                            return False
-                        elif add_result == "error":
-                            logger.error(f"⚡ Error adding high-traffic {thread_type} to database: {notification_uri}")
-                            return False
+                        # Check if the debounce timer has EXPIRED
+                        # If expired, the batch is pending processing - start a NEW debounce cycle
+                        current_time = datetime.now().isoformat()
+                        thread_debounce_until = thread_state.get('debounce_until', '')
+                        timer_expired = thread_debounce_until and thread_debounce_until <= current_time
 
-                        # Only extend if it's a genuinely new notification
-                        new_count = thread_state['notification_count'] + 1
+                        if timer_expired:
+                            # Timer expired - start a fresh debounce cycle for new notifications
+                            # The old batch will be processed separately
+                            logger.info(f"⚡ Debounce timer expired for thread, starting new cycle for incoming {thread_type}")
 
-                        # Recalculate debounce time based on new count
-                        new_debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
-                            new_count, is_mention, high_traffic_config
-                        )
+                            # Check for duplicate first
+                            add_result = NOTIFICATION_DB.add_notification(notif_dict)
+                            if add_result == "duplicate":
+                                logger.debug(f"⚡ Skipping duplicate {thread_type} (timer expired): {notification_uri}")
+                                return False
+                            elif add_result == "error":
+                                logger.error(f"⚡ Error adding {thread_type} to database: {notification_uri}")
+                                return False
 
-                        # Cap at max
-                        max_minutes = high_traffic_config.get(
-                            'mention_debounce_max' if is_mention else 'reply_debounce_max', 60
-                        )
-                        max_seconds = max_minutes * 60
-                        new_debounce_seconds = min(new_debounce_seconds, max_seconds)
+                            # Start fresh debounce cycle with NEW start time
+                            min_minutes = high_traffic_config.get(
+                                'mention_debounce_min' if is_mention else 'reply_debounce_min', 7
+                            )
+                            min_seconds = min_minutes * 60
+                            debounce_until = (datetime.now() + timedelta(seconds=min_seconds)).isoformat()
+                            NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=1)
 
-                        # Get debounce start time (use current time as fallback for legacy data)
-                        debounce_started_at = thread_state.get('debounce_started_at') or datetime.now().isoformat()
+                            logger.info(f"⚡ Started new debounce cycle for {thread_type} (duration: {min_minutes}min)")
 
-                        # Extend debounce - expiry is calculated from START time, not now
-                        new_debounce_until = NOTIFICATION_DB.extend_thread_debounce(
-                            root_uri, new_debounce_seconds, new_count, debounce_started_at
-                        )
-                        if not new_debounce_until:
-                            logger.error(f"⚡ Failed to extend debounce for {thread_type}: {notification_uri}")
-                            return False
-                        debounce_until = new_debounce_until
+                            # Set auto-debounce on the newly added notification
+                            reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
+                            NOTIFICATION_DB.set_auto_debounce(
+                                notification_uri,
+                                debounce_until,
+                                is_high_traffic=True,
+                                reason=reason_label,
+                                thread_chain_id=root_uri
+                            )
 
-                        logger.info(f"⚡ Extending debounce for high-traffic {thread_type} ({new_count} notifications, expiry: {new_debounce_until}, started: {debounce_started_at})")
+                            skip_db_add = True
 
-                        # Set auto-debounce on the newly added notification
-                        reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
-                        NOTIFICATION_DB.set_auto_debounce(
-                            notification_uri,
-                            debounce_until,
-                            is_high_traffic=True,
-                            reason=reason_label,
-                            thread_chain_id=root_uri
-                        )
+                        else:
+                            # Timer NOT expired - extend the existing debounce
+                            # Check for duplicate FIRST before extending
+                            add_result = NOTIFICATION_DB.add_notification(notif_dict)
+                            if add_result == "duplicate":
+                                # Skip extension entirely for duplicates
+                                existing = NOTIFICATION_DB.get_notification(notification_uri)
+                                if existing and existing.get('debounce_until'):
+                                    if existing['debounce_until'] > datetime.now().isoformat():
+                                        logger.debug(f"⚡ Skipping duplicate notification in debouncing thread: {notification_uri}")
+                                        return False
+                                logger.debug(f"⚡ Skipping duplicate high-traffic {thread_type}: {notification_uri}")
+                                return False
+                            elif add_result == "error":
+                                logger.error(f"⚡ Error adding high-traffic {thread_type} to database: {notification_uri}")
+                                return False
 
-                        skip_db_add = True
+                            # Only extend if it's a genuinely new notification
+                            new_count = thread_state['notification_count'] + 1
+
+                            # Recalculate debounce time based on new count
+                            new_debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
+                                new_count, is_mention, high_traffic_config
+                            )
+
+                            # Cap at max
+                            max_minutes = high_traffic_config.get(
+                                'mention_debounce_max' if is_mention else 'reply_debounce_max', 60
+                            )
+                            max_seconds = max_minutes * 60
+                            new_debounce_seconds = min(new_debounce_seconds, max_seconds)
+
+                            # Get debounce start time (use current time as fallback for legacy data)
+                            debounce_started_at = thread_state.get('debounce_started_at') or datetime.now().isoformat()
+
+                            # Extend debounce - expiry is calculated from START time, not now
+                            new_debounce_until = NOTIFICATION_DB.extend_thread_debounce(
+                                root_uri, new_debounce_seconds, new_count, debounce_started_at
+                            )
+                            if not new_debounce_until:
+                                logger.error(f"⚡ Failed to extend debounce for {thread_type}: {notification_uri}")
+                                return False
+                            debounce_until = new_debounce_until
+
+                            logger.info(f"⚡ Extending debounce for high-traffic {thread_type} ({new_count} notifications, expiry: {new_debounce_until}, started: {debounce_started_at})")
+
+                            # Set auto-debounce on the newly added notification
+                            reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
+                            NOTIFICATION_DB.set_auto_debounce(
+                                notification_uri,
+                                debounce_until,
+                                is_high_traffic=True,
+                                reason=reason_label,
+                                thread_chain_id=root_uri
+                            )
+
+                            skip_db_add = True
 
                     elif thread_state['state'] == 'cooldown':
                         # Thread is in cooldown - check for duplicate FIRST before re-triggering
