@@ -120,6 +120,7 @@ class NotificationDB:
                 root_uri TEXT PRIMARY KEY,
                 state TEXT NOT NULL,
                 debounce_until TEXT,
+                debounce_started_at TEXT,
                 cooldown_until TEXT,
                 notification_count INTEGER DEFAULT 0,
                 last_notification_at TEXT,
@@ -802,8 +803,8 @@ class NotificationDB:
         """
         try:
             cursor = self.conn.execute("""
-                SELECT root_uri, state, debounce_until, cooldown_until,
-                       notification_count, last_notification_at, updated_at
+                SELECT root_uri, state, debounce_until, debounce_started_at,
+                       cooldown_until, notification_count, last_notification_at, updated_at
                 FROM thread_state
                 WHERE root_uri = ?
             """, (root_uri,))
@@ -813,10 +814,11 @@ class NotificationDB:
                     'root_uri': row[0],
                     'state': row[1],
                     'debounce_until': row[2],
-                    'cooldown_until': row[3],
-                    'notification_count': row[4],
-                    'last_notification_at': row[5],
-                    'updated_at': row[6]
+                    'debounce_started_at': row[3],
+                    'cooldown_until': row[4],
+                    'notification_count': row[5],
+                    'last_notification_at': row[6],
+                    'updated_at': row[7]
                 }
             return None
         except Exception as e:
@@ -835,36 +837,58 @@ class NotificationDB:
         try:
             now = datetime.now().isoformat()
             self.conn.execute("""
-                INSERT INTO thread_state (root_uri, state, debounce_until, cooldown_until,
-                                         notification_count, last_notification_at, updated_at)
-                VALUES (?, 'debouncing', ?, NULL, ?, ?, ?)
+                INSERT INTO thread_state (root_uri, state, debounce_until, debounce_started_at,
+                                         cooldown_until, notification_count, last_notification_at, updated_at)
+                VALUES (?, 'debouncing', ?, ?, NULL, ?, ?, ?)
                 ON CONFLICT(root_uri) DO UPDATE SET
                     state = 'debouncing',
                     debounce_until = excluded.debounce_until,
+                    debounce_started_at = excluded.debounce_started_at,
                     cooldown_until = NULL,
                     notification_count = excluded.notification_count,
                     last_notification_at = excluded.last_notification_at,
                     updated_at = excluded.updated_at
-            """, (root_uri, debounce_until, notification_count, now, now))
+            """, (root_uri, debounce_until, now, notification_count, now, now))
             self.conn.commit()
             logger.debug(f"Set thread {root_uri} to DEBOUNCING until {debounce_until} (count={notification_count})")
         except Exception as e:
             logger.error(f"Error setting thread debouncing state: {e}")
 
-    def extend_thread_debounce(self, root_uri: str, new_debounce_until: str, notification_count: int):
+    def extend_thread_debounce(self, root_uri: str, debounce_seconds: int, notification_count: int,
+                                debounce_started_at: str) -> Optional[str]:
         """
         Extend existing debounce timer for a thread.
+
+        The new expiry is calculated from the original debounce start time, NOT from now.
+        This prevents infinite deferral when a thread remains active - the debounce will
+        always expire at most `debounce_seconds` after it first started.
 
         This updates both the thread_state table AND all pending notifications
         in the thread to ensure they all use the extended timer.
 
         Args:
             root_uri: The root URI of the thread
-            new_debounce_until: New ISO timestamp when debounce expires
+            debounce_seconds: Duration in seconds from start time
             notification_count: Updated notification count
+            debounce_started_at: ISO timestamp when debouncing first started
+
+        Returns:
+            The new debounce_until timestamp, or None on error
         """
         try:
-            now = datetime.now().isoformat()
+            now = datetime.now()
+            now_str = now.isoformat()
+
+            # Calculate expiry from when debouncing STARTED, not from now
+            start_time = datetime.fromisoformat(debounce_started_at)
+            new_debounce_until = (start_time + timedelta(seconds=debounce_seconds)).isoformat()
+
+            # If the calculated expiry is already in the past, set it to a minimum
+            # of 1 minute from now to give the batch a chance to process
+            if new_debounce_until <= now_str:
+                new_debounce_until = (now + timedelta(minutes=1)).isoformat()
+                logger.debug(f"Debounce expiry was in past, setting to {new_debounce_until}")
+
             # Update thread state
             self.conn.execute("""
                 UPDATE thread_state
@@ -873,7 +897,7 @@ class NotificationDB:
                     last_notification_at = ?,
                     updated_at = ?
                 WHERE root_uri = ? AND state = 'debouncing'
-            """, (new_debounce_until, notification_count, now, now, root_uri))
+            """, (new_debounce_until, notification_count, now_str, now_str, root_uri))
 
             # Also update all pending notifications in this thread to use the new timer
             cursor = self.conn.execute("""
@@ -886,9 +910,11 @@ class NotificationDB:
             updated_count = cursor.rowcount
 
             self.conn.commit()
-            logger.debug(f"Extended thread {root_uri} debounce to {new_debounce_until} (count={notification_count}, updated {updated_count} notifications)")
+            logger.debug(f"Extended thread {root_uri} debounce to {new_debounce_until} (from start {debounce_started_at}, count={notification_count}, updated {updated_count} notifications)")
+            return new_debounce_until
         except Exception as e:
             logger.error(f"Error extending thread debounce: {e}")
+            return None
 
     def set_thread_cooldown(self, root_uri: str, cooldown_until: str):
         """
@@ -939,8 +965,8 @@ class NotificationDB:
         try:
             now = datetime.now().isoformat()
             cursor = self.conn.execute("""
-                SELECT root_uri, state, debounce_until, cooldown_until,
-                       notification_count, last_notification_at, updated_at
+                SELECT root_uri, state, debounce_until, debounce_started_at,
+                       cooldown_until, notification_count, last_notification_at, updated_at
                 FROM thread_state
                 WHERE state = 'cooldown' AND cooldown_until < ?
             """, (now,))
@@ -950,10 +976,11 @@ class NotificationDB:
                     'root_uri': row[0],
                     'state': row[1],
                     'debounce_until': row[2],
-                    'cooldown_until': row[3],
-                    'notification_count': row[4],
-                    'last_notification_at': row[5],
-                    'updated_at': row[6]
+                    'debounce_started_at': row[3],
+                    'cooldown_until': row[4],
+                    'notification_count': row[5],
+                    'last_notification_at': row[6],
+                    'updated_at': row[7]
                 }
                 for row in rows
             ]

@@ -2219,11 +2219,19 @@ def save_notification_to_queue(notification, is_priority=None):
                         max_seconds = max_minutes * 60
                         new_debounce_seconds = min(new_debounce_seconds, max_seconds)
 
-                        new_debounce_until = (datetime.now() + timedelta(seconds=new_debounce_seconds)).isoformat()
-                        NOTIFICATION_DB.extend_thread_debounce(root_uri, new_debounce_until, new_count)
+                        # Get debounce start time (use current time as fallback for legacy data)
+                        debounce_started_at = thread_state.get('debounce_started_at') or datetime.now().isoformat()
+
+                        # Extend debounce - expiry is calculated from START time, not now
+                        new_debounce_until = NOTIFICATION_DB.extend_thread_debounce(
+                            root_uri, new_debounce_seconds, new_count, debounce_started_at
+                        )
+                        if not new_debounce_until:
+                            logger.error(f"⚡ Failed to extend debounce for {thread_type}: {notification_uri}")
+                            return False
                         debounce_until = new_debounce_until
 
-                        logger.info(f"⚡ Extending debounce for high-traffic {thread_type} ({new_count} notifications, new expiry: {new_debounce_until})")
+                        logger.info(f"⚡ Extending debounce for high-traffic {thread_type} ({new_count} notifications, expiry: {new_debounce_until}, started: {debounce_started_at})")
 
                         # Set auto-debounce on the newly added notification
                         reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
