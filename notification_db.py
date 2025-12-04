@@ -855,6 +855,9 @@ class NotificationDB:
         """
         Extend existing debounce timer for a thread.
 
+        This updates both the thread_state table AND all pending notifications
+        in the thread to ensure they all use the extended timer.
+
         Args:
             root_uri: The root URI of the thread
             new_debounce_until: New ISO timestamp when debounce expires
@@ -862,6 +865,7 @@ class NotificationDB:
         """
         try:
             now = datetime.now().isoformat()
+            # Update thread state
             self.conn.execute("""
                 UPDATE thread_state
                 SET debounce_until = ?,
@@ -870,8 +874,19 @@ class NotificationDB:
                     updated_at = ?
                 WHERE root_uri = ? AND state = 'debouncing'
             """, (new_debounce_until, notification_count, now, now, root_uri))
+
+            # Also update all pending notifications in this thread to use the new timer
+            cursor = self.conn.execute("""
+                UPDATE notifications
+                SET debounce_until = ?
+                WHERE root_uri = ?
+                AND status = 'pending'
+                AND debounce_until IS NOT NULL
+            """, (new_debounce_until, root_uri))
+            updated_count = cursor.rowcount
+
             self.conn.commit()
-            logger.debug(f"Extended thread {root_uri} debounce to {new_debounce_until} (count={notification_count})")
+            logger.debug(f"Extended thread {root_uri} debounce to {new_debounce_until} (count={notification_count}, updated {updated_count} notifications)")
         except Exception as e:
             logger.error(f"Error extending thread debounce: {e}")
 
