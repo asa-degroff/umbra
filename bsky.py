@@ -638,10 +638,24 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Re-sort posts chronologically after merging
         posts.sort(key=lambda p: p.get('record', {}).get('createdAt', ''))
 
+        # Get batch history to determine what's new vs previously reviewed
+        batch_history = NOTIFICATION_DB.get_thread_batch_history(root_uri)
+        last_batch_cutoff = batch_history.get('last_batch_newest_post_indexed_at') if batch_history else None
+
+        # Split posts into previously reviewed vs new (for incremental context)
+        if last_batch_cutoff:
+            previous_posts = [p for p in posts if p.get('record', {}).get('createdAt', '') <= last_batch_cutoff]
+            new_posts = [p for p in posts if p.get('record', {}).get('createdAt', '') > last_batch_cutoff]
+            logger.info(f"   Incremental batch: {len(previous_posts)} previously reviewed, {len(new_posts)} new posts")
+        else:
+            previous_posts = []
+            new_posts = posts  # First batch - everything is new
+            logger.info(f"   First batch for this thread: {len(new_posts)} posts")
+
         # Create set of notification URIs to identify which posts are notifications
         notification_uris = {notif['uri'] for notif in batch_notifications}
 
-        # Split posts into context (before notifications) and notification posts
+        # Split posts into context (non-notification posts) and notification posts
         context_posts = []
         notification_posts_data = []  # Will match with batch_notifications
 
@@ -651,19 +665,50 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             else:
                 context_posts.append(post)
 
-        # Build THREAD CONTEXT section (posts before notifications)
-        if context_posts:
-            import yaml
-            # Build tree visualization for context posts
-            tree_view = bsky_utils.build_tree_view(context_posts)
+        # Further split context by what's new vs previously reviewed
+        new_context_posts = [p for p in context_posts if p.get('uri') in {np.get('uri') for np in new_posts}]
 
-            # Also include full YAML data
-            context_data = {'posts': context_posts}
-            yaml_data = yaml.dump(context_data, indent=2, allow_unicode=True, default_flow_style=False)
+        # Build THREAD CONTEXT section
+        import yaml
+        is_incremental_batch = len(previous_posts) > 0
 
-            pre_notification_yaml = f"Tree View:\n{tree_view}\n\nFull Data:\n{yaml_data}"
+        if is_incremental_batch:
+            # INCREMENTAL BATCH: Show summary of previous + full detail of new
+            # Build summary of previous context
+            if previous_posts:
+                first_post = previous_posts[0]
+                first_author = first_post.get('author', {}).get('handle', 'unknown') if isinstance(first_post.get('author'), dict) else 'unknown'
+                last_reviewed = batch_history.get('last_batch_processed_at', 'unknown') if batch_history else 'unknown'
+                previous_summary = f"""You previously reviewed {len(previous_posts)} posts in this thread.
+- Thread started by: @{first_author}
+- Last review: {last_reviewed}
+- Previous posts will NOT be shown again to save context."""
+            else:
+                previous_summary = "(No previous context)"
+
+            # Build full detail of new posts (non-notification context posts that are new)
+            if new_context_posts:
+                tree_view = bsky_utils.build_tree_view(new_context_posts)
+                context_data = {'posts': new_context_posts}
+                yaml_data = yaml.dump(context_data, indent=2, allow_unicode=True, default_flow_style=False)
+                new_context_yaml = f"Tree View:\n{tree_view}\n\nFull Data:\n{yaml_data}"
+            else:
+                new_context_yaml = "(No new context posts - only notifications are new)"
+
+            pre_notification_yaml = f"""=== PREVIOUS CONTEXT (already reviewed) ===
+{previous_summary}
+
+=== NEW CONTEXT (since last review) ===
+{new_context_yaml}"""
         else:
-            pre_notification_yaml = "(No context posts - notifications start the thread)"
+            # FIRST BATCH: Show everything
+            if context_posts:
+                tree_view = bsky_utils.build_tree_view(context_posts)
+                context_data = {'posts': context_posts}
+                yaml_data = yaml.dump(context_data, indent=2, allow_unicode=True, default_flow_style=False)
+                pre_notification_yaml = f"Tree View:\n{tree_view}\n\nFull Data:\n{yaml_data}"
+            else:
+                pre_notification_yaml = "(No context posts - notifications start the thread)"
 
         # Build NOTIFICATIONS section with full text and metadata
         notification_entries = []
@@ -1008,6 +1053,19 @@ RESPONSE INSTRUCTIONS
             cooldown_until = (datetime.now() + timedelta(minutes=time_window)).isoformat()
             NOTIFICATION_DB.set_thread_cooldown(root_uri, cooldown_until)
             logger.info(f"⏳ Thread entering cooldown until {cooldown_until}")
+
+            # Update batch history for incremental context in future batches
+            # Store the newest post timestamp so next batch only shows new content
+            if posts:
+                newest_post = posts[-1]  # Already sorted chronologically
+                newest_indexed_at = newest_post.get('record', {}).get('createdAt', '')
+                if newest_indexed_at:
+                    NOTIFICATION_DB.update_thread_batch_history(
+                        root_uri,
+                        processed_at=datetime.now().isoformat(),
+                        newest_post_indexed_at=newest_indexed_at
+                    )
+                    logger.info(f"📝 Updated batch history (newest post: {newest_indexed_at})")
 
             logger.info(f"✓ High-traffic batch processed successfully")
 

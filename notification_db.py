@@ -138,6 +138,17 @@ class NotificationDB:
             ON thread_state(state, cooldown_until)
         """)
 
+        # Create thread batch history table (persists independently of thread_state)
+        # This tracks what posts were sent to the agent in previous batches
+        # so subsequent batches only include NEW posts
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS thread_batch_history (
+                root_uri TEXT PRIMARY KEY,
+                last_batch_processed_at TEXT,
+                last_batch_newest_post_indexed_at TEXT
+            )
+        """)
+
         self.conn.commit()
     
     def add_notification(self, notif_dict: Dict) -> str:
@@ -1006,6 +1017,65 @@ class NotificationDB:
         except Exception as e:
             logger.error(f"Error cleaning up expired cooldowns: {e}")
             return 0
+
+    # ============================================================
+    # Thread Batch History (persists independently of thread_state)
+    # ============================================================
+
+    def get_thread_batch_history(self, root_uri: str) -> Optional[Dict]:
+        """
+        Get batch history for a thread.
+
+        This persists across thread_state resets (cooldown expiry) so umbra
+        remembers what posts it has already seen even after long gaps.
+
+        Args:
+            root_uri: The root URI of the thread
+
+        Returns:
+            Dict with batch history or None if no history exists
+        """
+        try:
+            cursor = self.conn.execute("""
+                SELECT root_uri, last_batch_processed_at, last_batch_newest_post_indexed_at
+                FROM thread_batch_history
+                WHERE root_uri = ?
+            """, (root_uri,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'root_uri': row[0],
+                    'last_batch_processed_at': row[1],
+                    'last_batch_newest_post_indexed_at': row[2]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting thread batch history: {e}")
+            return None
+
+    def update_thread_batch_history(self, root_uri: str, processed_at: str, newest_post_indexed_at: str):
+        """
+        Update batch history after processing a high-traffic batch.
+
+        Uses upsert to create or update the record.
+
+        Args:
+            root_uri: The root URI of the thread
+            processed_at: ISO timestamp when the batch was processed
+            newest_post_indexed_at: ISO timestamp (createdAt) of the newest post in the batch
+        """
+        try:
+            self.conn.execute("""
+                INSERT INTO thread_batch_history (root_uri, last_batch_processed_at, last_batch_newest_post_indexed_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(root_uri) DO UPDATE SET
+                    last_batch_processed_at = excluded.last_batch_processed_at,
+                    last_batch_newest_post_indexed_at = excluded.last_batch_newest_post_indexed_at
+            """, (root_uri, processed_at, newest_post_indexed_at))
+            self.conn.commit()
+            logger.debug(f"Updated batch history for {root_uri}: processed_at={processed_at}, newest_post={newest_post_indexed_at}")
+        except Exception as e:
+            logger.error(f"Error updating thread batch history: {e}")
 
     def close(self):
         """Close database connection."""
