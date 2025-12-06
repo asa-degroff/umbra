@@ -1794,6 +1794,10 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                                 debounce_reason,
                                 root_uri
                             )
+                            # Reset status to 'pending' so:
+                            # 1. Duplicate detection doesn't delete the queue file (line 2662)
+                            # 2. get_pending_debounced_notifications() finds it correctly (line 2670)
+                            NOTIFICATION_DB.reset_to_pending(debounce_uri)
                             logger.info(f"   ✓ Debounce set until {debounce_until.strftime('%H:%M:%S')}")
                             logger.info(f"   ⏸️  Notification will stay in queue and be skipped until debounce expires")
 

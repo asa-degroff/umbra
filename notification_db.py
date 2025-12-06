@@ -552,6 +552,18 @@ class NotificationDB:
         except Exception as e:
             logger.error(f"Error clearing debounce: {e}")
 
+    def reset_to_pending(self, uri: str):
+        """Reset a notification's status back to pending (used for debouncing)."""
+        try:
+            self.conn.execute("""
+                UPDATE notifications
+                SET status = 'pending'
+                WHERE uri = ?
+            """, (uri,))
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error resetting notification to pending: {e}")
+
     def get_debounced_notifications(self, current_time: str = None) -> List[Dict]:
         """Get notifications whose debounce period has expired."""
         if current_time is None:
