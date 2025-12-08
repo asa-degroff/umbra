@@ -148,9 +148,13 @@ def create_greengale_blog_post(
             elif hasattr(theme, 'dict'):
                 theme_dict = theme.dict(exclude_none=True)
             elif isinstance(theme, dict):
-                theme_dict = theme
+                theme_dict = {k: v for k, v in theme.items() if v is not None}
             else:
                 theme_dict = {}
+
+            # Handle case where theme might be a string (preset name directly)
+            if isinstance(theme, str):
+                theme_dict = {"preset": theme}
 
             # Extract preset value if it's an enum
             preset_val = theme_dict.get("preset")
@@ -160,11 +164,22 @@ def create_greengale_blog_post(
             if preset_val:
                 blog_record["theme"] = {"preset": preset_val}
                 theme_description = preset_val
+            elif theme_dict.get("custom"):
+                # Already has custom nested structure
+                custom = theme_dict["custom"]
+                if custom.get("background") and custom.get("text") and custom.get("accent"):
+                    blog_record["theme"] = {"custom": custom}
+                    theme_description = f"custom (bg: {custom['background']}, text: {custom['text']}, accent: {custom['accent']})"
+                else:
+                    blog_record["theme"] = {"preset": "github-light"}
             elif theme_dict.get("background") and theme_dict.get("text") and theme_dict.get("accent"):
+                # Custom colors at top level - nest under "custom" key
                 blog_record["theme"] = {
-                    "background": theme_dict["background"],
-                    "text": theme_dict["text"],
-                    "accent": theme_dict["accent"]
+                    "custom": {
+                        "background": theme_dict["background"],
+                        "text": theme_dict["text"],
+                        "accent": theme_dict["accent"]
+                    }
                 }
                 theme_description = f"custom (bg: {theme_dict['background']}, text: {theme_dict['text']}, accent: {theme_dict['accent']})"
             else:
