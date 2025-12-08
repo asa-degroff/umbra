@@ -20,6 +20,7 @@ from tools.halt import halt_activity, HaltArgs
 from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
 from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
+from tools.greengale import create_greengale_blog_post, GreenGalePostArgs
 from tools.ack import annotate_ack, AnnotateAckArgs
 from tools.webpage import fetch_webpage, WebpageArgs
 from tools.flag_memory_deletion import flag_archival_memory_for_deletion, FlagArchivalMemoryForDeletionArgs
@@ -90,11 +91,17 @@ TOOL_CONFIGS = [
         "description": "Explicitly ignore a notification without replying (useful for ignoring bot interactions)",
         "tags": ["notification", "ignore", "control", "bot"]
     },
+    # {
+    #     "func": create_whitewind_blog_post,
+    #     "args_schema": WhitewindPostArgs,
+    #     "description": "Create a blog post on Whitewind with markdown support",
+    #     "tags": ["whitewind", "blog", "post", "markdown"]
+    # },
     {
-        "func": create_whitewind_blog_post,
-        "args_schema": WhitewindPostArgs,
-        "description": "Create a blog post on Whitewind with markdown support",
-        "tags": ["whitewind", "blog", "post", "markdown"]
+        "func": create_greengale_blog_post,
+        "args_schema": GreenGalePostArgs,
+        "description": "Create a blog post on GreenGale with custom themes, LaTeX support, and visibility controls",
+        "tags": ["greengale", "blog", "post", "markdown", "latex", "themes"]
     },
     {
         "func": annotate_ack,
@@ -108,12 +115,12 @@ TOOL_CONFIGS = [
         "description": "Fetch a webpage and convert it to markdown/text format using Jina AI reader",
         "tags": ["web", "fetch", "webpage", "markdown", "jina"]
     },
-    {
-        "func": flag_archival_memory_for_deletion,
-        "args_schema": FlagArchivalMemoryForDeletionArgs,
-        "description": "Flag an archival memory for deletion based on its exact text content",
-        "tags": ["memory", "archival", "delete", "cleanup"]
-    },
+    # {
+    #     "func": flag_archival_memory_for_deletion,
+    #     "args_schema": FlagArchivalMemoryForDeletionArgs,
+    #     "description": "Flag an archival memory for deletion based on its exact text content",
+    #     "tags": ["memory", "archival", "delete", "cleanup"]
+    # },
     {
         "func": ask_claude_code,
         "args_schema": AskClaudeCodeArgs,
@@ -264,7 +271,7 @@ def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool 
 
 def list_available_tools():
     """List all available tools."""
-    table = Table(title="Available Void Tools")
+    table = Table(title="Available Umbra Tools")
     table.add_column("Tool Name", style="cyan")
     table.add_column("Description")
     table.add_column("Tags", style="dim")
