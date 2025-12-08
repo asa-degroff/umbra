@@ -35,6 +35,10 @@ class GreenGalePostArgs(BaseModel):
         ...,
         description="Main content of the blog post in Markdown format (max 100,000 characters). Supports LaTeX if enabled."
     )
+    subtitle: Optional[str] = Field(
+        default=None,
+        description="Optional subtitle for the blog post"
+    )
     visibility: Optional[Literal["public", "url", "author"]] = Field(
         default="public",
         description="Post visibility: 'public' (visible to all), 'url' (unlisted, accessible via URL only), or 'author' (private, only visible to author)"
@@ -52,6 +56,7 @@ class GreenGalePostArgs(BaseModel):
 def create_greengale_blog_post(
     title: str,
     content: str,
+    subtitle: Optional[str] = None,
     visibility: Optional[str] = "public",
     theme: Optional[dict] = None,
     latex: Optional[bool] = False
@@ -65,6 +70,7 @@ def create_greengale_blog_post(
     Args:
         title: Title of the blog post (max 1,000 characters)
         content: Main content of the blog post in Markdown (max 100,000 characters)
+        subtitle: Optional subtitle for the blog post
         visibility: Post visibility - 'public', 'url' (unlisted), or 'author' (private)
         theme: Theme configuration dict with either 'preset' key or custom 'background'/'text'/'accent' colors
         latex: Enable KaTeX math rendering for LaTeX equations
@@ -128,6 +134,10 @@ def create_greengale_blog_post(
             "createdAt": now,
             "visibility": visibility
         }
+
+        # Add subtitle if provided
+        if subtitle:
+            blog_record["subtitle"] = subtitle
 
         # Add theme if provided - handle both Pydantic models and dicts
         theme_description = "github-light (default)"
@@ -200,12 +210,16 @@ def create_greengale_blog_post(
 
         success_parts = [
             f"Successfully created GreenGale blog post!",
-            f"Title: {title}",
+            f"Title: {title}"
+        ]
+        if subtitle:
+            success_parts.append(f"Subtitle: {subtitle}")
+        success_parts.extend([
             f"URL: {blog_url}",
             f"Theme: {theme_description}",
             f"Visibility: {visibility_labels.get(visibility, visibility)}",
             f"LaTeX: {'enabled' if latex else 'disabled'}"
-        ]
+        ])
 
         return "\n".join(success_parts)
 
