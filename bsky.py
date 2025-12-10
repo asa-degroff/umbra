@@ -858,8 +858,7 @@ RESPONSE INSTRUCTIONS
 - Review THREAD CONTEXT to understand the conversation history
 - You received {len(batch_notifications)} NOTIFICATIONS - these are the posts that might warrant a response
 - Respond to 0-3 notifications depending on what's interesting
-- Use reply_to_bluesky_post with the URI and CID from the notification you want to reply to
-- Example: To respond to Notification 2, use the URI and CID listed under [Notification 2]""".strip()
+- Use reply_to_bluesky_post with the URI and CID from the notification you want to reply to""".strip()
 
         logger.info(f"Sending high-traffic batch to agent | {len(posts)} posts in thread | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
 
@@ -3411,8 +3410,6 @@ def fetch_own_posts_for_review(atproto_client, limit: int = 50) -> str:
                 'created_at': created_at_str,
                 'uri': post.uri,
                 'cid': post.cid,
-                'like_count': post.like_count if hasattr(post, 'like_count') else 0,
-                'repost_count': post.repost_count if hasattr(post, 'repost_count') else 0,
                 'reply_count': post.reply_count if hasattr(post, 'reply_count') else 0,
             }
 
@@ -3510,14 +3507,9 @@ def fetch_own_posts_for_review(atproto_client, limit: int = 50) -> str:
         period_start = (now - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M')
         period_end = now.strftime('%Y-%m-%d %H:%M')
 
-        total_posts = len(posts_by_uri)
-
         review_data = {
             'daily_review': {
                 'period': f"{period_start} to {period_end} UTC",
-                'post_count': total_posts,
-                'thread_count': len(threads),
-                'standalone_post_count': len(standalone_posts),
             }
         }
 
@@ -3584,6 +3576,7 @@ You have access to temporal journal blocks for recording observations:
 - umbra_year_{today.year}: This year's journal ({today.year})
 
 If you want to follow up on any of your posts, you can use reply_to_bluesky_post with the uri and cid provided below.
+If there are any topics or thoughts you want to continue to expand on, use the create_new_bluesky_post tool to create an new post. 
 
 ---
 YOUR POSTS FROM THE PAST 24 HOURS:
