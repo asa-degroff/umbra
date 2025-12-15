@@ -222,7 +222,7 @@ def user_note_append(handle: str, note: str, agent_state: "AgentState") -> str:
     try:
         # Try to get X client first, fall back to inline for cloud execution
         try:
-            client = get_x_letta_client()
+            client = get_letta_client()
         except (ImportError, NameError):
             # Create Letta client inline for cloud execution
             import os
@@ -293,7 +293,7 @@ def user_note_replace(handle: str, old_text: str, new_text: str, agent_state: "A
     try:
         # Try to get X client first, fall back to inline for cloud execution
         try:
-            client = get_x_letta_client()
+            client = get_letta_client()
         except (ImportError, NameError):
             # Create Letta client inline for cloud execution
             import os
@@ -347,7 +347,7 @@ def user_note_set(handle: str, content: str, agent_state: "AgentState") -> str:
     try:
         # Try to get X client first, fall back to inline for cloud execution
         try:
-            client = get_x_letta_client()
+            client = get_letta_client()
         except (ImportError, NameError):
             # Create Letta client inline for cloud execution
             import os
@@ -411,7 +411,7 @@ def user_note_view(handle: str, agent_state: "AgentState") -> str:
     try:
         # Try to get X client first, fall back to inline for cloud execution
         try:
-            client = get_x_letta_client()
+            client = get_letta_client()
         except (ImportError, NameError):
             # Create Letta client inline for cloud execution
             import os
