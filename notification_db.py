@@ -149,6 +149,26 @@ class NotificationDB:
             )
         """)
 
+        # Create scheduled_tasks table for persistent scheduling across restarts
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                task_name TEXT PRIMARY KEY,
+                next_run_at TEXT NOT NULL,
+                last_run_at TEXT,
+                interval_seconds INTEGER,
+                is_random_window INTEGER DEFAULT 0,
+                window_seconds INTEGER,
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_run
+            ON scheduled_tasks(next_run_at, enabled)
+        """)
+
         self.conn.commit()
     
     def add_notification(self, notif_dict: Dict) -> str:
@@ -1088,6 +1108,189 @@ class NotificationDB:
             logger.debug(f"Updated batch history for {root_uri}: processed_at={processed_at}, newest_post={newest_post_indexed_at}")
         except Exception as e:
             logger.error(f"Error updating thread batch history: {e}")
+
+    # ============================================================
+    # Scheduled Tasks Management (persistent scheduling across restarts)
+    # ============================================================
+
+    def get_scheduled_task(self, task_name: str) -> Optional[Dict]:
+        """
+        Get a scheduled task by name.
+
+        Args:
+            task_name: Name of the task (e.g., 'synthesis', 'mutuals_engagement')
+
+        Returns:
+            Dict with task info or None if not found
+        """
+        try:
+            cursor = self.conn.execute("""
+                SELECT task_name, next_run_at, last_run_at, interval_seconds,
+                       is_random_window, window_seconds, enabled, created_at, updated_at
+                FROM scheduled_tasks
+                WHERE task_name = ?
+            """, (task_name,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'task_name': row[0],
+                    'next_run_at': row[1],
+                    'last_run_at': row[2],
+                    'interval_seconds': row[3],
+                    'is_random_window': bool(row[4]),
+                    'window_seconds': row[5],
+                    'enabled': bool(row[6]),
+                    'created_at': row[7],
+                    'updated_at': row[8]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting scheduled task: {e}")
+            return None
+
+    def upsert_scheduled_task(self, task_name: str, next_run_at: str,
+                              interval_seconds: int = None,
+                              is_random_window: bool = False,
+                              window_seconds: int = None,
+                              enabled: bool = True) -> bool:
+        """
+        Create or update a scheduled task.
+
+        Args:
+            task_name: Unique task identifier
+            next_run_at: ISO timestamp for next run
+            interval_seconds: For interval-based tasks
+            is_random_window: True if uses random window scheduling
+            window_seconds: Size of random window in seconds
+            enabled: Whether task is enabled
+
+        Returns:
+            True on success, False on failure
+        """
+        try:
+            now = datetime.now().isoformat()
+            self.conn.execute("""
+                INSERT INTO scheduled_tasks
+                (task_name, next_run_at, interval_seconds, is_random_window,
+                 window_seconds, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_name) DO UPDATE SET
+                    next_run_at = excluded.next_run_at,
+                    interval_seconds = COALESCE(excluded.interval_seconds, interval_seconds),
+                    is_random_window = excluded.is_random_window,
+                    window_seconds = COALESCE(excluded.window_seconds, window_seconds),
+                    enabled = excluded.enabled,
+                    updated_at = excluded.updated_at
+            """, (task_name, next_run_at, interval_seconds,
+                  1 if is_random_window else 0, window_seconds,
+                  1 if enabled else 0, now, now))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting scheduled task: {e}")
+            return False
+
+    def mark_task_executed(self, task_name: str, new_next_run_at: str) -> bool:
+        """
+        Mark a task as executed and set the next run time.
+
+        Args:
+            task_name: Task that was executed
+            new_next_run_at: ISO timestamp for next run
+
+        Returns:
+            True on success, False on failure
+        """
+        try:
+            now = datetime.now().isoformat()
+            self.conn.execute("""
+                UPDATE scheduled_tasks
+                SET last_run_at = ?, next_run_at = ?, updated_at = ?
+                WHERE task_name = ?
+            """, (now, new_next_run_at, now, task_name))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error marking task executed: {e}")
+            return False
+
+    def get_due_tasks(self) -> List[Dict]:
+        """
+        Get all enabled tasks that are due to run (next_run_at <= now).
+
+        Returns:
+            List of task dicts that are due
+        """
+        try:
+            now = datetime.now().isoformat()
+            cursor = self.conn.execute("""
+                SELECT task_name, next_run_at, last_run_at, interval_seconds,
+                       is_random_window, window_seconds, enabled, created_at, updated_at
+                FROM scheduled_tasks
+                WHERE enabled = 1 AND next_run_at <= ?
+                ORDER BY next_run_at ASC
+            """, (now,))
+            return [
+                {
+                    'task_name': row[0],
+                    'next_run_at': row[1],
+                    'last_run_at': row[2],
+                    'interval_seconds': row[3],
+                    'is_random_window': bool(row[4]),
+                    'window_seconds': row[5],
+                    'enabled': bool(row[6]),
+                    'created_at': row[7],
+                    'updated_at': row[8]
+                }
+                for row in cursor.fetchall()
+            ]
+        except Exception as e:
+            logger.error(f"Error getting due tasks: {e}")
+            return []
+
+    def set_task_enabled(self, task_name: str, enabled: bool) -> bool:
+        """
+        Enable or disable a scheduled task.
+
+        Args:
+            task_name: Task to enable/disable
+            enabled: New enabled state
+
+        Returns:
+            True on success, False on failure
+        """
+        try:
+            now = datetime.now().isoformat()
+            self.conn.execute("""
+                UPDATE scheduled_tasks
+                SET enabled = ?, updated_at = ?
+                WHERE task_name = ?
+            """, (1 if enabled else 0, now, task_name))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error setting task enabled state: {e}")
+            return False
+
+    def delete_scheduled_task(self, task_name: str) -> bool:
+        """
+        Delete a scheduled task.
+
+        Args:
+            task_name: Task to delete
+
+        Returns:
+            True on success, False on failure
+        """
+        try:
+            self.conn.execute("""
+                DELETE FROM scheduled_tasks WHERE task_name = ?
+            """, (task_name,))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting scheduled task: {e}")
+            return False
 
     def close(self):
         """Close database connection."""

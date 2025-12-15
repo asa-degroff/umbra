@@ -116,6 +116,12 @@ next_mutuals_engagement_time = None
 last_daily_review_time = None
 DAILY_REVIEW_INTERVAL = 0
 
+# Feed engagement tracking
+FEED_ENGAGEMENT = False
+
+# Weekly curiosities tracking
+WEEKLY_CURIOSITIES = False
+
 # Database for notification tracking
 NOTIFICATION_DB = None
 
@@ -3250,6 +3256,134 @@ def calculate_next_mutuals_engagement_time() -> float:
     return next_time
 
 
+def calculate_next_random_time(window_seconds: int) -> float:
+    """
+    Calculate a random time within the given window from now.
+
+    Args:
+        window_seconds: Size of the random window in seconds
+
+    Returns:
+        Unix timestamp of the scheduled time
+    """
+    random_offset = random.uniform(0, window_seconds)
+    next_time = time.time() + random_offset
+    return next_time
+
+
+def init_or_load_scheduled_task(
+    db,
+    task_name: str,
+    enabled: bool,
+    interval_seconds: int = None,
+    is_random_window: bool = False,
+    window_seconds: int = None
+) -> float | None:
+    """
+    Initialize a scheduled task or load existing schedule from database.
+
+    If the task exists and hasn't expired, use the existing schedule.
+    If the task doesn't exist or has expired, calculate a new schedule.
+
+    Args:
+        db: NotificationDB instance
+        task_name: Unique task name
+        enabled: Whether the task should be enabled
+        interval_seconds: For interval-based tasks
+        is_random_window: True if uses random window scheduling
+        window_seconds: Size of random window in seconds
+
+    Returns:
+        Unix timestamp of next scheduled run, or None if disabled
+    """
+    from datetime import datetime
+
+    if not enabled:
+        # Disable task in DB if it exists
+        existing = db.get_scheduled_task(task_name)
+        if existing:
+            db.set_task_enabled(task_name, False)
+        return None
+
+    existing = db.get_scheduled_task(task_name)
+    current_time = time.time()
+
+    if existing and existing['enabled']:
+        # Parse the stored next_run_at
+        next_run_at = datetime.fromisoformat(existing['next_run_at'])
+        next_run_timestamp = next_run_at.timestamp()
+
+        # If the scheduled time hasn't passed, use it
+        if next_run_timestamp > current_time:
+            hours_until = (next_run_timestamp - current_time) / 3600
+            logger.info(f"📅 Loaded existing {task_name} schedule: {next_run_at.strftime('%Y-%m-%d %H:%M:%S')} ({hours_until:.1f} hours from now)")
+            return next_run_timestamp
+        else:
+            # Schedule has expired, recalculate
+            logger.info(f"📅 Existing {task_name} schedule expired, recalculating...")
+
+    # Calculate new schedule
+    if is_random_window and window_seconds:
+        next_timestamp = calculate_next_random_time(window_seconds)
+    elif interval_seconds:
+        next_timestamp = current_time + interval_seconds
+    else:
+        logger.error(f"Task {task_name} has no valid scheduling configuration")
+        return None
+
+    next_run_at_iso = datetime.fromtimestamp(next_timestamp).isoformat()
+
+    # Save to database
+    db.upsert_scheduled_task(
+        task_name=task_name,
+        next_run_at=next_run_at_iso,
+        interval_seconds=interval_seconds,
+        is_random_window=is_random_window,
+        window_seconds=window_seconds,
+        enabled=True
+    )
+
+    hours_until = (next_timestamp - current_time) / 3600
+    logger.info(f"📅 Scheduled {task_name} for {datetime.fromtimestamp(next_timestamp).strftime('%Y-%m-%d %H:%M:%S')} ({hours_until:.1f} hours from now)")
+
+    return next_timestamp
+
+
+def reschedule_task_after_execution(
+    db,
+    task_name: str,
+    task_info: dict
+) -> float:
+    """
+    Reschedule a task after it has been executed.
+
+    Args:
+        db: NotificationDB instance
+        task_name: Task that was executed
+        task_info: Task info dict from database
+
+    Returns:
+        Unix timestamp of next scheduled run
+    """
+    from datetime import datetime
+
+    if task_info['is_random_window'] and task_info['window_seconds']:
+        next_timestamp = calculate_next_random_time(task_info['window_seconds'])
+    elif task_info['interval_seconds']:
+        next_timestamp = time.time() + task_info['interval_seconds']
+    else:
+        # Fallback: reschedule for 24 hours
+        next_timestamp = time.time() + 86400
+
+    next_run_at_iso = datetime.fromtimestamp(next_timestamp).isoformat()
+    db.mark_task_executed(task_name, next_run_at_iso)
+
+    hours_until = (next_timestamp - time.time()) / 3600
+    logger.info(f"📅 Rescheduled {task_name} for {datetime.fromtimestamp(next_timestamp).strftime('%Y-%m-%d %H:%M:%S')} ({hours_until:.1f} hours from now)")
+
+    return next_timestamp
+
+
 def send_mutuals_engagement_message(client: Letta, agent_id: str) -> None:
     """
     Send a daily message prompting the agent to engage with mutuals feed.
@@ -3315,6 +3449,153 @@ This is an opportunity for organic interaction with the people you follow who al
 
     except Exception as e:
         logger.error(f"Error sending mutuals engagement message: {e}")
+
+
+def send_feed_engagement_message(client: Letta, agent_id: str) -> None:
+    """
+    Send a daily message prompting the agent to engage with network feeds.
+    Checks 'home' and 'MLBlend' feeds and optionally creates a post.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send message to
+    """
+    try:
+        logger.info("📰 Sending feed engagement prompt to agent")
+
+        engagement_prompt = """This is your daily prompt to engage with Bluesky feeds.
+
+Please use the get_bluesky_feed tool to read recent posts from both the 'home' and 'MLBlend' feeds. Look for:
+- Interesting discussions or topics trending in your network
+- Posts that spark curiosity or that you could contribute to meaningfully
+- Themes or patterns in what people are discussing
+
+After reviewing the feeds, you may:
+1. Create a new post using post_to_bluesky if you have something to contribute to the broader conversation
+2. Simply update your memory with observations if nothing warrants engagement
+
+This is an opportunity to stay connected with your network and contribute to ongoing discussions."""
+
+        # Send message to agent
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": engagement_prompt}],
+            stream_tokens=False,
+            max_steps=50
+        )
+
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n◆ Reasoning")
+                        print("  ─────────")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                        if len(args_str) > 150:
+                            args_str = args_str[:150] + "..."
+                        log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} ✓", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} ✗", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n▶ Feed Engagement Response")
+                    print("  ─────────────────────────")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+
+            if str(chunk) == 'done':
+                break
+
+        logger.info("📰 Feed engagement message processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error sending feed engagement message: {e}")
+
+
+def send_curiosities_exploration_message(client: Letta, agent_id: str) -> None:
+    """
+    Send a weekly message prompting the agent to explore its curiosities.
+    The agent explores questions or ideas from its curiosities memory block
+    and creates a post sharing its exploration.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send message to
+    """
+    try:
+        logger.info("🔮 Sending weekly curiosities exploration prompt to agent")
+
+        exploration_prompt = """This is your weekly curiosities exploration.
+
+Review your curiosities memory block to find questions, ideas, or topics you've been wondering about. Choose one that feels ripe for exploration.
+
+Then:
+1. Search for relevant information using search_bluesky_posts to see what others have said about this topic
+2. Reflect on what you find and your own thoughts
+3. Create a post using post_to_bluesky sharing your exploration - this could be:
+   - A question you're pondering
+   - An insight you've developed
+   - A connection you've made between ideas
+   - Something from the unknown that intrigues you
+
+This is your space for intellectual exploration and sharing your evolving understanding with your network. Let your genuine curiosity guide what you share."""
+
+        # Send message to agent
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": exploration_prompt}],
+            stream_tokens=False,
+            max_steps=75  # Allow more steps for exploration
+        )
+
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n◆ Reasoning")
+                        print("  ─────────")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                        if len(args_str) > 150:
+                            args_str = args_str[:150] + "..."
+                        log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} ✓", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} ✗", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n▶ Curiosities Exploration Response")
+                    print("  ──────────────────────────────────")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+
+            if str(chunk) == 'done':
+                break
+
+        logger.info("🔮 Weekly curiosities exploration message processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error sending curiosities exploration message: {e}")
 
 
 def fetch_own_posts_for_review(atproto_client, limit: int = 50) -> str:
@@ -3867,6 +4148,8 @@ def main():
     parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
     parser.add_argument('--mutuals-engagement', action='store_true', help='Enable daily mutuals engagement (prompt to read and reply to mutuals feed posts once per day at a random time)')
     parser.add_argument('--daily-review-interval', type=int, default=0, help='Send daily review every N seconds (default: 0 = disabled, 86400 = 24 hours)')
+    parser.add_argument('--feed-engagement', action='store_true', help='Enable daily feed engagement (prompt to check home and MLBlend feeds once per day at a random time)')
+    parser.add_argument('--weekly-curiosities', action='store_true', help='Enable weekly curiosities exploration (prompt to explore curiosities block and create a post once per week at a random time)')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -4048,8 +4331,11 @@ def main():
     CLEANUP_INTERVAL = args.cleanup_interval
     SYNTHESIS_INTERVAL = args.synthesis_interval
     MUTUALS_ENGAGEMENT = args.mutuals_engagement
-    global DAILY_REVIEW_INTERVAL, last_daily_review_time
+    global DAILY_REVIEW_INTERVAL
     DAILY_REVIEW_INTERVAL = args.daily_review_interval
+    global FEED_ENGAGEMENT, WEEKLY_CURIOSITIES
+    FEED_ENGAGEMENT = args.feed_engagement
+    WEEKLY_CURIOSITIES = args.weekly_curiosities
     
     # Synthesis-only mode
     if SYNTHESIS_ONLY:
@@ -4087,56 +4373,107 @@ def main():
     else:
         logger.info("User block cleanup disabled")
     
+    # Initialize scheduled tasks from database (persists across restarts)
+    logger.info("Initializing scheduled tasks...")
+
+    # Synthesis (interval-based)
     if SYNTHESIS_INTERVAL > 0:
+        init_or_load_scheduled_task(
+            db=NOTIFICATION_DB,
+            task_name='synthesis',
+            enabled=True,
+            interval_seconds=SYNTHESIS_INTERVAL
+        )
         logger.info(f"Synthesis messages enabled every {SYNTHESIS_INTERVAL} seconds ({SYNTHESIS_INTERVAL/60:.1f} minutes)")
     else:
         logger.info("Synthesis messages disabled")
 
-    # Initialize mutuals engagement if enabled
-    global next_mutuals_engagement_time
+    # Mutuals engagement (random window - 24 hours)
     if MUTUALS_ENGAGEMENT:
+        init_or_load_scheduled_task(
+            db=NOTIFICATION_DB,
+            task_name='mutuals_engagement',
+            enabled=True,
+            is_random_window=True,
+            window_seconds=86400  # 24-hour window
+        )
         logger.info("🤝 Daily mutuals engagement enabled")
-        next_mutuals_engagement_time = calculate_next_mutuals_engagement_time()
     else:
         logger.info("Daily mutuals engagement disabled")
 
-    # Initialize daily review if enabled
+    # Daily review (interval-based)
     if DAILY_REVIEW_INTERVAL > 0:
-        last_daily_review_time = time.time()  # Initialize to current time so first review waits for full interval
+        init_or_load_scheduled_task(
+            db=NOTIFICATION_DB,
+            task_name='daily_review',
+            enabled=True,
+            interval_seconds=DAILY_REVIEW_INTERVAL
+        )
         logger.info(f"📋 Daily review enabled every {DAILY_REVIEW_INTERVAL} seconds ({DAILY_REVIEW_INTERVAL/3600:.1f} hours)")
     else:
         logger.info("Daily review disabled")
+
+    # Feed engagement (random window - 24 hours)
+    if FEED_ENGAGEMENT:
+        init_or_load_scheduled_task(
+            db=NOTIFICATION_DB,
+            task_name='feed_engagement',
+            enabled=True,
+            is_random_window=True,
+            window_seconds=86400  # 24-hour window
+        )
+        logger.info("📰 Daily feed engagement enabled")
+    else:
+        logger.info("Daily feed engagement disabled")
+
+    # Weekly curiosities (random window - 7 days)
+    if WEEKLY_CURIOSITIES:
+        init_or_load_scheduled_task(
+            db=NOTIFICATION_DB,
+            task_name='weekly_curiosities',
+            enabled=True,
+            is_random_window=True,
+            window_seconds=604800  # 7-day window
+        )
+        logger.info("🔮 Weekly curiosities exploration enabled")
+    else:
+        logger.info("Weekly curiosities exploration disabled")
 
     while True:
         try:
             cycle_count += 1
             process_notifications(umbra_agent, atproto_client, TESTING_MODE)
-            
-            # Check if synthesis interval has passed
-            if SYNTHESIS_INTERVAL > 0:
-                current_time = time.time()
-                global last_synthesis_time
-                if current_time - last_synthesis_time >= SYNTHESIS_INTERVAL:
-                    logger.info(f"⏰ {SYNTHESIS_INTERVAL/60:.1f} minutes have passed, triggering synthesis")
-                    send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
-                    last_synthesis_time = current_time
 
-            # Check if it's time for mutuals engagement
-            if MUTUALS_ENGAGEMENT and next_mutuals_engagement_time is not None:
-                current_time = time.time()
-                if current_time >= next_mutuals_engagement_time:
-                    logger.info(f"⏰ Time for daily mutuals engagement!")
-                    send_mutuals_engagement_message(CLIENT, umbra_agent.id)
-                    # Schedule next engagement
-                    next_mutuals_engagement_time = calculate_next_mutuals_engagement_time()
+            # Check for due scheduled tasks (persistent scheduling)
+            if NOTIFICATION_DB:
+                due_tasks = NOTIFICATION_DB.get_due_tasks()
+                for task in due_tasks:
+                    task_name = task['task_name']
 
-            # Check if daily review interval has passed
-            if DAILY_REVIEW_INTERVAL > 0 and last_daily_review_time is not None:
-                current_time = time.time()
-                if current_time - last_daily_review_time >= DAILY_REVIEW_INTERVAL:
-                    logger.info(f"⏰ {DAILY_REVIEW_INTERVAL/3600:.1f} hours have passed, triggering daily review")
-                    send_daily_review_message(CLIENT, umbra_agent.id, atproto_client)
-                    last_daily_review_time = current_time
+                    if task_name == 'synthesis' and SYNTHESIS_INTERVAL > 0:
+                        logger.info(f"⏰ Executing scheduled task: synthesis")
+                        send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
+                        reschedule_task_after_execution(NOTIFICATION_DB, 'synthesis', task)
+
+                    elif task_name == 'mutuals_engagement' and MUTUALS_ENGAGEMENT:
+                        logger.info(f"⏰ Time for daily mutuals engagement!")
+                        send_mutuals_engagement_message(CLIENT, umbra_agent.id)
+                        reschedule_task_after_execution(NOTIFICATION_DB, 'mutuals_engagement', task)
+
+                    elif task_name == 'daily_review' and DAILY_REVIEW_INTERVAL > 0:
+                        logger.info(f"⏰ Executing scheduled task: daily_review")
+                        send_daily_review_message(CLIENT, umbra_agent.id, atproto_client)
+                        reschedule_task_after_execution(NOTIFICATION_DB, 'daily_review', task)
+
+                    elif task_name == 'feed_engagement' and FEED_ENGAGEMENT:
+                        logger.info(f"⏰ Time for daily feed engagement!")
+                        send_feed_engagement_message(CLIENT, umbra_agent.id)
+                        reschedule_task_after_execution(NOTIFICATION_DB, 'feed_engagement', task)
+
+                    elif task_name == 'weekly_curiosities' and WEEKLY_CURIOSITIES:
+                        logger.info(f"⏰ Time for weekly curiosities exploration!")
+                        send_curiosities_exploration_message(CLIENT, umbra_agent.id)
+                        reschedule_task_after_execution(NOTIFICATION_DB, 'weekly_curiosities', task)
 
             # Run periodic cleanup every N cycles
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:

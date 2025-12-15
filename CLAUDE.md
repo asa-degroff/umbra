@@ -48,9 +48,17 @@ ac && python bsky.py --synthesis-only --synthesis-interval 120
 # Enable daily mutuals engagement (prompts umbra to read and reply to mutuals feed once per day at random time)
 ac && python bsky.py --mutuals-engagement
 
-# Run with both synthesis and mutuals engagement enabled
-ac && python bsky.py --synthesis-interval 3600 --mutuals-engagement
+# Enable daily feed engagement (prompts umbra to check home and MLBlend feeds once per day at random time)
+ac && python bsky.py --feed-engagement
+
+# Enable weekly curiosities exploration (prompts umbra to explore its curiosities block once per week at random time)
+ac && python bsky.py --weekly-curiosities
+
+# Run with all scheduled engagement features enabled
+ac && python bsky.py --synthesis-interval 3600 --mutuals-engagement --feed-engagement --weekly-curiosities
 ```
+
+**Note:** All scheduled tasks are now persistent across restarts. If umbra is restarted, it will resume existing schedules from the database rather than generating new random times.
 
 ### Managing Tools
 
