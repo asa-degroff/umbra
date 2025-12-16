@@ -267,10 +267,28 @@ The system uses a three-state machine to track each thread's lifecycle:
 | Current State | Event | New State | Action |
 |---------------|-------|-----------|--------|
 | NO STATE | count >= threshold | DEBOUNCING | `set_thread_debouncing()` |
-| DEBOUNCING | new notification | DEBOUNCING | `extend_thread_debounce()` |
-| DEBOUNCING | timer expires | COOLDOWN | `process_high_traffic_batch()` then `set_thread_cooldown()` |
+| DEBOUNCING | new notification (timer not expired) | DEBOUNCING | `extend_thread_debounce()` |
+| DEBOUNCING | timer expires + batch processed | COOLDOWN | `process_high_traffic_batch()` then `set_thread_cooldown()` |
+| DEBOUNCING | timer expired recently + new notification | DEBOUNCING | `set_thread_debouncing()` (new cycle) |
+| DEBOUNCING | timer expired long ago (stale) + new notification | NO STATE | `clear_thread_state()` → normal processing |
 | COOLDOWN | count >= threshold | DEBOUNCING | `set_thread_debouncing()` (new cycle) |
 | COOLDOWN | cooldown expires | NO STATE | `cleanup_expired_cooldowns()` |
+
+### Stale State Detection
+
+When a thread is in DEBOUNCING state but the timer has expired and no batch processing occurred (e.g., no queue processing triggered), the state can become "stale". This happens when:
+
+1. A thread's debounce timer expires
+2. No batch processing occurs (the notification queue doesn't encounter it)
+3. A significant amount of time passes (longer than `time_window_minutes`)
+4. A new notification arrives for that thread
+
+In this case, instead of starting a new debounce cycle, the system:
+1. Recognizes the state as stale (timer expired > `time_window_minutes` ago)
+2. Clears the thread state via `clear_thread_state()`
+3. Processes the new notification normally (no debouncing)
+
+This prevents notifications from being indefinitely debounced when thread activity dies down.
 
 ### Timer Extension Logic
 
