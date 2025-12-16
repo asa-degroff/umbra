@@ -675,7 +675,6 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         new_context_posts = [p for p in context_posts if p.get('uri') in {np.get('uri') for np in new_posts}]
 
         # Build THREAD CONTEXT section
-        import yaml
         is_incremental_batch = len(previous_posts) > 0
 
         if is_incremental_batch:
@@ -692,12 +691,11 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             else:
                 previous_summary = "(No previous context)"
 
-            # Build full detail of new posts (non-notification context posts that are new)
+            # Build tree view of new posts (non-notification context posts that are new)
+            # Only tree view is needed for context - full metadata is in the NOTIFICATIONS section
             if new_context_posts:
                 tree_view = bsky_utils.build_tree_view(new_context_posts)
-                context_data = {'posts': new_context_posts}
-                yaml_data = yaml.dump(context_data, indent=2, allow_unicode=True, default_flow_style=False)
-                new_context_yaml = f"Tree View:\n{tree_view}\n\nFull Data:\n{yaml_data}"
+                new_context_yaml = f"Thread Structure:\n{tree_view}"
             else:
                 new_context_yaml = "(No new context posts - only notifications are new)"
 
@@ -707,12 +705,11 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
 === NEW CONTEXT (since last review) ===
 {new_context_yaml}"""
         else:
-            # FIRST BATCH: Show everything
+            # FIRST BATCH: Show tree view for context
+            # Only tree view is needed for context - full metadata is in the NOTIFICATIONS section
             if context_posts:
                 tree_view = bsky_utils.build_tree_view(context_posts)
-                context_data = {'posts': context_posts}
-                yaml_data = yaml.dump(context_data, indent=2, allow_unicode=True, default_flow_style=False)
-                pre_notification_yaml = f"Tree View:\n{tree_view}\n\nFull Data:\n{yaml_data}"
+                pre_notification_yaml = f"Thread Structure:\n{tree_view}"
             else:
                 pre_notification_yaml = "(No context posts - notifications start the thread)"
 
@@ -1312,7 +1309,7 @@ If you choose to reply, use the add_post_to_bluesky_reply_thread tool.
 - Each call creates one post (max 300 characters)
 - You may use multiple calls to create a thread if needed.
 
-If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it if appropriate."""
+If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it."""
 
         # Add debounce capability information if enabled
         if debounce_enabled:

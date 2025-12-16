@@ -301,7 +301,7 @@ def compute_tree_prefixes(posts: List[Dict]) -> Dict[str, str]:
     return prefixes
 
 
-def build_tree_view(posts: List[Dict], max_text_length: int = 200) -> str:
+def build_tree_view(posts: List[Dict]) -> str:
     """
     Build a tree-style text visualization of a thread.
 
@@ -326,8 +326,6 @@ def build_tree_view(posts: List[Dict], max_text_length: int = 200) -> str:
         handle = author.get('handle', 'unknown')
         record = post.get('record', {})
         text = record.get('text', '').replace('\n', ' | ')
-        if len(text) > max_text_length:
-            text = text[:max_text_length - 3] + "..."
 
         lines.append(f"{prefix}@{handle}: {text}")
 
