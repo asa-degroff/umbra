@@ -234,6 +234,8 @@ Check logs for high-traffic detection activity:
 - `⚡ Auto-debounced high-traffic reply (N notifications, X.Xh wait)` - Reply debounced
 - `⚡ Processing high-traffic thread batch` - Batch processing started
 - `⚡ Skipping - high-traffic batch already processed` - Duplicate batch skipped
+- `⚡ Thread debounce state is stale (X.Xmin since expiry), clearing state` - Stale state cleared, processing normally
+- `⚡ Debounce timer expired for thread, starting new cycle for incoming reply` - Timer expired recently, new cycle started
 
 #### How Batch Processing Works
 
@@ -245,6 +247,15 @@ When the debounce period expires:
 5. All debounces are cleared and queue files deleted
 
 This approach dramatically reduces API calls while maintaining engagement quality, as umbra can see the full evolution of a conversation before deciding how to participate.
+
+#### Stale State Handling
+
+If a thread's debounce timer expires but no batch processing occurs (e.g., no new notifications trigger the queue processor), the thread state can become "stale". When a new notification arrives later:
+
+- **If timer expired recently** (within `time_window_minutes`): A new debounce cycle starts
+- **If timer expired long ago** (longer than `time_window_minutes`): The stale state is cleared and the notification is processed normally without debouncing
+
+This prevents notifications from being indefinitely debounced when thread activity dies down.
 
 ### Claude Code Integration
 

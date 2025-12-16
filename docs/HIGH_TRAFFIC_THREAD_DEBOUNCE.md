@@ -224,21 +224,34 @@ The system uses a three-state machine to track each thread's lifecycle:
                     │   same timer                    │
                     └──────────────┬──────────────────┘
                                    │
-          ┌────────────────────────┼────────────────────────┐
-          │                        │                        │
-          │ [new notification]     │ [debounce expires]     │
-          │                        │                        │
-          ▼                        ▼                        │
-    ┌───────────────┐       ┌───────────────┐               │
-    │ Extend timer  │       │ Batch Process │               │
-    │ (from start   │       │ all pending   │               │
-    │  time, not    │       │ notifications │               │
-    │  from now)    │       └───────┬───────┘               │
-    └───────┬───────┘               │                       │
-            │                       │                       │
-            └───────────────────────┼───────────────────────┘
-                                    │
-                                    ▼
+    ┌──────────────────────────────┼──────────────────────────────────┐
+    │                              │                                  │
+    │ [new notification,           │ [debounce expires]               │
+    │  timer NOT expired]          │                                  │
+    │                              │                                  │
+    ▼                              ▼                                  │
+┌───────────────┐    ┌─────────────────────────────────────┐          │
+│ Extend timer  │    │ Timer expired - check staleness     │          │
+│ (from start   │    └─────────────┬───────────────────────┘          │
+│  time, not    │                  │                                  │
+│  from now)    │    ┌─────────────┴─────────────┐                    │
+└───────┬───────┘    │                           │                    │
+        │            │                           │                    │
+        │   [expired recently          [expired long ago              │
+        │    + new notification]        (stale state)]                │
+        │            │                           │                    │
+        │            ▼                           ▼                    │
+        │   ┌───────────────┐          ┌───────────────┐              │
+        │   │ Start new     │          │ Clear state   │              │
+        │   │ debounce      │          │ → Normal      │              │
+        │   │ cycle         │          │   processing  │              │
+        │   └───────────────┘          └───────┬───────┘              │
+        │                                      │                      │
+        └──────────────────────────────────────┼──────────────────────┘
+                                               │
+                     [batch processed]         │ [stale → NO STATE]
+                              │                │
+                              ▼                │
                     ┌─────────────────────────────────┐
                     │          COOLDOWN               │
                     │                                 │
@@ -725,15 +738,35 @@ def save_notification_to_queue(notification, config):
         log("⚡ Started new debounce cycle")
 
     elif thread_state['state'] == 'debouncing':
-        # 4b. Already debouncing - extend timer if needed
-        new_debounce_seconds = calculate_debounce(thread_count, notification['reason'])
-        debounce_until = db.extend_thread_debounce(
-            root_uri,
-            new_debounce_seconds,
-            thread_count,
-            thread_state['debounce_started_at']
-        )
-        log("⚡ Extended debounce timer")
+        timer_expired = thread_state['debounce_until'] <= now
+
+        if timer_expired:
+            # Check if state is stale (expired > time_window_minutes ago)
+            minutes_since_expiry = (now - thread_state['debounce_until']).total_seconds() / 60
+
+            if minutes_since_expiry > config['time_window_minutes']:
+                # 4b-stale. Stale state - clear and process normally
+                db.clear_thread_state(root_uri)
+                log(f"⚡ Thread debounce state is stale ({minutes_since_expiry:.1f}min since expiry), clearing state")
+                # Continue to normal processing (no debouncing)
+                save_to_queue(notification)
+                return
+            else:
+                # 4b-recent. Timer expired recently - start new cycle
+                debounce_seconds = calculate_debounce(thread_count, notification['reason'])
+                debounce_until = (now + timedelta(seconds=debounce_seconds)).isoformat()
+                db.set_thread_debouncing(root_uri, debounce_until, notification_count=1)
+                log("⚡ Debounce timer expired for thread, starting new cycle")
+        else:
+            # 4b. Timer not expired - extend it
+            new_debounce_seconds = calculate_debounce(thread_count, notification['reason'])
+            debounce_until = db.extend_thread_debounce(
+                root_uri,
+                new_debounce_seconds,
+                thread_count,
+                thread_state['debounce_started_at']
+            )
+            log("⚡ Extended debounce timer")
 
     elif thread_state['state'] == 'cooldown':
         # 4c. In cooldown - re-trigger debouncing (new cycle)
@@ -808,6 +841,8 @@ def process_queue():
 ⚡ Extending debounce for high-traffic mention (18 notifications, new expiry: 2025-11-24T12:15:00)
 ⚡ Reusing existing debounce timer for high-traffic reply (expires: 2025-11-24T12:00:00)
 ⚡ Re-triggering debounce during cooldown for reply (min duration: 15min)
+⚡ Thread debounce state is stale (45.3min since expiry), clearing state
+⚡ Debounce timer expired for thread, starting new cycle for incoming reply
 ```
 
 ### Waiting Phase
@@ -869,6 +904,7 @@ Using interpolated debounce (ratio=0.75): 1522s (25.4min)
 | Single notification left | Fall back to normal processing |
 | Timer conflict | Use earliest expiration time |
 | API timeout | Retry with exponential backoff |
+| Stale debounce state | Clear thread state, process normally (see [Stale State Detection](#stale-state-detection)) |
 
 ### Single Notification Fallback
 
