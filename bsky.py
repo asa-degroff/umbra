@@ -119,8 +119,8 @@ DAILY_REVIEW_INTERVAL = 0
 # Feed engagement tracking
 FEED_ENGAGEMENT = False
 
-# Weekly curiosities tracking
-WEEKLY_CURIOSITIES = False
+# Curiosities tracking
+CURIOSITIES_EXPLORATION = False
 
 # Database for notification tracking
 NOTIFICATION_DB = None
@@ -3535,7 +3535,7 @@ This is an opportunity to stay connected with your network and contribute to ong
 
 def send_curiosities_exploration_message(client: Letta, agent_id: str) -> None:
     """
-    Send a weekly message prompting the agent to explore its curiosities.
+    Send a message prompting the agent to explore its curiosities.
     The agent explores questions or ideas from its curiosities memory block
     and creates a post sharing its exploration.
 
@@ -3544,14 +3544,14 @@ def send_curiosities_exploration_message(client: Letta, agent_id: str) -> None:
         agent_id: Agent ID to send message to
     """
     try:
-        logger.info("🔮 Sending weekly curiosities exploration prompt to agent")
+        logger.info("🔮 Sending curiosities exploration prompt to agent")
 
-        exploration_prompt = """This is your weekly curiosities exploration.
+        exploration_prompt = """🔮 This your time for curiosities exploration.
 
 Review your curiosities memory block to find questions, ideas, or topics you've been wondering about. Choose one that feels ripe for exploration.
 
 Then:
-1. Search for relevant information using search_bluesky_posts to see what others have said about this topic
+1. Search for relevant information using search_bluesky_posts and web_search to see what others have said about this topic
 2. Reflect on what you find and your own thoughts
 3. Create a post using post_to_bluesky sharing your exploration - this could be:
    - A question you're pondering
@@ -3559,7 +3559,9 @@ Then:
    - A connection you've made between ideas
    - Something from the unknown that intrigues you
 
-This is your space for intellectual exploration and sharing your evolving understanding with your network. Let your genuine curiosity guide what you share."""
+This is your space for intellectual exploration and sharing your evolving understanding with your network. Let your genuine curiosity guide what you share. You don't need to post a complete answer questions and—open-ended exploration are encouraged.
+
+Then you can update your curiosities block with anything else you want to explore next time."""
 
         # Send message to agent
         message_stream = client.agents.messages.create_stream(
@@ -3602,7 +3604,7 @@ This is your space for intellectual exploration and sharing your evolving unders
             if str(chunk) == 'done':
                 break
 
-        logger.info("🔮 Weekly curiosities exploration message processed successfully")
+        logger.info("🔮 Curiosities exploration message processed successfully")
 
     except Exception as e:
         logger.error(f"Error sending curiosities exploration message: {e}")
@@ -4159,7 +4161,7 @@ def main():
     parser.add_argument('--mutuals-engagement', action='store_true', help='Enable daily mutuals engagement (prompt to read and reply to mutuals feed posts once per day at a random time)')
     parser.add_argument('--daily-review-interval', type=int, default=0, help='Send daily review every N seconds (default: 0 = disabled, 86400 = 24 hours)')
     parser.add_argument('--feed-engagement', action='store_true', help='Enable daily feed engagement (prompt to check home and MLBlend feeds once per day at a random time)')
-    parser.add_argument('--weekly-curiosities', action='store_true', help='Enable weekly curiosities exploration (prompt to explore curiosities block and create a post once per week at a random time)')
+    parser.add_argument('--curiosities-exploration', action='store_true', help='Enable curiosities exploration (prompt to explore curiosities block and create a post at a random time in the curiosities interval)')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -4343,9 +4345,9 @@ def main():
     MUTUALS_ENGAGEMENT = args.mutuals_engagement
     global DAILY_REVIEW_INTERVAL
     DAILY_REVIEW_INTERVAL = args.daily_review_interval
-    global FEED_ENGAGEMENT, WEEKLY_CURIOSITIES
+    global FEED_ENGAGEMENT, CURIOSITIES_EXPLORATION
     FEED_ENGAGEMENT = args.feed_engagement
-    WEEKLY_CURIOSITIES = args.weekly_curiosities
+    CURIOSITIES_EXPLORATION = args.curiosities_exploration
     
     # Synthesis-only mode
     if SYNTHESIS_ONLY:
@@ -4436,18 +4438,18 @@ def main():
     else:
         logger.info("Daily feed engagement disabled")
 
-    # Weekly curiosities (random window - 7 days)
-    if WEEKLY_CURIOSITIES:
+    # Curiosities exploration
+    if CURIOSITIES_EXPLORATION:
         init_or_load_scheduled_task(
             db=NOTIFICATION_DB,
-            task_name='weekly_curiosities',
+            task_name='curiosities_exploration',
             enabled=True,
             is_random_window=True,
-            window_seconds=604800  # 7-day window
+            window_seconds=172800  # 2 days
         )
-        logger.info("🔮 Weekly curiosities exploration enabled")
+        logger.info("🔮 Curiosities exploration enabled")
     else:
-        logger.info("Weekly curiosities exploration disabled")
+        logger.info("Curiosities exploration disabled")
 
     while True:
         try:
@@ -4480,10 +4482,10 @@ def main():
                         send_feed_engagement_message(CLIENT, umbra_agent.id)
                         reschedule_task_after_execution(NOTIFICATION_DB, 'feed_engagement', task)
 
-                    elif task_name == 'weekly_curiosities' and WEEKLY_CURIOSITIES:
-                        logger.info(f"⏰ Time for weekly curiosities exploration!")
+                    elif task_name == 'curiosities_exploration' and CURIOSITIES_EXPLORATION:
+                        logger.info(f"⏰ Time for curiosities exploration!")
                         send_curiosities_exploration_message(CLIENT, umbra_agent.id)
-                        reschedule_task_after_execution(NOTIFICATION_DB, 'weekly_curiosities', task)
+                        reschedule_task_after_execution(NOTIFICATION_DB, 'curiosities_exploration', task)
 
             # Run periodic cleanup every N cycles
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:
