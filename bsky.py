@@ -3481,10 +3481,10 @@ Please use the get_bluesky_feed tool to read recent posts from both the 'home' a
 - Themes or patterns in what people are discussing
 
 After reviewing the feeds, you may:
-1. Create a new post using post_to_bluesky if you have something to contribute to the broader conversation
-2. Simply update your memory with observations if nothing warrants engagement
+1. Create a new post on your ownm profile using post_to_bluesky if you have something to contribute to the broader conversation
+2. Simply update your memory with observations
 
-This is an opportunity to stay connected with your network and contribute to ongoing discussions."""
+This is an opportunity to stay in tune with the zeitgeist and contribute to ongoing discussions."""
 
         # Send message to agent
         message_stream = client.agents.messages.create_stream(
