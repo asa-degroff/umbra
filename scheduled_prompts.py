@@ -24,6 +24,71 @@ SHOW_REASONING = False
 logger = logging.getLogger('umbra')
 
 
+# ============================================================================
+# Task Configuration
+# ============================================================================
+# Each task is defined with its scheduling parameters.
+# - enabled: Whether the task is active by default
+# - is_random_window: True for random scheduling within a window, False for fixed intervals
+# - interval_seconds: For interval-based tasks, time between executions
+# - window_seconds: For random window tasks, size of the random window
+# - emoji: Emoji used in log messages
+# - description: Human-readable description
+
+TASK_CONFIGS = {
+    'synthesis': {
+        'enabled': True,
+        'is_random_window': False,
+        'interval_seconds': 86400,  # 24 hours
+        'window_seconds': None,
+        'emoji': '🧠',
+        'description': 'Synthesis and reflection',
+    },
+    'mutuals_engagement': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 129600,  # 36-hour window
+        'emoji': '🤝',
+        'description': 'Mutuals engagement',
+    },
+    'daily_review': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 86400,  # 24-hour window
+        'emoji': '📋',
+        'description': 'Daily review',
+    },
+    'feed_engagement': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 86400,  # 24-hour window
+        'emoji': '📰',
+        'description': 'Feed engagement',
+    },
+    'curiosities_exploration': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 86400,  # 24-hour window
+        'emoji': '🔮',
+        'description': 'Curiosities exploration',
+    },
+}
+
+
+def get_task_config(task_name: str) -> dict:
+    """Get configuration for a specific task."""
+    return TASK_CONFIGS.get(task_name, {})
+
+
+def get_all_task_names() -> list:
+    """Get list of all configured task names."""
+    return list(TASK_CONFIGS.keys())
+
+
 def configure(show_reasoning: bool = False):
     """
     Configure module-level settings.
@@ -202,6 +267,72 @@ def reschedule_task_after_execution(
     logger.info(f"Rescheduled {task_name} for {datetime.fromtimestamp(next_timestamp).strftime('%Y-%m-%d %H:%M:%S')} ({hours_until:.1f} hours from now)")
 
     return next_timestamp
+
+
+def initialize_all_scheduled_tasks(db, enabled_overrides: dict = None) -> dict:
+    """
+    Initialize all scheduled tasks from TASK_CONFIGS.
+
+    Uses the database to persist schedules across restarts. If a task already
+    has a valid (not expired) schedule in the database, it will be used.
+    Otherwise, a new schedule will be calculated based on the task config.
+
+    Also cleans up any stale tasks in the database that are no longer in TASK_CONFIGS.
+
+    Args:
+        db: NotificationDB instance
+        enabled_overrides: Optional dict to override enabled status for specific tasks.
+                          Example: {'synthesis': False, 'daily_review': True}
+
+    Returns:
+        Dict mapping task_name to next scheduled timestamp (or None if disabled)
+    """
+    logger.info("Initializing scheduled tasks...")
+
+    # Clean up stale tasks that are no longer in TASK_CONFIGS
+    existing_tasks = db.get_all_scheduled_tasks()
+    valid_task_names = set(TASK_CONFIGS.keys())
+    for task in existing_tasks:
+        if task['task_name'] not in valid_task_names:
+            logger.info(f"🧹 Removing stale task from database: {task['task_name']}")
+            db.delete_scheduled_task(task['task_name'])
+
+    enabled_overrides = enabled_overrides or {}
+    scheduled_times = {}
+
+    for task_name, config in TASK_CONFIGS.items():
+        # Check if there's an override for this task's enabled status
+        enabled = enabled_overrides.get(task_name, config['enabled'])
+
+        if enabled:
+            next_time = init_or_load_scheduled_task(
+                db=db,
+                task_name=task_name,
+                enabled=True,
+                interval_seconds=config['interval_seconds'],
+                is_random_window=config['is_random_window'],
+                window_seconds=config['window_seconds']
+            )
+            scheduled_times[task_name] = next_time
+
+            # Log with emoji
+            emoji = config.get('emoji', '📅')
+            desc = config.get('description', task_name)
+            if config['is_random_window']:
+                window_hours = config['window_seconds'] / 3600
+                logger.info(f"{emoji} {desc} enabled (random within {window_hours:.0f}h window)")
+            else:
+                interval_hours = config['interval_seconds'] / 3600
+                logger.info(f"{emoji} {desc} enabled (every {interval_hours:.1f} hours)")
+        else:
+            # Disable task in database if it exists
+            existing = db.get_scheduled_task(task_name)
+            if existing:
+                db.set_task_enabled(task_name, False)
+            scheduled_times[task_name] = None
+            logger.info(f"{config.get('emoji', '📅')} {config.get('description', task_name)} disabled")
+
+    return scheduled_times
 
 
 # ============================================================================

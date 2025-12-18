@@ -33,32 +33,23 @@ ac && python bsky.py --cleanup-interval 5
 # Run with user block cleanup disabled
 ac && python bsky.py --cleanup-interval 0
 
-# Run with custom synthesis interval (every 5 minutes)
-ac && python bsky.py --synthesis-interval 300
-
-# Run with synthesis disabled
-ac && python bsky.py --synthesis-interval 0
-
 # Run in synthesis-only mode (no notification processing)
-ac && python bsky.py --synthesis-only --synthesis-interval 300
+ac && python bsky.py --synthesis-only
 
-# Run synthesis-only mode with immediate synthesis every 2 minutes
-ac && python bsky.py --synthesis-only --synthesis-interval 120
+# Disable specific scheduled tasks (all enabled by default)
+ac && python bsky.py --no-synthesis           # Disable synthesis messages
+ac && python bsky.py --no-mutuals-engagement  # Disable mutuals engagement
+ac && python bsky.py --no-daily-review        # Disable daily review
+ac && python bsky.py --no-feed-engagement     # Disable feed engagement
+ac && python bsky.py --no-curiosities         # Disable curiosities exploration
 
-# Enable daily mutuals engagement (prompts umbra to read and reply to mutuals feed once per day at random time)
-ac && python bsky.py --mutuals-engagement
-
-# Enable daily feed engagement (prompts umbra to check home and MLBlend feeds once per day at random time)
-ac && python bsky.py --feed-engagement
-
-# Enable weekly curiosities exploration (prompts umbra to explore its curiosities block once per week at random time)
-ac && python bsky.py --weekly-curiosities
-
-# Run with all scheduled engagement features enabled
-ac && python bsky.py --synthesis-interval 3600 --mutuals-engagement --feed-engagement --weekly-curiosities
+# Run with only synthesis and curiosities enabled (disable others)
+ac && python bsky.py --no-mutuals-engagement --no-daily-review --no-feed-engagement
 ```
 
 **Note:** All scheduled tasks are now persistent across restarts. If umbra is restarted, it will resume existing schedules from the database rather than generating new random times.
+
+Task intervals and scheduling parameters are configured in `scheduled_prompts.py` in the `TASK_CONFIGS` dictionary.
 
 ### Managing Tools
 

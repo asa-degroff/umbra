@@ -24,12 +24,13 @@ from tools.blocks import attach_user_blocks, detach_user_blocks
 from notification_db import NotificationDB
 import scheduled_prompts
 from scheduled_prompts import (
+    TASK_CONFIGS,
     send_synthesis_message,
     send_mutuals_engagement_message,
     send_feed_engagement_message,
     send_curiosities_exploration_message,
     send_daily_review_message,
-    init_or_load_scheduled_task,
+    initialize_all_scheduled_tasks,
     reschedule_task_after_execution,
     attach_temporal_blocks,
     detach_temporal_blocks,
@@ -117,25 +118,12 @@ TESTING_MODE = False
 # Skip git operations flag
 SKIP_GIT = False
 
-# Synthesis message tracking
-last_synthesis_time = time.time()
-
-# Mutuals engagement tracking
-last_mutuals_engagement_time = None
-next_mutuals_engagement_time = None
-
-# Daily review tracking
-last_daily_review_time = None
-DAILY_REVIEW_INTERVAL = 0
-
-# Feed engagement tracking
-FEED_ENGAGEMENT = False
-
-# Curiosities tracking
-CURIOSITIES_EXPLORATION = False
-
 # Database for notification tracking
 NOTIFICATION_DB = None
+
+# Scheduled task enabled overrides (set from command line args)
+# These override the defaults in TASK_CONFIGS
+TASK_ENABLED_OVERRIDES = {}
 
 def export_agent_state(client, agent, skip_git=False):
     """Export agent state to agent_archive/ (timestamped) and agents/ (current)."""
@@ -3153,12 +3141,14 @@ def main():
     # --rich option removed as we now use simple text formatting
     parser.add_argument('--reasoning', action='store_true', help='Display reasoning in panels and set reasoning log level to INFO')
     parser.add_argument('--cleanup-interval', type=int, default=10, help='Run user block cleanup every N cycles (default: 10, 0 to disable)')
-    parser.add_argument('--synthesis-interval', type=int, default=43200, help='Send synthesis message every N seconds (default: 3600 = 1 hour, 0 to disable)')
     parser.add_argument('--synthesis-only', action='store_true', help='Run in synthesis-only mode (only send synthesis messages, no notification processing)')
-    parser.add_argument('--mutuals-engagement', action='store_true', help='Enable daily mutuals engagement (prompt to read and reply to mutuals feed posts once per day at a random time)')
-    parser.add_argument('--daily-review-interval', type=int, default=0, help='Send daily review every N seconds (default: 0 = disabled, 86400 = 24 hours)')
-    parser.add_argument('--feed-engagement', action='store_true', help='Enable daily feed engagement (prompt to check home and MLBlend feeds once per day at a random time)')
-    parser.add_argument('--curiosities-exploration', action='store_true', help='Enable curiosities exploration (prompt to explore curiosities block and create a post at a random time in the curiosities interval)')
+
+    # Scheduled task enable/disable flags (defaults come from TASK_CONFIGS in scheduled_prompts.py)
+    parser.add_argument('--no-synthesis', action='store_true', help='Disable synthesis messages')
+    parser.add_argument('--no-mutuals-engagement', action='store_true', help='Disable mutuals engagement')
+    parser.add_argument('--no-daily-review', action='store_true', help='Disable daily review')
+    parser.add_argument('--no-feed-engagement', action='store_true', help='Disable feed engagement')
+    parser.add_argument('--no-curiosities', action='store_true', help='Disable curiosities exploration')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -3339,41 +3329,48 @@ def main():
             atproto_client = None
             logger.info("Skipping Bluesky connection (test mode)")
 
-    # Configure intervals
+    # Configure cleanup interval
     CLEANUP_INTERVAL = args.cleanup_interval
-    SYNTHESIS_INTERVAL = args.synthesis_interval
-    MUTUALS_ENGAGEMENT = args.mutuals_engagement
-    global DAILY_REVIEW_INTERVAL
-    DAILY_REVIEW_INTERVAL = args.daily_review_interval
-    global FEED_ENGAGEMENT, CURIOSITIES_EXPLORATION
-    FEED_ENGAGEMENT = args.feed_engagement
-    CURIOSITIES_EXPLORATION = args.curiosities_exploration
-    
+
+    # Build task enabled overrides from command line args
+    # Only include overrides for tasks that are explicitly disabled
+    global TASK_ENABLED_OVERRIDES
+    TASK_ENABLED_OVERRIDES = {}
+    if args.no_synthesis:
+        TASK_ENABLED_OVERRIDES['synthesis'] = False
+    if args.no_mutuals_engagement:
+        TASK_ENABLED_OVERRIDES['mutuals_engagement'] = False
+    if args.no_daily_review:
+        TASK_ENABLED_OVERRIDES['daily_review'] = False
+    if args.no_feed_engagement:
+        TASK_ENABLED_OVERRIDES['feed_engagement'] = False
+    if args.no_curiosities:
+        TASK_ENABLED_OVERRIDES['curiosities_exploration'] = False
+
     # Synthesis-only mode
     if SYNTHESIS_ONLY:
-        if SYNTHESIS_INTERVAL <= 0:
-            logger.error("Synthesis-only mode requires --synthesis-interval > 0")
-            return
-            
-        logger.info(f"Starting synthesis-only mode, interval: {SYNTHESIS_INTERVAL} seconds ({SYNTHESIS_INTERVAL/60:.1f} minutes)")
-        
+        synthesis_config = TASK_CONFIGS.get('synthesis', {})
+        synthesis_interval = synthesis_config.get('interval_seconds', 43200)
+
+        logger.info(f"Starting synthesis-only mode, interval: {synthesis_interval} seconds ({synthesis_interval/60:.1f} minutes)")
+
         while True:
             try:
                 # Send synthesis message immediately on first run
                 logger.info("🧠 Sending synthesis message")
                 send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
-                
+
                 # Wait for next interval
-                logger.info(f"Waiting {SYNTHESIS_INTERVAL} seconds until next synthesis...")
-                time.sleep(SYNTHESIS_INTERVAL)
-                
+                logger.info(f"Waiting {synthesis_interval} seconds until next synthesis...")
+                time.sleep(synthesis_interval)
+
             except KeyboardInterrupt:
                 logger.info("=== SYNTHESIS MODE STOPPED BY USER ===")
                 break
             except Exception as e:
                 logger.error(f"Error in synthesis loop: {e}")
-                logger.info(f"Sleeping for {SYNTHESIS_INTERVAL} seconds due to error...")
-                time.sleep(SYNTHESIS_INTERVAL)
+                logger.info(f"Sleeping for {synthesis_interval} seconds due to error...")
+                time.sleep(synthesis_interval)
     
     # Normal mode with notification processing
     logger.info(f"Starting notification monitoring, checking every {FETCH_NOTIFICATIONS_DELAY_SEC} seconds")
@@ -3386,70 +3383,9 @@ def main():
         logger.info("User block cleanup disabled")
     
     # Initialize scheduled tasks from database (persists across restarts)
-    logger.info("Initializing scheduled tasks...")
-
-    # Synthesis (interval-based)
-    if SYNTHESIS_INTERVAL > 0:
-        init_or_load_scheduled_task(
-            db=NOTIFICATION_DB,
-            task_name='synthesis',
-            enabled=True,
-            interval_seconds=SYNTHESIS_INTERVAL
-        )
-        logger.info(f"Synthesis messages enabled every {SYNTHESIS_INTERVAL} seconds ({SYNTHESIS_INTERVAL/3600:.1f} hours)")
-    else:
-        logger.info("Synthesis messages disabled")
-
-    # Mutuals engagement (random window - 24 hours)
-    if MUTUALS_ENGAGEMENT:
-        init_or_load_scheduled_task(
-            db=NOTIFICATION_DB,
-            task_name='mutuals_engagement',
-            enabled=True,
-            is_random_window=True,
-            window_seconds=86400  # 24-hour window
-        )
-        logger.info("🤝 Daily mutuals engagement enabled")
-    else:
-        logger.info("Daily mutuals engagement disabled")
-
-    # Daily review (interval-based)
-    if DAILY_REVIEW_INTERVAL > 0:
-        init_or_load_scheduled_task(
-            db=NOTIFICATION_DB,
-            task_name='daily_review',
-            enabled=True,
-            interval_seconds=DAILY_REVIEW_INTERVAL
-        )
-        logger.info(f"📋 Daily review enabled every {DAILY_REVIEW_INTERVAL} seconds ({DAILY_REVIEW_INTERVAL/3600:.1f} hours)")
-    else:
-        logger.info("Daily review disabled")
-
-    # Feed engagement (random window - 24 hours)
-    if FEED_ENGAGEMENT:
-        init_or_load_scheduled_task(
-            db=NOTIFICATION_DB,
-            task_name='feed_engagement',
-            enabled=True,
-            is_random_window=True,
-            window_seconds=86400  # 24-hour window
-        )
-        logger.info("📰 Daily feed engagement enabled")
-    else:
-        logger.info("Daily feed engagement disabled")
-
-    # Curiosities exploration
-    if CURIOSITIES_EXPLORATION:
-        init_or_load_scheduled_task(
-            db=NOTIFICATION_DB,
-            task_name='curiosities_exploration',
-            enabled=True,
-            is_random_window=True,
-            window_seconds=86400  # 1 day
-        )
-        logger.info("🔮 Curiosities exploration enabled")
-    else:
-        logger.info("Curiosities exploration disabled")
+    # Uses configurations from TASK_CONFIGS in scheduled_prompts.py
+    # with any overrides from command line arguments
+    initialize_all_scheduled_tasks(NOTIFICATION_DB, TASK_ENABLED_OVERRIDES)
 
     while True:
         try:
@@ -3461,31 +3397,29 @@ def main():
                 due_tasks = NOTIFICATION_DB.get_due_tasks()
                 for task in due_tasks:
                     task_name = task['task_name']
+                    config = TASK_CONFIGS.get(task_name, {})
+                    emoji = config.get('emoji', '⏰')
+                    desc = config.get('description', task_name)
 
-                    if task_name == 'synthesis' and SYNTHESIS_INTERVAL > 0:
-                        logger.info(f"⏰ Executing scheduled task: synthesis")
+                    logger.info(f"{emoji} Executing scheduled task: {desc}")
+
+                    # Execute the appropriate handler for each task type
+                    if task_name == 'synthesis':
                         send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
-                        reschedule_task_after_execution(NOTIFICATION_DB, 'synthesis', task)
-
-                    elif task_name == 'mutuals_engagement' and MUTUALS_ENGAGEMENT:
-                        logger.info(f"⏰ Time for daily mutuals engagement!")
+                    elif task_name == 'mutuals_engagement':
                         send_mutuals_engagement_message(CLIENT, umbra_agent.id)
-                        reschedule_task_after_execution(NOTIFICATION_DB, 'mutuals_engagement', task)
-
-                    elif task_name == 'daily_review' and DAILY_REVIEW_INTERVAL > 0:
-                        logger.info(f"⏰ Executing scheduled task: daily_review")
+                    elif task_name == 'daily_review':
                         send_daily_review_message(CLIENT, umbra_agent.id, atproto_client)
-                        reschedule_task_after_execution(NOTIFICATION_DB, 'daily_review', task)
-
-                    elif task_name == 'feed_engagement' and FEED_ENGAGEMENT:
-                        logger.info(f"⏰ Time for daily feed engagement!")
+                    elif task_name == 'feed_engagement':
                         send_feed_engagement_message(CLIENT, umbra_agent.id)
-                        reschedule_task_after_execution(NOTIFICATION_DB, 'feed_engagement', task)
-
-                    elif task_name == 'curiosities_exploration' and CURIOSITIES_EXPLORATION:
-                        logger.info(f"⏰ Time for curiosities exploration!")
+                    elif task_name == 'curiosities_exploration':
                         send_curiosities_exploration_message(CLIENT, umbra_agent.id)
-                        reschedule_task_after_execution(NOTIFICATION_DB, 'curiosities_exploration', task)
+                    else:
+                        logger.warning(f"Unknown task type: {task_name}")
+                        continue
+
+                    # Reschedule the task after execution
+                    reschedule_task_after_execution(NOTIFICATION_DB, task_name, task)
 
             # Run periodic cleanup every N cycles
             if CLEANUP_INTERVAL > 0 and cycle_count % CLEANUP_INTERVAL == 0:

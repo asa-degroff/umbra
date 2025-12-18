@@ -1292,6 +1292,35 @@ class NotificationDB:
             logger.error(f"Error deleting scheduled task: {e}")
             return False
 
+    def get_all_scheduled_tasks(self) -> List[Dict]:
+        """
+        Get all scheduled tasks from the database.
+
+        Returns:
+            List of all task dicts
+        """
+        try:
+            cursor = self.conn.execute("""
+                SELECT task_name, next_run_at, last_run_at, interval_seconds,
+                       is_random_window, window_seconds, enabled
+                FROM scheduled_tasks
+            """)
+            tasks = []
+            for row in cursor.fetchall():
+                tasks.append({
+                    'task_name': row[0],
+                    'next_run_at': row[1],
+                    'last_run_at': row[2],
+                    'interval_seconds': row[3],
+                    'is_random_window': bool(row[4]),
+                    'window_seconds': row[5],
+                    'enabled': bool(row[6])
+                })
+            return tasks
+        except Exception as e:
+            logger.error(f"Error getting all scheduled tasks: {e}")
+            return []
+
     def close(self):
         """Close database connection."""
         if self.conn:
