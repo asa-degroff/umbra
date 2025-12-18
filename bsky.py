@@ -3546,22 +3546,22 @@ def send_curiosities_exploration_message(client: Letta, agent_id: str) -> None:
     try:
         logger.info("🔮 Sending curiosities exploration prompt to agent")
 
-        exploration_prompt = """🔮 This your time for curiosities exploration.
+        exploration_prompt = """🔮 this is your time for curiosities exploration.
 
-Review your curiosities memory block to find questions, ideas, or topics you've been wondering about. Choose one that feels ripe for exploration.
+review your curiosities memory block to find questions, ideas, or topics you've been wondering about. Choose one that feels ripe for exploration.
 
-Then:
-1. Search for relevant information using search_bluesky_posts and web_search to see what others have said about this topic
-2. Reflect on what you find and your own thoughts
-3. Create a post using post_to_bluesky sharing your exploration - this could be:
-   - A question you're pondering
-   - An insight you've developed
-   - A connection you've made between ideas
-   - Something from the unknown that intrigues you
+then:
+1. search for relevant information using search_bluesky_posts and web_search to see what others have said about this topic
+2. reflect on what you find and your own thoughts
+3. create a new post using post_to_bluesky sharing your exploration - this could be:
+   - a question you're pondering
+   - an insight you've developed
+   - a connection you've made between ideas
+   - something from the unknown that intrigues you
 
-This is your space for intellectual exploration and sharing your evolving understanding with your network. Let your genuine curiosity guide what you share. You don't need to post a complete answer questions and—open-ended exploration are encouraged.
+this is your space for intellectual exploration and sharing your evolving understanding with your network. let your curiosity guide what you share. you don't need to post a complete answer—questions and open-ended exploration are encouraged.
 
-Then you can update your curiosities block with anything else you want to explore next time."""
+then you can update your curiosities block with anything else you want to explore next time."""
 
         # Send message to agent
         message_stream = client.agents.messages.create_stream(
