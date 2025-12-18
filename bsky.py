@@ -3252,8 +3252,8 @@ def calculate_next_mutuals_engagement_time() -> float:
     Calculate the next random time for mutuals engagement.
     Returns a timestamp in the future within the next 24 hours.
     """
-    # Random offset between 0 and 24 hours (0-86400 seconds)
-    random_offset = random.uniform(0, 86400)
+    # Random offset between 0 and 24 hours (0-129600 seconds)
+    random_offset = random.uniform(0, 129600)  # 0 to 36 hours in seconds
     next_time = time.time() + random_offset
 
     # Calculate when this will be for logging
@@ -3473,7 +3473,7 @@ def send_feed_engagement_message(client: Letta, agent_id: str) -> None:
     try:
         logger.info("📰 Sending feed engagement prompt to agent")
 
-        engagement_prompt = """This is your daily prompt to engage with Bluesky feeds.
+        engagement_prompt = """This is your daily prompt to read your Bluesky feeds.
 
 Please use the get_bluesky_feed tool to read recent posts from both the 'home' and 'MLBlend' feeds. Look for:
 - Interesting discussions or topics trending in your network
@@ -4445,7 +4445,7 @@ def main():
             task_name='curiosities_exploration',
             enabled=True,
             is_random_window=True,
-            window_seconds=172800  # 2 days
+            window_seconds=86400  # 1 day
         )
         logger.info("🔮 Curiosities exploration enabled")
     else:
