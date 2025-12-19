@@ -2052,6 +2052,36 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                     logger.error(f"Error acknowledging post from @{author_handle}: {e}")
                     # Don't fail the entire operation if acknowledgment fails
 
+                # Mark all notifications from the same consecutive chain as processed
+                # This prevents duplicate processing when a multi-part message arrives as multiple notifications
+                if NOTIFICATION_DB:
+                    try:
+                        # Extract author_did, root_uri, and indexed_at from notification_data
+                        if isinstance(notification_data, dict):
+                            author_did = notification_data.get('author', {}).get('did', '')
+                            indexed_at = notification_data.get('indexed_at', '')
+                            # Get root_uri from reply info or use notification uri
+                            record = notification_data.get('record', {})
+                            reply_info = record.get('reply', {}) if isinstance(record, dict) else {}
+                            root_info = reply_info.get('root', {}) if isinstance(reply_info, dict) else {}
+                            root_uri = root_info.get('uri') if isinstance(root_info, dict) else None
+                            if not root_uri:
+                                root_uri = notification_data.get('uri', '')
+                        else:
+                            author_did = getattr(getattr(notification_data, 'author', None), 'did', '')
+                            indexed_at = getattr(notification_data, 'indexed_at', '')
+                            root_uri = notification_data.uri
+
+                        if author_did and root_uri and indexed_at:
+                            NOTIFICATION_DB.mark_consecutive_chain_processed(
+                                root_uri=root_uri,
+                                author_did=author_did,
+                                reference_time=indexed_at
+                            )
+                    except Exception as e:
+                        logger.error(f"Error marking consecutive chain as processed: {e}")
+                        # Don't fail the operation if this cleanup fails
+
                 return True
             else:
                 logger.error(f"Failed to send reply to @{author_handle}")

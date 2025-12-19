@@ -70,8 +70,8 @@ def test_thread_deduplication():
 
         print("\n1. Adding mention notification (Post A)...")
         result1 = db.add_notification(mention_notif)
-        print(f"   Result: {result1} (expected: True)")
-        assert result1 == True, "Should successfully add mention notification"
+        print(f"   Result: {result1} (expected: added)")
+        assert result1 == "added", "Should successfully add mention notification"
 
         print("\n2. Checking for existing notification with root_uri = Post A...")
         existing = db.has_notification_for_root(post_a_uri)

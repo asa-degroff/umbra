@@ -363,6 +363,61 @@ class NotificationDB:
         except Exception as e:
             logger.error(f"Error marking notification processed: {e}")
 
+    def mark_consecutive_chain_processed(self, root_uri: str, author_did: str,
+                                          reference_time: str, status: str = 'processed',
+                                          time_window_seconds: int = 120) -> int:
+        """
+        Mark all notifications from the same author in the same thread as processed.
+
+        This is used when processing a multi-part message chain. When one notification
+        from the chain is processed, all related notifications (same author, same thread,
+        within time window) should be marked as processed to avoid duplicate processing.
+
+        Args:
+            root_uri: The root URI of the thread
+            author_did: The DID of the author who sent the multi-part message
+            reference_time: ISO timestamp to use as the center of the time window
+            status: Status to set (default: 'processed')
+            time_window_seconds: Time window in seconds around reference_time (default: 120)
+
+        Returns:
+            Number of notifications marked as processed
+        """
+        try:
+            # Parse reference time and calculate window
+            try:
+                ref_time_str = reference_time
+                if '+' in ref_time_str or ref_time_str.endswith('Z'):
+                    ref_time_str = ref_time_str.replace('Z', '').split('+')[0]
+                ref_time = datetime.fromisoformat(ref_time_str)
+            except (ValueError, TypeError):
+                ref_time = datetime.now()
+
+            window_start = (ref_time - timedelta(seconds=time_window_seconds)).isoformat()
+            window_end = (ref_time + timedelta(seconds=time_window_seconds)).isoformat()
+
+            cursor = self.conn.execute("""
+                UPDATE notifications
+                SET status = ?, processed_at = ?
+                WHERE root_uri = ?
+                AND author_did = ?
+                AND indexed_at >= ? AND indexed_at <= ?
+                AND status = 'pending'
+            """, (status, datetime.now().isoformat(), root_uri, author_did,
+                  window_start, window_end))
+
+            count = cursor.rowcount
+            self.conn.commit()
+
+            if count > 0:
+                logger.info(f"Marked {count} consecutive chain notifications as {status} "
+                           f"(author: {author_did[:20]}..., root: {root_uri[-20:]})")
+
+            return count
+        except Exception as e:
+            logger.error(f"Error marking consecutive chain as processed: {e}")
+            return 0
+
     def mark_in_progress(self, uri: str):
         """
         Mark a notification as currently being processed.
@@ -643,24 +698,74 @@ class NotificationDB:
 
     def get_thread_notification_count(self, root_uri: str, minutes: int = 60) -> int:
         """
-        Get count of notifications for a thread within time window.
+        Get count of "conversation turns" for a thread within time window.
+
+        A conversation turn is a group of consecutive posts from the same author
+        within a short time window (60 seconds). This prevents a single multi-part
+        message from one author from being counted as multiple notifications.
+
+        For example:
+        - 6 posts from @alice within 1 second = 1 conversation turn
+        - 3 posts from @alice, then 3 from @bob = 2 conversation turns
+        - 3 posts from @alice at T=0, then 3 from @alice at T=5min = 2 conversation turns
 
         Args:
             root_uri: The root URI of the thread
             minutes: Time window in minutes (default: 60)
 
         Returns:
-            Count of notifications for this thread in the time window
+            Count of conversation turns for this thread in the time window
         """
         cutoff_time = (datetime.now() - timedelta(minutes=minutes)).isoformat()
         cursor = self.conn.execute("""
-            SELECT COUNT(*) as count
+            SELECT author_did, indexed_at
             FROM notifications
             WHERE root_uri = ? AND indexed_at > ?
+            ORDER BY indexed_at ASC
         """, (root_uri, cutoff_time))
 
-        result = cursor.fetchone()
-        return result['count'] if result else 0
+        rows = cursor.fetchall()
+        if not rows:
+            return 0
+
+        # Group consecutive posts from same author within 60 seconds as one turn
+        turn_gap_seconds = 60
+        turn_count = 0
+        last_author = None
+        last_time = None
+
+        for row in rows:
+            author = row['author_did']
+            try:
+                # Parse ISO timestamp
+                indexed_at_str = row['indexed_at']
+                # Handle both with and without timezone
+                if '+' in indexed_at_str or indexed_at_str.endswith('Z'):
+                    # Has timezone - strip it for comparison
+                    indexed_at_str = indexed_at_str.replace('Z', '').split('+')[0]
+                current_time = datetime.fromisoformat(indexed_at_str)
+            except (ValueError, TypeError):
+                # If we can't parse the time, treat each notification as a new turn
+                turn_count += 1
+                continue
+
+            if last_author is None:
+                # First notification
+                turn_count = 1
+            elif author != last_author:
+                # Different author = new turn
+                turn_count += 1
+            elif last_time is not None:
+                # Same author - check time gap
+                time_gap = (current_time - last_time).total_seconds()
+                if time_gap > turn_gap_seconds:
+                    # Same author but long gap = new turn
+                    turn_count += 1
+
+            last_author = author
+            last_time = current_time
+
+        return turn_count
 
     def get_thread_debounced_notifications(self, root_uri: str) -> List[Dict]:
         """
