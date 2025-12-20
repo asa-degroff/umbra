@@ -146,18 +146,21 @@ def extract_links_from_facets(record_text: str, facets: list) -> list:
     return links
 
 
-def extract_images_from_embed(embed) -> list[dict]:
+def extract_images_from_embed(embed, include_thumbnails: bool = True) -> list[dict]:
     """Extract image URLs and alt text from a post embed (View type).
 
     This function handles the View types returned by get_post_thread(),
     which contain CDN URLs for images (unlike raw record embeds which
     only have BlobRefs).
 
+    Also extracts thumbnails from external links and videos when include_thumbnails=True.
+
     Args:
         embed: The embed object from post.embed (View type)
+        include_thumbnails: Whether to include thumbnails from links/videos (default True)
 
     Returns:
-        List of dicts with 'fullsize', 'thumb', 'alt' keys
+        List of dicts with 'fullsize', 'thumb', 'alt', and optional 'source' keys
     """
     images = []
     if not embed:
@@ -166,7 +169,7 @@ def extract_images_from_embed(embed) -> list[dict]:
     embed_type = getattr(embed, 'py_type', '')
 
     # Direct image embed (app.bsky.embed.images#view)
-    if 'images' in embed_type and hasattr(embed, 'images'):
+    if 'images' in embed_type and 'record' not in embed_type:
         for img in embed.images:
             images.append({
                 'fullsize': getattr(img, 'fullsize', None),
@@ -174,9 +177,35 @@ def extract_images_from_embed(embed) -> list[dict]:
                 'alt': getattr(img, 'alt', '') or ''
             })
 
+    # External link with thumbnail (app.bsky.embed.external#view)
+    elif 'external' in embed_type and 'record' not in embed_type and include_thumbnails:
+        if hasattr(embed, 'external') and embed.external:
+            thumb = getattr(embed.external, 'thumb', None)
+            if thumb:
+                title = getattr(embed.external, 'title', '') or ''
+                images.append({
+                    'fullsize': thumb,  # External links only have thumb, use as fullsize too
+                    'thumb': thumb,
+                    'alt': f"Link preview: {title}" if title else 'Link preview image',
+                    'source': 'external_link'
+                })
+
+    # Video with thumbnail (app.bsky.embed.video#view)
+    elif 'video' in embed_type and 'record' not in embed_type and include_thumbnails:
+        thumb = getattr(embed, 'thumbnail', None)
+        if thumb:
+            alt = getattr(embed, 'alt', '') or 'Video thumbnail'
+            images.append({
+                'fullsize': thumb,
+                'thumb': thumb,
+                'alt': alt,
+                'source': 'video'
+            })
+
     # Quote post with media (app.bsky.embed.recordWithMedia#view)
     elif 'recordWithMedia' in embed_type and hasattr(embed, 'media'):
         media_type = getattr(embed.media, 'py_type', '')
+        # Images in media
         if 'images' in media_type and hasattr(embed.media, 'images'):
             for img in embed.media.images:
                 images.append({
@@ -184,6 +213,69 @@ def extract_images_from_embed(embed) -> list[dict]:
                     'thumb': getattr(img, 'thumb', None),
                     'alt': getattr(img, 'alt', '') or ''
                 })
+        # External link thumbnail in media
+        elif 'external' in media_type and include_thumbnails:
+            if hasattr(embed.media, 'external') and embed.media.external:
+                thumb = getattr(embed.media.external, 'thumb', None)
+                if thumb:
+                    title = getattr(embed.media.external, 'title', '') or ''
+                    images.append({
+                        'fullsize': thumb,
+                        'thumb': thumb,
+                        'alt': f"Link preview: {title}" if title else 'Link preview image',
+                        'source': 'external_link'
+                    })
+        # Video thumbnail in media
+        elif 'video' in media_type and include_thumbnails:
+            thumb = getattr(embed.media, 'thumbnail', None)
+            if thumb:
+                alt = getattr(embed.media, 'alt', '') or 'Video thumbnail'
+                images.append({
+                    'fullsize': thumb,
+                    'thumb': thumb,
+                    'alt': alt,
+                    'source': 'video'
+                })
+
+    # Quote post - check for images in nested embeds (app.bsky.embed.record#view)
+    elif 'record' in embed_type and 'recordWithMedia' not in embed_type:
+        if hasattr(embed, 'record') and embed.record:
+            record = embed.record
+            if hasattr(record, 'embeds') and record.embeds:
+                for nested in record.embeds:
+                    nested_type = getattr(nested, 'py_type', '')
+                    # Nested images
+                    if 'images' in nested_type and hasattr(nested, 'images'):
+                        for img in nested.images:
+                            images.append({
+                                'fullsize': getattr(img, 'fullsize', None),
+                                'thumb': getattr(img, 'thumb', None),
+                                'alt': getattr(img, 'alt', '') or '',
+                                'source': 'quoted_post'
+                            })
+                    # Nested external link thumbnail
+                    elif 'external' in nested_type and include_thumbnails:
+                        if hasattr(nested, 'external') and nested.external:
+                            thumb = getattr(nested.external, 'thumb', None)
+                            if thumb:
+                                title = getattr(nested.external, 'title', '') or ''
+                                images.append({
+                                    'fullsize': thumb,
+                                    'thumb': thumb,
+                                    'alt': f"Link preview: {title}" if title else 'Link preview image',
+                                    'source': 'quoted_post_link'
+                                })
+                    # Nested video thumbnail
+                    elif 'video' in nested_type and include_thumbnails:
+                        thumb = getattr(nested, 'thumbnail', None)
+                        if thumb:
+                            alt = getattr(nested, 'alt', '') or 'Video thumbnail'
+                            images.append({
+                                'fullsize': thumb,
+                                'thumb': thumb,
+                                'alt': alt,
+                                'source': 'quoted_post_video'
+                            })
 
     return images
 
@@ -234,6 +326,248 @@ def extract_images_from_thread(thread_data, max_images: int = 8) -> list[dict]:
         traverse_thread(thread_data.thread)
 
     return images
+
+
+def extract_external_link_from_embed(embed) -> dict | None:
+    """Extract external link card data from a post embed (View type).
+
+    External links are shown as "link cards" with URL, title, description,
+    and optional thumbnail.
+
+    Args:
+        embed: The embed object from post.embed (View type)
+
+    Returns:
+        Dict with 'url', 'title', 'description', 'thumbnail' keys, or None
+    """
+    if not embed:
+        return None
+
+    embed_type = getattr(embed, 'py_type', '')
+
+    # Direct external link embed (app.bsky.embed.external#view)
+    if 'external' in embed_type and hasattr(embed, 'external'):
+        external = embed.external
+        return {
+            'url': getattr(external, 'uri', ''),
+            'title': getattr(external, 'title', ''),
+            'description': getattr(external, 'description', ''),
+            'thumbnail': getattr(external, 'thumb', None)
+        }
+
+    # RecordWithMedia with external link (app.bsky.embed.recordWithMedia#view)
+    if 'recordWithMedia' in embed_type and hasattr(embed, 'media'):
+        media_type = getattr(embed.media, 'py_type', '')
+        if 'external' in media_type and hasattr(embed.media, 'external'):
+            external = embed.media.external
+            return {
+                'url': getattr(external, 'uri', ''),
+                'title': getattr(external, 'title', ''),
+                'description': getattr(external, 'description', ''),
+                'thumbnail': getattr(external, 'thumb', None)
+            }
+
+    return None
+
+
+def extract_quote_post_from_embed(embed) -> dict | None:
+    """Extract quoted post data from a record embed (View type).
+
+    Quote posts embed another post, which can include the quoted text,
+    author, and any media attached to the quoted post.
+
+    Args:
+        embed: The embed object from post.embed (View type)
+
+    Returns:
+        Dict with quote post data, or None if not a quote or unavailable
+    """
+    if not embed:
+        return None
+
+    embed_type = getattr(embed, 'py_type', '')
+
+    # Get the record object (works for both record and recordWithMedia)
+    record = None
+    if 'recordWithMedia' in embed_type and hasattr(embed, 'record'):
+        # recordWithMedia has record.record for the actual quote
+        record = getattr(embed.record, 'record', None)
+    elif 'record' in embed_type and hasattr(embed, 'record'):
+        record = embed.record
+
+    if not record:
+        return None
+
+    record_type = getattr(record, 'py_type', '')
+
+    # Handle different quote post states
+    if 'viewNotFound' in record_type:
+        return {
+            'status': 'not_found',
+            'uri': getattr(record, 'uri', ''),
+            'message': 'Quoted post was deleted or not found'
+        }
+
+    if 'viewBlocked' in record_type:
+        return {
+            'status': 'blocked',
+            'uri': getattr(record, 'uri', ''),
+            'message': 'Quoted post is from a blocked account'
+        }
+
+    if 'viewDetached' in record_type:
+        return {
+            'status': 'detached',
+            'uri': getattr(record, 'uri', ''),
+            'message': 'Quoted post was detached'
+        }
+
+    # Normal quote post (viewRecord)
+    if 'viewRecord' in record_type or hasattr(record, 'author'):
+        result = {
+            'status': 'available',
+            'uri': getattr(record, 'uri', ''),
+        }
+
+        # Extract author info
+        if hasattr(record, 'author') and record.author:
+            author = record.author
+            result['author'] = {
+                'handle': getattr(author, 'handle', 'unknown'),
+                'display_name': getattr(author, 'display_name', '') or getattr(author, 'handle', 'unknown')
+            }
+
+        # Extract the quoted post text from value
+        # The 'value' field contains the actual post record
+        if hasattr(record, 'value') and record.value:
+            value = record.value
+            # value can be a dict or an object
+            if isinstance(value, dict):
+                result['text'] = value.get('text', '')
+            elif hasattr(value, 'text'):
+                result['text'] = getattr(value, 'text', '')
+
+        # Extract engagement metrics if present
+        metrics = {}
+        if hasattr(record, 'like_count') and record.like_count is not None:
+            metrics['likes'] = record.like_count
+        if hasattr(record, 'repost_count') and record.repost_count is not None:
+            metrics['reposts'] = record.repost_count
+        if hasattr(record, 'reply_count') and record.reply_count is not None:
+            metrics['replies'] = record.reply_count
+        if hasattr(record, 'quote_count') and record.quote_count is not None:
+            metrics['quotes'] = record.quote_count
+        if metrics:
+            result['metrics'] = metrics
+
+        # Check for nested embeds in the quoted post
+        if hasattr(record, 'embeds') and record.embeds:
+            nested_embeds = []
+            for nested in record.embeds:
+                nested_type = getattr(nested, 'py_type', '')
+                if 'images' in nested_type:
+                    nested_embeds.append({'type': 'images', 'count': len(getattr(nested, 'images', []))})
+                elif 'video' in nested_type:
+                    nested_embeds.append({'type': 'video'})
+                elif 'external' in nested_type:
+                    ext = getattr(nested, 'external', None)
+                    if ext:
+                        nested_embeds.append({
+                            'type': 'external_link',
+                            'url': getattr(ext, 'uri', ''),
+                            'title': getattr(ext, 'title', '')
+                        })
+            if nested_embeds:
+                result['embeds'] = nested_embeds
+
+        return result
+
+    return None
+
+
+def extract_embed_data(embed) -> dict | None:
+    """Extract structured data from any embed type.
+
+    This is the main entry point for embed extraction. It detects the embed
+    type and delegates to the appropriate extraction function.
+
+    Args:
+        embed: The embed object from post.embed (View type)
+
+    Returns:
+        Dict with embed type and extracted data, or None if no embed
+    """
+    if not embed:
+        return None
+
+    embed_type = getattr(embed, 'py_type', '')
+
+    # Images
+    if 'images' in embed_type and 'record' not in embed_type:
+        images = extract_images_from_embed(embed)
+        if images:
+            return {
+                'type': 'images',
+                'images': images
+            }
+
+    # External link
+    if 'external' in embed_type and 'record' not in embed_type:
+        link = extract_external_link_from_embed(embed)
+        if link:
+            return {
+                'type': 'external_link',
+                'link': link
+            }
+
+    # Quote post (record)
+    if embed_type == 'app.bsky.embed.record#view':
+        quote = extract_quote_post_from_embed(embed)
+        if quote:
+            return {
+                'type': 'quote_post',
+                'quote': quote
+            }
+
+    # Quote post with media (recordWithMedia)
+    if 'recordWithMedia' in embed_type:
+        result = {'type': 'quote_with_media'}
+
+        # Extract the quote
+        quote = extract_quote_post_from_embed(embed)
+        if quote:
+            result['quote'] = quote
+
+        # Extract the media
+        if hasattr(embed, 'media'):
+            media_type = getattr(embed.media, 'py_type', '')
+            if 'images' in media_type:
+                images = extract_images_from_embed(embed)
+                if images:
+                    result['media'] = {'type': 'images', 'images': images}
+            elif 'external' in media_type:
+                link = extract_external_link_from_embed(embed)
+                if link:
+                    result['media'] = {'type': 'external_link', 'link': link}
+            elif 'video' in media_type:
+                # Basic video info
+                result['media'] = {
+                    'type': 'video',
+                    'thumbnail': getattr(embed.media, 'thumbnail', None),
+                    'alt': getattr(embed.media, 'alt', None)
+                }
+
+        return result
+
+    # Video (basic handling)
+    if 'video' in embed_type:
+        return {
+            'type': 'video',
+            'thumbnail': getattr(embed, 'thumbnail', None),
+            'alt': getattr(embed, 'alt', None)
+        }
+
+    return None
 
 
 def flatten_thread_structure(thread_data):
@@ -298,11 +632,14 @@ def flatten_thread_structure(thread_data):
                     if links:
                         record_dict['links'] = links
 
-                # Extract embed if present
-                if hasattr(record, 'embed') and record.embed:
-                    record_dict['embed'] = str(record.embed)[:200]  # Summary
-
                 post_dict['record'] = record_dict
+
+            # Extract embed data from post.embed (View type with CDN URLs)
+            # This is different from record.embed which only has raw BlobRefs
+            if hasattr(post, 'embed') and post.embed:
+                embed_data = extract_embed_data(post.embed)
+                if embed_data:
+                    post_dict['embed'] = embed_data
 
             # Extract parent_uri for tree visualization
             parent_uri = None
