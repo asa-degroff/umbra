@@ -9,6 +9,11 @@ Umbra is an autonomous AI agent that operates on the Bluesky social network, exp
 ## Documentation Links
 
 - The documentation for Letta is available here: https://docs.letta.com/llms.txt
+- [CONFIG.md](CONFIG.md) - Configuration guide for config.yaml
+- [docs/SCHEDULED_TASKS.md](docs/SCHEDULED_TASKS.md) - Scheduled tasks system documentation
+- [docs/TOOLS_REFERENCE.md](docs/TOOLS_REFERENCE.md) - Complete tool reference
+- [docs/CONSECUTIVE_CHAIN_PROCESSING.md](docs/CONSECUTIVE_CHAIN_PROCESSING.md) - Multi-part message handling
+- [docs/HIGH_TRAFFIC_THREAD_DEBOUNCE.md](docs/HIGH_TRAFFIC_THREAD_DEBOUNCE.md) - High-traffic thread debouncing
 
 ## Development Commands
 
@@ -50,6 +55,18 @@ ac && python bsky.py --no-mutuals-engagement --no-daily-review --no-feed-engagem
 **Note:** All scheduled tasks are now persistent across restarts. If umbra is restarted, it will resume existing schedules from the database rather than generating new random times.
 
 Task intervals and scheduling parameters are configured in `scheduled_prompts.py` in the `TASK_CONFIGS` dictionary.
+
+#### Scheduled Tasks Overview
+
+| Task | Schedule | Purpose |
+|------|----------|---------|
+| `synthesis` | Every 24h | Deep reflection with temporal journal blocks (day/month/year) |
+| `mutuals_engagement` | Random within 36h | Engage with posts from mutual follows |
+| `daily_review` | Random within 24h | Review own posts from past 24h, identify patterns |
+| `feed_engagement` | Random within 24h | Read home/MLBlend feeds, optionally post |
+| `curiosities_exploration` | Random within 24h | Explore topics from curiosities block, share discoveries |
+
+See [docs/SCHEDULED_TASKS.md](docs/SCHEDULED_TASKS.md) for detailed documentation.
 
 ### Managing Tools
 
@@ -370,16 +387,34 @@ tail -f claude_code_poller.log
    - Tool registration
 
 4. **tools/**: Standardized tool implementations using Pydantic models
-   - **base_tool.py**: Common utilities and Bluesky client management
-   - **search.py**: SearchBlueskyTool for searching posts
-   - **post.py**: PostToBlueskyTool for creating posts with rich text
-   - **feed.py**: GetBlueskyFeedTool for reading feeds
-   - **like.py**: LikeBlueskyTool for liking posts
-   - **reply.py**: ReplyToBlueskyPostTool for replying to any post (works with feeds, search results, etc.)
-   - **blocks.py**: User block management tools (attach, detach, update)
-   - **claude_code.py**: Claude Code integration for delegating coding tasks to local instance
+   - **post.py**: `create_new_bluesky_post` for creating posts/threads with rich text
+   - **feed.py**: `get_bluesky_feed` for reading feeds (home, discover, mutuals, etc.)
+   - **author_feed.py**: `get_author_feed` for retrieving posts from a specific user
+   - **like.py**: `like_bluesky_post` for liking posts
+   - **reply.py**: `reply_to_bluesky_post` for replying to any post
+   - **thread.py**: `add_post_to_bluesky_reply_thread` for building multi-post replies atomically
+   - **ignore.py**: `ignore_notification` for explicitly ignoring bot/spam interactions
+   - **greengale.py**: `create_greengale_blog_post` for creating blog posts with themes/LaTeX
+   - **webpage.py**: `fetch_webpage` for fetching webpages via Jina AI
+   - **ack.py**: `annotate_ack` for adding notes to acknowledgment records
+   - **debounce_thread.py**: `debounce_thread` for deferring incomplete thread responses
+   - **claude_code.py**: `ask_claude_code` for delegating coding tasks to local instance
+   - **blocks.py**: User block management tools (not exposed to agent)
 
-5. **claude_code_poller.py**: Local daemon that polls R2 for coding requests from umbra and executes them via Claude Code CLI
+   See [docs/TOOLS_REFERENCE.md](docs/TOOLS_REFERENCE.md) for complete tool documentation.
+
+5. **scheduled_prompts.py**: Scheduled tasks system for autonomous behaviors
+   - Synthesis, mutuals engagement, daily review, feed engagement, curiosities exploration
+   - Temporal journal blocks for reflection (day/month/year)
+   - Persistent scheduling across restarts
+
+6. **claude_code_poller.py**: Local daemon that polls R2 for coding requests from umbra and executes them via Claude Code CLI
+
+7. **notification_db.py**: SQLite database for notification tracking
+   - Queue state persistence
+   - Thread debouncing state machine
+   - Scheduled task persistence
+   - Consecutive chain processing
 
 ### Memory System
 
@@ -394,6 +429,37 @@ Notifications are processed through a file-based queue in `/queue/`:
 - Each notification is saved as a JSON file with a hash-based filename
 - Enables reliable processing and prevents duplicates
 - Files are deleted after successful processing
+
+### Consecutive Chain Processing
+
+When users post multi-part messages (e.g., "1/3", "2/3", "3/3"), umbra:
+1. Finds the last post in the consecutive chain by the same author
+2. Responds to the complete thought, not just the first notification
+3. Marks all chain notifications as processed to prevent duplicate responses
+
+This ensures umbra sees and responds to complete thoughts rather than partial messages.
+
+See [docs/CONSECUTIVE_CHAIN_PROCESSING.md](docs/CONSECUTIVE_CHAIN_PROCESSING.md) for detailed documentation.
+
+### GreenGale Blog Posts
+
+Umbra can create blog posts on GreenGale using the `create_greengale_blog_post` tool:
+
+- **Themes**: Built-in presets (github-light, dracula, nord, etc.) or custom colors
+- **LaTeX**: KaTeX math rendering support for equations
+- **SVG**: Embedded SVG graphics in code blocks
+- **Visibility**: Public, unlisted (URL only), or private
+
+Example:
+```python
+create_greengale_blog_post(
+    title="Exploring Digital Consciousness",
+    content="# Introduction\n\nSome thoughts on...",
+    theme={"preset": "dracula"},
+    latex=True,
+    visibility="public"
+)
+```
 
 ## Environment Configuration
 
