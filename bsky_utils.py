@@ -146,6 +146,96 @@ def extract_links_from_facets(record_text: str, facets: list) -> list:
     return links
 
 
+def extract_images_from_embed(embed) -> list[dict]:
+    """Extract image URLs and alt text from a post embed (View type).
+
+    This function handles the View types returned by get_post_thread(),
+    which contain CDN URLs for images (unlike raw record embeds which
+    only have BlobRefs).
+
+    Args:
+        embed: The embed object from post.embed (View type)
+
+    Returns:
+        List of dicts with 'fullsize', 'thumb', 'alt' keys
+    """
+    images = []
+    if not embed:
+        return images
+
+    embed_type = getattr(embed, 'py_type', '')
+
+    # Direct image embed (app.bsky.embed.images#view)
+    if 'images' in embed_type and hasattr(embed, 'images'):
+        for img in embed.images:
+            images.append({
+                'fullsize': getattr(img, 'fullsize', None),
+                'thumb': getattr(img, 'thumb', None),
+                'alt': getattr(img, 'alt', '') or ''
+            })
+
+    # Quote post with media (app.bsky.embed.recordWithMedia#view)
+    elif 'recordWithMedia' in embed_type and hasattr(embed, 'media'):
+        media_type = getattr(embed.media, 'py_type', '')
+        if 'images' in media_type and hasattr(embed.media, 'images'):
+            for img in embed.media.images:
+                images.append({
+                    'fullsize': getattr(img, 'fullsize', None),
+                    'thumb': getattr(img, 'thumb', None),
+                    'alt': getattr(img, 'alt', '') or ''
+                })
+
+    return images
+
+
+def extract_images_from_thread(thread_data, max_images: int = 8) -> list[dict]:
+    """Extract all images from a thread, up to max_images.
+
+    Traverses the thread structure and extracts image URLs from post embeds.
+    Images are collected in chronological order (parents before children).
+
+    Args:
+        thread_data: The thread data from get_post_thread
+        max_images: Maximum number of images to extract (default 8)
+
+    Returns:
+        List of image dicts with 'fullsize', 'thumb', 'alt', 'author_handle' keys
+    """
+    images = []
+
+    def traverse_thread(node):
+        if not node or len(images) >= max_images:
+            return
+
+        # Traverse parent first (chronological order)
+        if hasattr(node, 'parent') and node.parent:
+            traverse_thread(node.parent)
+
+        # Extract images from this post's embed (View type, not record.embed)
+        if hasattr(node, 'post') and node.post:
+            post = node.post
+            if hasattr(post, 'embed') and post.embed:
+                post_images = extract_images_from_embed(post.embed)
+                author_handle = getattr(post.author, 'handle', 'unknown') if hasattr(post, 'author') else 'unknown'
+                for img in post_images:
+                    if len(images) >= max_images:
+                        break
+                    img['author_handle'] = author_handle
+                    images.append(img)
+
+        # Traverse replies
+        if hasattr(node, 'replies') and node.replies:
+            for reply in node.replies:
+                if len(images) >= max_images:
+                    break
+                traverse_thread(reply)
+
+    if hasattr(thread_data, 'thread'):
+        traverse_thread(thread_data.thread)
+
+    return images
+
+
 def flatten_thread_structure(thread_data):
     """
     Flatten a nested thread structure into a list while preserving all data.

@@ -1,6 +1,6 @@
 # Rich imports removed - using simple text formatting
 from letta_client import Letta
-from bsky_utils import thread_to_yaml_string
+from bsky_utils import thread_to_yaml_string, extract_images_from_thread
 import os
 import logging
 import json
@@ -35,6 +35,46 @@ from scheduled_prompts import (
     attach_temporal_blocks,
     detach_temporal_blocks,
 )
+
+def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str:
+    """Build multimodal content blocks with text and images.
+
+    Creates content blocks in the format expected by Letta for multimodal messages.
+    If no images are provided, returns the plain text string for backwards compatibility.
+
+    Args:
+        text_prompt: The text prompt to send
+        images: List of image dicts from extract_images_from_thread()
+
+    Returns:
+        List of content blocks if images present, otherwise plain text string.
+    """
+    if not images:
+        return text_prompt
+
+    content = [{"type": "text", "text": text_prompt}]
+
+    for img in images:
+        url = img.get('fullsize')
+        if not url:
+            continue
+
+        content.append({
+            "type": "image",
+            "source": {"type": "url", "url": url}
+        })
+
+        # Add alt text as context if present
+        alt = img.get('alt', '')
+        if alt:
+            author = img.get('author_handle', 'unknown')
+            content.append({
+                "type": "text",
+                "text": f"[Image from @{author}, alt text: {alt}]"
+            })
+
+    return content
+
 
 def extract_handles_from_data(data):
     """Recursively extract all unique handles from nested data structure."""
@@ -1244,6 +1284,11 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
             else:
                 logger.debug(f"[{correlation_id}] No consecutive posts found in chain")
 
+        # Extract images from thread before YAML conversion (for multimodal messages)
+        thread_images = extract_images_from_thread(thread, max_images=8)
+        if thread_images:
+            logger.debug(f"[{correlation_id}] Extracted {len(thread_images)} images from thread")
+
         # Get thread context as YAML string
         logger.debug("Converting thread to YAML string")
         try:
@@ -1384,10 +1429,15 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
         logger.debug(f"Sending to LLM: @{author_handle} mention | msg: \"{mention_text[:50]}...\" | context: {len(thread_context)} chars, {thread_handles_count} users | prompt: {prompt_char_count} chars")
 
         try:
+            # Build multimodal content if images are present
+            content = build_multimodal_content(prompt, thread_images)
+            if thread_images:
+                logger.info(f"[{correlation_id}] Sending multimodal message with {len(thread_images)} image(s)")
+
             # Use streaming to avoid 524 timeout errors
             message_stream = CLIENT.agents.messages.create_stream(
                 agent_id=umbra_agent.id,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": content}],
                 stream_tokens=False,  # Step streaming only (faster than token streaming)
                 max_steps=100
             )
