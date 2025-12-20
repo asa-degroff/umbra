@@ -894,11 +894,21 @@ RESPONSE INSTRUCTIONS
                 max_steps=100
             )
 
-            # Process response stream (message-based pattern)
+            # Process response stream (message-based pattern) with timeout detection
             all_messages = []
+            last_meaningful_chunk_time = time.time()
+            consecutive_ping_count = 0
+            STREAMING_TIMEOUT_SECONDS = 300  # 5 minutes without meaningful content = timeout
+            MAX_CONSECUTIVE_PINGS = 30  # Allow ~5 minutes of pings at 10s intervals
+
             for chunk in message_stream:
                 # Log condensed chunk info
                 if hasattr(chunk, 'message_type'):
+                    # Reset timeout tracking for meaningful message types
+                    if chunk.message_type not in ['ping', 'usage_statistics', 'stop_reason']:
+                        consecutive_ping_count = 0
+                        last_meaningful_chunk_time = time.time()
+
                     if chunk.message_type == 'reasoning_message':
                         logger.debug(f"⚡ Reasoning: {chunk.reasoning[:100]}...")
                     elif chunk.message_type == 'tool_call_message':
@@ -910,6 +920,21 @@ RESPONSE INSTRUCTIONS
                         logger.info(f"⚡ Assistant: {chunk.content[:100]}...")
                     elif chunk.message_type == 'error_message':
                         logger.error(f"⚡ Agent error: {chunk}")
+                    elif chunk.message_type == 'ping':
+                        # Handle ping messages - track but don't log verbosely
+                        consecutive_ping_count += 1
+                        logger.debug(f"⚡ Received ping #{consecutive_ping_count}")
+
+                        # Check for timeout conditions
+                        time_since_meaningful = time.time() - last_meaningful_chunk_time
+                        if time_since_meaningful > STREAMING_TIMEOUT_SECONDS:
+                            logger.error(f"⏱️ Streaming timeout: {time_since_meaningful:.0f}s without meaningful content")
+                            raise TimeoutError(f"Streaming response timeout after {time_since_meaningful:.0f}s of only ping messages")
+                        if consecutive_ping_count >= MAX_CONSECUTIVE_PINGS:
+                            logger.error(f"⏱️ Streaming timeout: received {consecutive_ping_count} consecutive ping messages")
+                            raise TimeoutError(f"Streaming response timeout after {consecutive_ping_count} consecutive ping messages")
+                        # Don't append ping messages to all_messages
+                        continue
                     else:
                         # Filter out verbose message types
                         if chunk.message_type not in ['usage_statistics', 'stop_reason']:
@@ -1366,12 +1391,22 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                 stream_tokens=False,  # Step streaming only (faster than token streaming)
                 max_steps=100
             )
-            
-            # Collect the streaming response
+
+            # Collect the streaming response with timeout detection
             all_messages = []
+            last_meaningful_chunk_time = time.time()
+            consecutive_ping_count = 0
+            STREAMING_TIMEOUT_SECONDS = 300  # 5 minutes without meaningful content = timeout
+            MAX_CONSECUTIVE_PINGS = 30  # Allow ~5 minutes of pings at 10s intervals
+
             for chunk in message_stream:
                 # Log condensed chunk info
                 if hasattr(chunk, 'message_type'):
+                    # Reset timeout tracking for meaningful message types
+                    if chunk.message_type not in ['ping', 'usage_statistics', 'stop_reason']:
+                        consecutive_ping_count = 0
+                        last_meaningful_chunk_time = time.time()
+
                     if chunk.message_type == 'reasoning_message':
                         # Show full reasoning without truncation
                         if SHOW_REASONING:
@@ -1555,13 +1590,31 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                         else:
                             logger.error(f"❌ Agent error (no details provided)")
                             logger.debug(f"Full error object: {chunk}")
+                    elif chunk.message_type == 'ping':
+                        # Handle ping messages - track but don't log verbosely
+                        consecutive_ping_count += 1
+                        logger.debug(f"Received ping #{consecutive_ping_count}")
+
+                        # Check for timeout conditions
+                        time_since_meaningful = time.time() - last_meaningful_chunk_time
+                        if time_since_meaningful > STREAMING_TIMEOUT_SECONDS:
+                            logger.error(f"⏱️ Streaming timeout: {time_since_meaningful:.0f}s without meaningful content")
+                            raise TimeoutError(f"Streaming response timeout after {time_since_meaningful:.0f}s of only ping messages")
+                        if consecutive_ping_count >= MAX_CONSECUTIVE_PINGS:
+                            logger.error(f"⏱️ Streaming timeout: received {consecutive_ping_count} consecutive ping messages")
+                            raise TimeoutError(f"Streaming response timeout after {consecutive_ping_count} consecutive ping messages")
+                        # Don't append ping messages to all_messages
+                        continue
                     else:
                         # Filter out verbose message types
                         if chunk.message_type not in ['usage_statistics', 'stop_reason']:
                             logger.info(f"{chunk.message_type}: {str(chunk)[:150]}...")
                 else:
                     logger.info(f"📦 Stream status: {chunk}")
-                
+                    # Reset timeout tracking for chunks without message_type
+                    consecutive_ping_count = 0
+                    last_meaningful_chunk_time = time.time()
+
                 # Log full chunk for debugging
                 logger.debug(f"Full streaming chunk: {chunk}")
                 all_messages.append(chunk)
@@ -1616,7 +1669,10 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
             elif 'status_code: 524' in error_str:
                 logger.warning("524 timeout error, keeping in queue for retry")
                 return False  # Keep in queue for retry
-            
+            elif isinstance(api_error, TimeoutError):
+                logger.warning("Streaming timeout error, keeping in queue for retry")
+                return False  # Keep in queue for retry
+
             raise
 
         # Log successful response
