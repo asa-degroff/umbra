@@ -1475,29 +1475,10 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                             for line in chunk.reasoning.split('\n'):
                                 print(f"  {line}")
                         
-                        # Create ATProto record for reasoning (unless in testing mode)
-                        if not testing_mode and hasattr(chunk, 'reasoning'):
-                            try:
-                                bsky_utils.create_reasoning_record(atproto_client, chunk.reasoning)
-                            except Exception as e:
-                                logger.debug(f"Failed to create reasoning record: {e}")
                     elif chunk.message_type == 'tool_call_message':
                         # Parse tool arguments for better display
                         tool_name = chunk.tool_call.name
-                        
-                        # Create ATProto record for tool call (unless in testing mode)
-                        if not testing_mode:
-                            try:
-                                tool_call_id = chunk.tool_call.tool_call_id if hasattr(chunk.tool_call, 'tool_call_id') else None
-                                bsky_utils.create_tool_call_record(
-                                    atproto_client, 
-                                    tool_name, 
-                                    chunk.tool_call.arguments,
-                                    tool_call_id
-                                )
-                            except Exception as e:
-                                logger.debug(f"Failed to create tool call record: {e}")
-                        
+
                         try:
                             args = json.loads(chunk.tool_call.arguments)
                             # Format based on tool type
@@ -1733,7 +1714,6 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
         # Extract successful add_post_to_bluesky_reply_thread tool calls from the agent's response
         reply_candidates = []
         tool_call_results = {}  # Map tool_call_id to status
-        ack_note = None  # Track any note from annotate_ack tool
         flagged_memories = []  # Track memories flagged for deletion
         direct_reply_posted = False  # Track if reply_to_bluesky_post was called successfully
         agent_error_occurred = False  # Track if agent returned error_message
@@ -1929,17 +1909,6 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                     logger.info("=== BOT TERMINATED DUE TO DEPRECATED TOOL USE ===")
                     exit(1)
                 
-                # Collect annotate_ack tool calls
-                elif message.tool_call.name == 'annotate_ack':
-                    try:
-                        args = json.loads(message.tool_call.arguments)
-                        note = args.get('note', '')
-                        if note:
-                            ack_note = note
-                            logger.debug(f"Found annotate_ack with note: {note[:50]}...")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse annotate_ack arguments: {e}")
-
                 # Collect flag_archival_memory_for_deletion tool calls
                 elif message.tool_call.name == 'flag_archival_memory_for_deletion':
                     try:
@@ -2132,31 +2101,6 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                     'author_handle': author_handle,
                     'reply_count': len(reply_messages)
                 })
-
-                # Acknowledge the post we're replying to with stream.thought.ack
-                try:
-                    post_uri = notification_data.get('uri')
-                    post_cid = notification_data.get('cid')
-
-                    if post_uri and post_cid:
-                        ack_result = bsky_utils.acknowledge_post(
-                            client=atproto_client,
-                            post_uri=post_uri,
-                            post_cid=post_cid,
-                            note=ack_note
-                        )
-                        if ack_result:
-                            if ack_note:
-                                logger.info(f"Successfully acknowledged post from @{author_handle} with stream.thought.ack (note: \"{ack_note[:50]}...\")")
-                            else:
-                                logger.info(f"Successfully acknowledged post from @{author_handle} with stream.thought.ack")
-                        else:
-                            logger.warning(f"Failed to acknowledge post from @{author_handle}")
-                    else:
-                        logger.warning(f"Missing URI or CID for acknowledging post from @{author_handle}")
-                except Exception as e:
-                    logger.error(f"Error acknowledging post from @{author_handle}: {e}")
-                    # Don't fail the entire operation if acknowledgment fails
 
                 # Mark all notifications from the same consecutive chain as processed
                 # This prevents duplicate processing when a multi-part message arrives as multiple notifications

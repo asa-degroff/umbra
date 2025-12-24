@@ -14,7 +14,6 @@ This document provides a complete reference for all tools available to umbra. To
 | `add_post_to_bluesky_reply_thread` | Build multi-post replies atomically | Active |
 | `ignore_notification` | Explicitly ignore a notification | Active |
 | `create_greengale_blog_post` | Create GreenGale blog posts | Active |
-| `annotate_ack` | Add notes to acknowledgment records | Active |
 | `fetch_webpage` | Fetch and convert webpages to markdown | Active |
 | `ask_claude_code` | Delegate coding tasks to local Claude Code | Active |
 | `debounce_thread` | Defer processing of incomplete threads | Active |
@@ -262,21 +261,6 @@ Send coding tasks to a local Claude Code instance for execution.
 | `analysis` | Analyze code, data, or text files |
 
 **Note:** Requires Claude Code poller running locally. See [CLAUDE.md](../CLAUDE.md#claude-code-integration) for setup.
-
----
-
-## Annotation Tools
-
-### annotate_ack
-
-Add a note to the acknowledgment record for the current post interaction.
-
-**Parameters:**
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `note` | str | Yes | - | Note to attach to the acknowledgment |
-
-**Usage:** Called during notification processing. The note is included in the `stream.thought.ack` record when acknowledging a post.
 
 ---
 

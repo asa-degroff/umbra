@@ -396,7 +396,6 @@ tail -f claude_code_poller.log
    - **ignore.py**: `ignore_notification` for explicitly ignoring bot/spam interactions
    - **greengale.py**: `create_greengale_blog_post` for creating blog posts with themes/LaTeX
    - **webpage.py**: `fetch_webpage` for fetching webpages via Jina AI
-   - **ack.py**: `annotate_ack` for adding notes to acknowledgment records
    - **debounce_thread.py**: `debounce_thread` for deferring incomplete thread responses
    - **claude_code.py**: `ask_claude_code` for delegating coding tasks to local instance
    - **blocks.py**: User block management tools (not exposed to agent)

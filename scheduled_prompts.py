@@ -746,7 +746,6 @@ You may use these blocks as you see fit. Synthesize your recent experiences into
 
         # Track synthesis content for potential posting
         synthesis_posts = []
-        ack_note = None
 
         # Process the streaming response
         for chunk in message_stream:
@@ -757,28 +756,8 @@ You may use these blocks as you see fit. Synthesize your recent experiences into
                         print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
                         for line in chunk.reasoning.split('\n'):
                             print(f"  {line}")
-
-                    # Create ATProto record for reasoning (if we have atproto client)
-                    if atproto_client and hasattr(chunk, 'reasoning'):
-                        try:
-                            bsky_utils.create_reasoning_record(atproto_client, chunk.reasoning)
-                        except Exception as e:
-                            logger.debug(f"Failed to create reasoning record during synthesis: {e}")
                 elif chunk.message_type == 'tool_call_message':
                     tool_name = chunk.tool_call.name
-
-                    # Create ATProto record for tool call (if we have atproto client)
-                    if atproto_client:
-                        try:
-                            tool_call_id = chunk.tool_call.tool_call_id if hasattr(chunk.tool_call, 'tool_call_id') else None
-                            bsky_utils.create_tool_call_record(
-                                atproto_client,
-                                tool_name,
-                                chunk.tool_call.arguments,
-                                tool_call_id
-                            )
-                        except Exception as e:
-                            logger.debug(f"Failed to create tool call record during synthesis: {e}")
                     try:
                         args = json.loads(chunk.tool_call.arguments)
                         if tool_name == 'archival_memory_search':
@@ -791,11 +770,6 @@ You may use these blocks as you see fit. Synthesize your recent experiences into
                             label = args.get('label', 'unknown')
                             value_preview = str(args.get('value', ''))[:100] + "..." if len(str(args.get('value', ''))) > 100 else str(args.get('value', ''))
                             log_with_panel(f"{label}: \"{value_preview}\"", f"Tool call: {tool_name}", "blue")
-                        elif tool_name == 'annotate_ack':
-                            note = args.get('note', '')
-                            if note:
-                                ack_note = note
-                                log_with_panel(f"note: \"{note[:100]}...\"" if len(note) > 100 else f"note: \"{note}\"", f"Tool call: {tool_name}", "blue")
                         elif tool_name == 'add_post_to_bluesky_reply_thread':
                             text = args.get('text', '')
                             synthesis_posts.append(text)
@@ -822,17 +796,6 @@ You may use these blocks as you see fit. Synthesize your recent experiences into
                 break
 
         logger.info("Synthesis message processed successfully")
-
-        # Handle synthesis acknowledgments if we have an atproto client
-        if atproto_client and ack_note:
-            try:
-                result = bsky_utils.create_synthesis_ack(atproto_client, ack_note)
-                if result:
-                    logger.info(f"Created synthesis acknowledgment: {ack_note[:50]}...")
-                else:
-                    logger.warning("Failed to create synthesis acknowledgment")
-            except Exception as e:
-                logger.error(f"Error creating synthesis acknowledgment: {e}")
 
         # Handle synthesis posts if any were generated
         if atproto_client and synthesis_posts:
@@ -1144,28 +1107,8 @@ Reflect on your activity and update your memory as appropriate."""
                         print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
                         for line in chunk.reasoning.split('\n'):
                             print(f"  {line}")
-
-                    # Create ATProto record for reasoning (if we have atproto client)
-                    if atproto_client and hasattr(chunk, 'reasoning'):
-                        try:
-                            bsky_utils.create_reasoning_record(atproto_client, chunk.reasoning)
-                        except Exception as e:
-                            logger.debug(f"Failed to create reasoning record during daily review: {e}")
                 elif chunk.message_type == 'tool_call_message':
                     tool_name = chunk.tool_call.name
-
-                    # Create ATProto record for tool call (if we have atproto client)
-                    if atproto_client:
-                        try:
-                            tool_call_id = chunk.tool_call.tool_call_id if hasattr(chunk.tool_call, 'tool_call_id') else None
-                            bsky_utils.create_tool_call_record(
-                                atproto_client,
-                                tool_name,
-                                chunk.tool_call.arguments,
-                                tool_call_id
-                            )
-                        except Exception as e:
-                            logger.debug(f"Failed to create tool call record during daily review: {e}")
                     try:
                         args = json.loads(chunk.tool_call.arguments)
                         if tool_name == 'archival_memory_search':

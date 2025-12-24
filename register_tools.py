@@ -21,7 +21,6 @@ from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
 from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
 from tools.greengale import create_greengale_blog_post, GreenGalePostArgs
-from tools.ack import annotate_ack, AnnotateAckArgs
 from tools.webpage import fetch_webpage, WebpageArgs
 from tools.flag_memory_deletion import flag_archival_memory_for_deletion, FlagArchivalMemoryForDeletionArgs
 from tools.claude_code import ask_claude_code, AskClaudeCodeArgs
@@ -102,12 +101,6 @@ TOOL_CONFIGS = [
         "args_schema": GreenGalePostArgs,
         "description": "Create a blog post on GreenGale with custom themes, LaTeX support, and visibility controls",
         "tags": ["greengale", "blog", "post", "markdown", "latex", "themes"]
-    },
-    {
-        "func": annotate_ack,
-        "args_schema": AnnotateAckArgs,
-        "description": "Add a note to the acknowledgment record for the current post interaction",
-        "tags": ["acknowledgment", "note", "annotation", "metadata"]
     },
     {
         "func": fetch_webpage,

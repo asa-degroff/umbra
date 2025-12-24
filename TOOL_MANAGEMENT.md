@@ -28,7 +28,6 @@ When you run `bsky.py` or `x.py`, the bot will automatically:
 ### Common Tools (Available on Both Platforms)
 - `halt_activity` - Stop the bot
 - `ignore_notification` - Ignore specific notifications
-- `annotate_ack` - Add acknowledgment notes
 - `create_whitewind_blog_post` - Create blog posts
 - `fetch_webpage` - Fetch web content
 

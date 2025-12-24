@@ -25,7 +25,6 @@ BLUESKY_TOOLS = {
 COMMON_TOOLS = {
     'halt_activity',
     'ignore_notification',
-    'annotate_ack',
     'create_whitewind_blog_post',
     'fetch_webpage',
 }
