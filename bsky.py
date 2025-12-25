@@ -3485,22 +3485,27 @@ def main():
 
                     logger.info(f"{emoji} Executing scheduled task: {desc}")
 
-                    # Execute the appropriate handler for each task type
-                    if task_name == 'synthesis':
-                        send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
-                    elif task_name == 'mutuals_engagement':
-                        send_mutuals_engagement_message(CLIENT, umbra_agent.id)
-                    elif task_name == 'daily_review':
-                        send_daily_review_message(CLIENT, umbra_agent.id, atproto_client)
-                    elif task_name == 'feed_engagement':
-                        send_feed_engagement_message(CLIENT, umbra_agent.id)
-                    elif task_name == 'curiosities_exploration':
-                        send_curiosities_exploration_message(CLIENT, umbra_agent.id)
-                    else:
-                        logger.warning(f"Unknown task type: {task_name}")
-                        continue
+                    # Execute task with error handling to ensure rescheduling happens
+                    # even if the task fails (prevents duplicate execution on next cycle)
+                    try:
+                        if task_name == 'synthesis':
+                            send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
+                        elif task_name == 'mutuals_engagement':
+                            send_mutuals_engagement_message(CLIENT, umbra_agent.id)
+                        elif task_name == 'daily_review':
+                            send_daily_review_message(CLIENT, umbra_agent.id, atproto_client)
+                        elif task_name == 'feed_engagement':
+                            send_feed_engagement_message(CLIENT, umbra_agent.id)
+                        elif task_name == 'curiosities_exploration':
+                            send_curiosities_exploration_message(CLIENT, umbra_agent.id)
+                        else:
+                            logger.warning(f"Unknown task type: {task_name}")
+                            continue
+                    except Exception as task_error:
+                        logger.error(f"{emoji} Error executing {desc}: {task_error}")
+                        # Continue to reschedule even on error to prevent duplicate execution
 
-                    # Reschedule the task after execution
+                    # Always reschedule the task after execution (even on error)
                     reschedule_task_after_execution(NOTIFICATION_DB, task_name, task)
 
             # Run periodic cleanup every N cycles
