@@ -1379,7 +1379,9 @@ If you choose to reply, use the add_post_to_bluesky_reply_thread tool.
 - Each call creates one post (max 300 characters)
 - You may use multiple calls to create a thread if needed.
 
-If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it."""
+If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it.
+
+USER BLOCKS: If the user's user_* block is empty or minimal, add any relevant information about their identity to their block. Copy any details from umbra_humans to the user_ block."""
 
         # Add debounce capability information if enabled
         if debounce_enabled:
