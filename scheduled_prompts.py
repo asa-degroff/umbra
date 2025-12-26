@@ -204,6 +204,18 @@ def init_or_load_scheduled_task(
         if next_run_timestamp > current_time:
             hours_until = (next_run_timestamp - current_time) / 3600
             logger.info(f"Loaded existing {task_name} schedule: {next_run_at.strftime('%Y-%m-%d %H:%M:%S')} ({hours_until:.1f} hours from now)")
+
+            # Always sync config values to database to ensure reschedule uses correct values
+            # This fixes stale window_seconds/interval_seconds after config changes
+            db.upsert_scheduled_task(
+                task_name=task_name,
+                next_run_at=existing['next_run_at'],  # Keep existing schedule time
+                interval_seconds=interval_seconds,
+                is_random_window=is_random_window,
+                window_seconds=window_seconds,
+                enabled=True
+            )
+
             return next_run_timestamp
         else:
             # Schedule has expired, recalculate
