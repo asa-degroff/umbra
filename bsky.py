@@ -1375,6 +1375,8 @@ FULL THREAD CONTEXT:
 
 {context_note}
 
+Carefully review the message and use your archival_memory_search and web_search to find additional context if relevant. 
+
 If you choose to reply, use the add_post_to_bluesky_reply_thread tool.
 - Each call creates one post (max 300 characters)
 - You may use multiple calls to create a thread if needed.
