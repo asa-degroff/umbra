@@ -10,7 +10,7 @@ This document provides a complete reference for all tools available to umbra. To
 | `get_bluesky_feed` | Retrieve feeds (home, discover, etc.) | Active |
 | `get_author_feed` | Get posts from a specific user | Active |
 | `like_bluesky_post` | Like a post | Active |
-| `reply_to_bluesky_post` | Reply to any post | Active |
+| `reply_to_bluesky_post` | Reply to any post (single or multi-part) | Active |
 | `add_post_to_bluesky_reply_thread` | Build multi-post replies atomically | Active |
 | `ignore_notification` | Explicitly ignore a notification | Active |
 | `create_greengale_blog_post` | Create GreenGale blog posts | Active |
@@ -118,25 +118,47 @@ like_bluesky_post(
 
 ### reply_to_bluesky_post
 
-Reply to any post on Bluesky. Works with posts from feeds, search results, or any source.
+Reply to any post on Bluesky with one or more posts. Works with posts from feeds, search results, or any source. Supports multi-part replies by passing a list of texts.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `uri` | str | Yes | - | AT Protocol URI of the post to reply to |
 | `cid` | str | Yes | - | Content ID of the post |
-| `text` | str | Yes | - | Reply text (max 300 characters) |
+| `text` | List[str] | Yes | - | List of reply texts (each max 300 characters). Single item = single reply, multiple = threaded reply chain. |
 | `lang` | str | No | `"en-US"` | Language code |
 
-**Thread Handling:** Automatically maintains thread structure. If replying to a post that's already a reply, uses the correct root reference.
+**Thread Handling:** Automatically maintains thread structure. If replying to a post that's already a reply, uses the correct root reference. For multi-part replies, subsequent posts chain off the previous reply while maintaining the same thread root.
 
-**Rich Text:** Automatically detects and links @mentions and URLs.
+**Rich Text:** Automatically detects and links @mentions and URLs in each post.
+
+**Example (single reply):**
+```python
+reply_to_bluesky_post(
+    uri="at://did:plc:abc123/app.bsky.feed.post/xyz789",
+    cid="bafyreiabc123...",
+    text=["This is a single reply to your post!"]
+)
+```
+
+**Example (multi-part reply):**
+```python
+reply_to_bluesky_post(
+    uri="at://did:plc:abc123/app.bsky.feed.post/xyz789",
+    cid="bafyreiabc123...",
+    text=[
+        "This is a longer thought that needs multiple posts...",
+        "Here's the second part with more details.",
+        "And finally, the conclusion!"
+    ]
+)
+```
 
 ---
 
 ### add_post_to_bluesky_reply_thread
 
-Add a single post to the current reply thread atomically. Used during notification processing to build multi-post replies.
+Add a single post to the current reply thread atomically. Used during notification processing to build multi-post replies incrementally.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -146,7 +168,15 @@ Add a single post to the current reply thread atomically. Used during notificati
 
 **Usage Context:** Only works during notification processing. The handler (bsky.py) manages thread state and chaining.
 
-**Important:** For multi-post responses, use ONLY this tool rather than mixing with `reply_to_bluesky_post`.
+**When to Use Which Tool:**
+| Scenario | Use This Tool |
+|----------|---------------|
+| Replying to a notification | `add_post_to_bluesky_reply_thread` |
+| Replying to a post from feed/search | `reply_to_bluesky_post` |
+| Multi-part reply during notification processing | Multiple `add_post_to_bluesky_reply_thread` calls |
+| Multi-part reply outside notification processing | `reply_to_bluesky_post` with list of texts |
+
+**Important:** During notification processing, use ONLY this tool rather than mixing with `reply_to_bluesky_post`.
 
 ---
 
