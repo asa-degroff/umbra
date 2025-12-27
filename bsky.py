@@ -1381,7 +1381,7 @@ If you choose to reply, use the add_post_to_bluesky_reply_thread tool.
 
 If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it.
 
-USER BLOCKS: If the user's user_* block is empty or minimal, add any relevant information about their identity to their block. Copy any details from umbra_humans to the user_ block."""
+USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any relevant information about their identity to the "user_{author_handle}" block. Copy any existing details about the user from umbra_humans to the "user_{author_handle}" block."""
 
         # Add debounce capability information if enabled
         if debounce_enabled:
