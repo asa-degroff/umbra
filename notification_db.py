@@ -919,12 +919,12 @@ class NotificationDB:
 
         # Linear scaling: more activity = longer debounce
         # If at threshold, use min_seconds
-        # If 3x threshold or more, use max_seconds
+        # If 8x threshold or more, use max_seconds
         if thread_count <= threshold:
             result_seconds = min_seconds
             logger.debug(f"Using minimum debounce: {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
-        elif thread_count >= threshold * 3:
+        elif thread_count >= threshold * 8:
             result_seconds = max_seconds
             logger.debug(f"Using maximum debounce: {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
