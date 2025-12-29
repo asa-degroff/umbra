@@ -820,9 +820,13 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
                     parent_record = parent_post.get('record', {})
                     parent_text = parent_record.get('text', '') if isinstance(parent_record, dict) else ''
                     parent_created = parent_record.get('createdAt', 'unknown') if isinstance(parent_record, dict) else 'unknown'
+                    parent_links = parent_record.get('links', []) if isinstance(parent_record, dict) else []
+                    parent_embed = parent_post.get('embed')
                     preceding_parts.append({
                         'text': parent_text,
-                        'createdAt': parent_created
+                        'createdAt': parent_created,
+                        'links': parent_links,
+                        'embed': parent_embed
                     })
 
                     # Continue up the chain
@@ -831,17 +835,96 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
                 # Reverse to get chronological order (oldest first)
                 preceding_parts.reverse()
 
+                # Helper to format links and embeds for display
+                def format_attachments(links, embed):
+                    """Format links and embed data for display in notification entries."""
+                    attachment_lines = []
+
+                    # Format links from facets
+                    if links:
+                        link_strs = []
+                        for link in links:
+                            link_text = link.get('text', '')
+                            link_url = link.get('url', '')
+                            if link_text and link_url:
+                                link_strs.append(f"[{link_text}]({link_url})")
+                            elif link_url:
+                                link_strs.append(link_url)
+                        if link_strs:
+                            attachment_lines.append(f"Links: {', '.join(link_strs)}")
+
+                    # Format embed data
+                    if embed:
+                        embed_type = embed.get('type', '')
+                        if embed_type == 'images':
+                            images = embed.get('images', [])
+                            if images:
+                                img_count = len(images)
+                                alt_texts = [img.get('alt', '') for img in images if img.get('alt')]
+                                if alt_texts:
+                                    attachment_lines.append(f"Images ({img_count}): {'; '.join(alt_texts)}")
+                                else:
+                                    attachment_lines.append(f"Images: {img_count} image(s)")
+                        elif embed_type == 'external_link':
+                            link = embed.get('link', {})
+                            title = link.get('title', '')
+                            url = link.get('url', '')
+                            desc = link.get('description', '')
+                            if title and url:
+                                if desc:
+                                    attachment_lines.append(f"Link card: {title} - {url}\n    {desc[:150]}{'...' if len(desc) > 150 else ''}")
+                                else:
+                                    attachment_lines.append(f"Link card: {title} - {url}")
+                            elif url:
+                                attachment_lines.append(f"Link card: {url}")
+                        elif embed_type == 'quote_post':
+                            quote = embed.get('quote', {})
+                            quote_author = quote.get('author', {}).get('handle', 'unknown')
+                            quote_text = quote.get('text', '')[:100]
+                            if quote_text:
+                                attachment_lines.append(f"Quote: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"")
+                        elif embed_type == 'quote_with_media':
+                            quote = embed.get('quote', {})
+                            quote_author = quote.get('author', {}).get('handle', 'unknown')
+                            quote_text = quote.get('text', '')[:100]
+                            media = embed.get('media', {})
+                            media_type = media.get('type', '')
+                            media_desc = f" + {media_type}" if media_type else ""
+                            if quote_text:
+                                attachment_lines.append(f"Quote{media_desc}: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"")
+                        elif embed_type == 'video':
+                            alt = embed.get('alt', '')
+                            if alt:
+                                attachment_lines.append(f"Video: {alt}")
+                            else:
+                                attachment_lines.append("Video attached")
+
+                    return attachment_lines
+
                 # Build entry with preceding parts context if present
                 preceding_context = ""
                 if preceding_parts:
                     preceding_lines = []
                     for part_idx, part in enumerate(preceding_parts, 1):
-                        preceding_lines.append(f"  [Part {part_idx} by same author]: \"{part['text']}\" (Posted: {part['createdAt']})")
+                        part_line = f"  [Part {part_idx} by same author]: \"{part['text']}\" (Posted: {part['createdAt']})"
+                        # Add attachments for this part
+                        part_attachments = format_attachments(part.get('links', []), part.get('embed'))
+                        if part_attachments:
+                            part_line += "\n    " + "\n    ".join(part_attachments)
+                        preceding_lines.append(part_line)
                     preceding_context = "\n" + "\n".join(preceding_lines) + "\n"
+
+                # Extract links and embed for the main notification post
+                notif_links = record.get('links', []) if isinstance(record, dict) else []
+                notif_embed = matching_post.get('embed')
+                attachments_lines = format_attachments(notif_links, notif_embed)
+                attachments_section = ""
+                if attachments_lines:
+                    attachments_section = "\n  " + "\n  ".join(attachments_lines)
 
                 # Build entry
                 entry = f"""[Notification {idx}] @{author_handle} ({reason}) - Received: {indexed_at}{preceding_context}
-  Post: "{full_text}"
+  Post: "{full_text}"{attachments_section}
   URI: {uri}
   CID: {cid}
   Posted: {created_at}"""
