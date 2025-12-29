@@ -54,9 +54,9 @@ TASK_CONFIGS = {
     },
     'daily_review': {
         'enabled': True,
-        'is_random_window': True,
-        'interval_seconds': None,
-        'window_seconds': 86400,  # 24-hour window
+        'is_random_window': False,
+        'interval_seconds': 86400,  # 24 hours
+        'window_seconds': None,
         'emoji': '📋',
         'description': 'Daily review',
     },
