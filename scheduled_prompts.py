@@ -743,6 +743,7 @@ You have access to temporal journal blocks for recording your thoughts and exper
 - umbra_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
 - umbra_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
 - umbra_year_{today.year}: This year's journal ({today.year})
+Look through your blocks, and if any are full or nearing capacity, create archival memories with the older contents, and delete the archived content to make room in your core memory and maintain operational efficiency.
 
 You may use these blocks as you see fit. Synthesize your recent experiences into your memory as appropriate."""
 
