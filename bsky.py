@@ -21,6 +21,7 @@ from config_loader import get_letta_config, get_config, get_queue_config, get_bl
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
+from tools.thread import _clean_list_formatting
 from notification_db import NotificationDB
 import scheduled_prompts
 from scheduled_prompts import (
@@ -423,7 +424,7 @@ You may now respond to this thread with full context of all posts.{reply_instruc
                         if tool_status == 'success':
                             try:
                                 args = json.loads(message.tool_call.arguments)
-                                reply_text = args.get('text', '')
+                                reply_text = _clean_list_formatting(args.get('text', ''))
                                 reply_lang = args.get('lang', 'en-US')
 
                                 if reply_text:
@@ -1031,7 +1032,7 @@ Carefully review the messages and use your archival_memory_search and web_search
                     elif tool_name == 'add_post_to_bluesky_reply_thread':
                         try:
                             args = json.loads(message.tool_call.arguments)
-                            reply_text = args.get('text', '')
+                            reply_text = _clean_list_formatting(args.get('text', ''))
                             reply_lang = args.get('lang', 'en-US')
 
                             if reply_text:
@@ -1377,9 +1378,8 @@ FULL THREAD CONTEXT:
 
 Carefully review the message and use your archival_memory_search and web_search to find additional context if relevant. 
 
-If you choose to reply, use the add_post_to_bluesky_reply_thread tool.
-- Each call creates one post (max 300 characters)
-- You may use multiple calls to create a thread if needed.
+If you choose to reply, use the reply_to_bluesly_post tool.
+- You can use a list to create a multi-post threaded reply.
 
 If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it.
 
@@ -1487,8 +1487,8 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                             args = json.loads(chunk.tool_call.arguments)
                             # Format based on tool type
                             if tool_name in ['add_post_to_bluesky_reply_thread', 'bluesky_reply']:
-                                # Extract the text being posted
-                                text = args.get('text', '')
+                                # Extract the text being posted (clean any list formatting)
+                                text = _clean_list_formatting(args.get('text', ''))
                                 if text:
                                     # Format with Unicode characters
                                     print("\n✎ Bluesky Post")
@@ -1945,7 +1945,7 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                     if tool_status == 'success':
                         try:
                             args = json.loads(message.tool_call.arguments)
-                            reply_text = args.get('text', '')
+                            reply_text = _clean_list_formatting(args.get('text', ''))
                             reply_lang = args.get('lang', 'en-US')
 
                             if reply_text:  # Only add if there's actual content

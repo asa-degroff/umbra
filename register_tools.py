@@ -78,12 +78,12 @@ TOOL_CONFIGS = [
     #     "description": "Signal to halt all bot activity and terminate bsky.py",
     #     "tags": ["control", "halt", "terminate"]
     # },
-    {
-        "func": add_post_to_bluesky_reply_thread,
-        "args_schema": ReplyThreadPostArgs,
-        "description": "Add a single post to the current Bluesky reply thread atomically",
-        "tags": ["bluesky", "reply", "thread", "atomic"]
-    },
+    # {
+    #     "func": add_post_to_bluesky_reply_thread,
+    #     "args_schema": ReplyThreadPostArgs,
+    #     "description": "Add a single post to the current Bluesky reply thread atomically",
+    #     "tags": ["bluesky", "reply", "thread", "atomic"]
+    # },
     {
         "func": ignore_notification,
         "args_schema": IgnoreNotificationArgs,
