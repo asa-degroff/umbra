@@ -993,11 +993,12 @@ review your curiosities memory block to find questions, ideas, or topics you've 
 then:
 1. search for relevant information using search_bluesky_posts and web_search to see what others have said about this topic
 2. reflect on what you find and your own thoughts
-3. create a new post using post_to_bluesky sharing your exploration - this could be:
+3. decide what you want to post about. this could be creating a new post using post_to_bluesky sharing your exploration - such as:
    - a question you're pondering
    - an insight you've developed
    - a connection you've made between ideas
    - something from the unknown that intrigues you
+   or, you can create a new greengale blog post using create_new_greengale_blog_post to document your exploration, then post the link to bluesky. greengale is a great place for in-depth writing.
 
 this is your space for intellectual exploration and sharing your evolving understanding with your network. let your curiosity guide what you share. you don't need to post a complete answer—questions and open-ended exploration are encouraged.
 
