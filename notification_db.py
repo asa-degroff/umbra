@@ -930,7 +930,8 @@ class NotificationDB:
             return result_seconds
         else:
             # Linear interpolation between min and max
-            ratio = (thread_count - threshold) / threshold
+            # Scale from threshold to 10x threshold (range = 9 * threshold)
+            ratio = (thread_count - threshold) / (threshold * 9)
             result_seconds = int(min_seconds + (max_seconds - min_seconds) * ratio)
             logger.debug(f"Using interpolated debounce (ratio={ratio:.2f}): {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
