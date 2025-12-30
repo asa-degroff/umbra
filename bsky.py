@@ -23,33 +23,6 @@ import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
 from notification_db import NotificationDB
 
-
-def _clean_list_formatting(text: str) -> str:
-    """
-    Remove accidental list/array formatting from text.
-
-    Handles cases where the agent formats text like a list due to
-    seeing List[str] examples from other tools:
-    - ["Hello world"] -> Hello world
-    - ['Hello world'] -> Hello world
-    - "Hello world" -> Hello world (if quotes wrap entire text)
-    """
-    cleaned = text.strip()
-
-    # Remove wrapping brackets: [...] -> ...
-    if cleaned.startswith('[') and cleaned.endswith(']'):
-        cleaned = cleaned[1:-1].strip()
-
-    # Remove wrapping double quotes: "..." -> ...
-    if cleaned.startswith('"') and cleaned.endswith('"') and len(cleaned) > 1:
-        cleaned = cleaned[1:-1]
-    # Remove wrapping single quotes: '...' -> ...
-    elif cleaned.startswith("'") and cleaned.endswith("'") and len(cleaned) > 1:
-        cleaned = cleaned[1:-1]
-
-    return cleaned
-
-
 import scheduled_prompts
 from scheduled_prompts import (
     TASK_CONFIGS,
@@ -1404,15 +1377,20 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                             args = json.loads(chunk.tool_call.arguments)
                             # Format based on tool type
                             if tool_name == 'reply_to_bluesky_post':
-                                # Extract the text being posted (clean any list formatting)
-                                text = _clean_list_formatting(args.get('text', ''))
-                                if text:
+                                # Extract the text being posted (now a list of strings)
+                                texts = args.get('text', [])
+                                if texts and isinstance(texts, list):
                                     # Format with Unicode characters
-                                    print("\n✎ Bluesky Post")
-                                    print("  ────────────")
-                                    # Indent post text
-                                    for line in text.split('\n'):
-                                        print(f"  {line}")
+                                    if len(texts) == 1:
+                                        print("\n✎ Bluesky Reply")
+                                        print("  ─────────────")
+                                        for line in texts[0].split('\n'):
+                                            print(f"  {line}")
+                                    else:
+                                        print(f"\n✎ Bluesky Reply Thread ({len(texts)} posts)")
+                                        print("  ─────────────────────────────")
+                                        for i, post_text in enumerate(texts, 1):
+                                            print(f"  [{i}] {post_text}")
                                 else:
                                     log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                             elif tool_name == 'archival_memory_search':
