@@ -12,7 +12,6 @@ BLUESKY_TOOLS = {
     'search_bluesky_posts',
     'create_new_bluesky_post',
     'get_bluesky_feed',
-    'add_post_to_bluesky_reply_thread',
     'attach_user_blocks',
     'detach_user_blocks',
     'user_note_append',

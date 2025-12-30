@@ -16,7 +16,7 @@ When you run `bsky.py` or `x.py`, the bot will automatically:
 - `search_bluesky_posts` - Search Bluesky posts
 - `create_new_bluesky_post` - Create new posts on Bluesky
 - `get_bluesky_feed` - Retrieve Bluesky feeds
-- `add_post_to_bluesky_reply_thread` - Reply to Bluesky threads
+- `reply_to_bluesky_post` - Reply to Bluesky posts (single or multi-part)
 - `attach_user_blocks`, `detach_user_blocks` - Manage Bluesky user memory blocks
 - `user_note_append`, `user_note_replace`, `user_note_set`, `user_note_view` - Bluesky user notes
 

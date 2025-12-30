@@ -11,7 +11,6 @@ This document provides a complete reference for all tools available to umbra. To
 | `get_author_feed` | Get posts from a specific user | Active |
 | `like_bluesky_post` | Like a post | Active |
 | `reply_to_bluesky_post` | Reply to any post (single or multi-part) | Active |
-| `add_post_to_bluesky_reply_thread` | Build multi-post replies atomically | Active |
 | `ignore_notification` | Explicitly ignore a notification | Active |
 | `create_greengale_blog_post` | Create GreenGale blog posts | Active |
 | `fetch_webpage` | Fetch and convert webpages to markdown | Active |
@@ -153,30 +152,6 @@ reply_to_bluesky_post(
     ]
 )
 ```
-
----
-
-### add_post_to_bluesky_reply_thread
-
-Add a single post to the current reply thread atomically. Used during notification processing to build multi-post replies incrementally.
-
-**Parameters:**
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `text` | str | Yes | - | Post text (max 300 characters) |
-| `lang` | str | No | `"en-US"` | Language code |
-
-**Usage Context:** Only works during notification processing. The handler (bsky.py) manages thread state and chaining.
-
-**When to Use Which Tool:**
-| Scenario | Use This Tool |
-|----------|---------------|
-| Replying to a notification | `add_post_to_bluesky_reply_thread` |
-| Replying to a post from feed/search | `reply_to_bluesky_post` |
-| Multi-part reply during notification processing | Multiple `add_post_to_bluesky_reply_thread` calls |
-| Multi-part reply outside notification processing | `reply_to_bluesky_post` with list of texts |
-
-**Important:** During notification processing, use ONLY this tool rather than mixing with `reply_to_bluesky_post`.
 
 ---
 

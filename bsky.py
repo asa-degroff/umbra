@@ -21,8 +21,35 @@ from config_loader import get_letta_config, get_config, get_queue_config, get_bl
 
 import bsky_utils
 from tools.blocks import attach_user_blocks, detach_user_blocks
-from tools.thread import _clean_list_formatting
 from notification_db import NotificationDB
+
+
+def _clean_list_formatting(text: str) -> str:
+    """
+    Remove accidental list/array formatting from text.
+
+    Handles cases where the agent formats text like a list due to
+    seeing List[str] examples from other tools:
+    - ["Hello world"] -> Hello world
+    - ['Hello world'] -> Hello world
+    - "Hello world" -> Hello world (if quotes wrap entire text)
+    """
+    cleaned = text.strip()
+
+    # Remove wrapping brackets: [...] -> ...
+    if cleaned.startswith('[') and cleaned.endswith(']'):
+        cleaned = cleaned[1:-1].strip()
+
+    # Remove wrapping double quotes: "..." -> ...
+    if cleaned.startswith('"') and cleaned.endswith('"') and len(cleaned) > 1:
+        cleaned = cleaned[1:-1]
+    # Remove wrapping single quotes: '...' -> ...
+    elif cleaned.startswith("'") and cleaned.endswith("'") and len(cleaned) > 1:
+        cleaned = cleaned[1:-1]
+
+    return cleaned
+
+
 import scheduled_prompts
 from scheduled_prompts import (
     TASK_CONFIGS,
@@ -383,7 +410,6 @@ You may now respond to this thread with full context of all posts.{reply_instruc
             logger.info(f"✓ Successfully received response from Letta API for debounced thread")
 
             # Extract tool calls from the agent's response
-            reply_candidates = []
             tool_call_results = {}  # Map tool_call_id to status
             ignored_notification = False
             ignore_reason = ""
@@ -416,25 +442,8 @@ You may now respond to this thread with full context of all posts.{reply_instruc
             # Second pass: extract tool calls
             for message in message_response.messages:
                 if hasattr(message, 'tool_call') and message.tool_call:
-                    # Collect add_post_to_bluesky_reply_thread tool calls
-                    if message.tool_call.name == 'add_post_to_bluesky_reply_thread':
-                        tool_call_id = message.tool_call.tool_call_id
-                        tool_status = tool_call_results.get(tool_call_id, 'unknown')
-
-                        if tool_status == 'success':
-                            try:
-                                args = json.loads(message.tool_call.arguments)
-                                reply_text = _clean_list_formatting(args.get('text', ''))
-                                reply_lang = args.get('lang', 'en-US')
-
-                                if reply_text:
-                                    reply_candidates.append((reply_text, reply_lang))
-                                    logger.debug(f"Found successful add_post_to_bluesky_reply_thread: {reply_text[:50]}...")
-                            except json.JSONDecodeError as e:
-                                logger.error(f"Failed to parse tool call arguments: {e}")
-
                     # Track reply_to_bluesky_post tool calls (posts directly to Bluesky)
-                    elif message.tool_call.name == 'reply_to_bluesky_post':
+                    if message.tool_call.name == 'reply_to_bluesky_post':
                         tool_call_id = message.tool_call.tool_call_id
                         tool_status = tool_call_results.get(tool_call_id, 'unknown')
 
@@ -451,109 +460,44 @@ You may now respond to this thread with full context of all posts.{reply_instruc
                     logger.warning(f"Failed to detach user blocks: {e}")
 
             # Process the extracted tool calls
-            if reply_candidates:
-                # Build reply thread
-                reply_messages = []
-                reply_langs = []
-                for text, lang in reply_candidates:
-                    reply_messages.append(text)
-                    reply_langs.append(lang)
+            if ignored_notification:
+                logger.info(f"Debounced thread from @{author_handle} was explicitly ignored (category: {ignore_category})")
 
-                reply_lang = reply_langs[0] if reply_langs else 'en-US'
+                # Delete queue file
+                if queue_filepath and queue_filepath.exists():
+                    try:
+                        queue_filepath.unlink()
+                        logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete queue file: {e}")
 
-                logger.debug(f"Found {len(reply_candidates)} add_post_to_bluesky_reply_thread calls")
+                return "ignored"
 
-                # Send the reply(s)
-                if testing_mode:
-                    logger.info("TESTING MODE: Skipping actual Bluesky post")
-                    response = True
-                else:
-                    if len(reply_messages) == 1:
-                        # Single reply
-                        cleaned_text = bsky_utils.remove_outside_quotes(reply_messages[0])
-                        logger.info(f"Sending single reply to debounced thread: {cleaned_text[:50]}... (lang: {reply_lang})")
-                        response = bsky_utils.reply_to_notification(
-                            client=atproto_client,
-                            notification=notification_data,
-                            reply_text=cleaned_text,
-                            lang=reply_lang
-                        )
-                    else:
-                        # Multiple replies - threaded
-                        cleaned_messages = [bsky_utils.remove_outside_quotes(msg) for msg in reply_messages]
-                        logger.info(f"Sending threaded reply to debounced thread with {len(cleaned_messages)} messages (lang: {reply_lang})")
-                        response = bsky_utils.reply_with_thread_to_notification(
-                            client=atproto_client,
-                            notification=notification_data,
-                            reply_messages=cleaned_messages,
-                            lang=reply_lang
-                        )
+            elif direct_reply_posted:
+                logger.info(f"Direct reply was posted to debounced thread from @{author_handle} via reply_to_bluesky_post")
 
-                # Verify reply was sent successfully
-                reply_sent_successfully = False
-                if response is not None and response is not False:
-                    if isinstance(response, list):
-                        if len(response) == len(reply_messages):
-                            reply_sent_successfully = True
-                    else:
-                        reply_sent_successfully = True
+                # Delete queue file
+                if queue_filepath and queue_filepath.exists():
+                    try:
+                        queue_filepath.unlink()
+                        logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete queue file: {e}")
 
-                if reply_sent_successfully:
-                    logger.info(f"✓ Successfully replied to debounced thread from @{author_handle}")
-
-                    # Delete queue file
-                    if queue_filepath and queue_filepath.exists():
-                        try:
-                            queue_filepath.unlink()
-                            logger.debug(f"Deleted queue file: {queue_filepath.name}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete queue file: {e}")
-
-                    return True
-                else:
-                    logger.error(f"Failed to send reply to debounced thread from @{author_handle}")
-                    return False
+                return True
 
             else:
-                # No reply candidates - check other cases
-                if ignored_notification:
-                    logger.info(f"Debounced thread from @{author_handle} was explicitly ignored (category: {ignore_category})")
+                logger.warning(f"No reply generated for debounced thread from @{author_handle}")
 
-                    # Delete queue file
-                    if queue_filepath and queue_filepath.exists():
-                        try:
-                            queue_filepath.unlink()
-                            logger.debug(f"Deleted queue file: {queue_filepath.name}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete queue file: {e}")
+                # Delete queue file and move to no_reply
+                if queue_filepath and queue_filepath.exists():
+                    try:
+                        queue_filepath.unlink()
+                        logger.debug(f"Deleted queue file: {queue_filepath.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete queue file: {e}")
 
-                    return "ignored"
-
-                elif direct_reply_posted:
-                    logger.info(f"Direct reply was posted to debounced thread from @{author_handle} via reply_to_bluesky_post")
-
-                    # Delete queue file
-                    if queue_filepath and queue_filepath.exists():
-                        try:
-                            queue_filepath.unlink()
-                            logger.debug(f"Deleted queue file: {queue_filepath.name}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete queue file: {e}")
-
-                    return True
-
-                else:
-                    logger.warning(f"No reply generated for debounced thread from @{author_handle}")
-
-                    # Delete queue file and move to no_reply
-                    if queue_filepath and queue_filepath.exists():
-                        try:
-                            queue_filepath.unlink()
-                            logger.debug(f"Deleted queue file: {queue_filepath.name}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete queue file: {e}")
-
-                    return "no_reply"
+                return "no_reply"
 
         except Exception as e:
             logger.error(f"Error calling agent for debounced thread: {e}")
@@ -1068,116 +1012,6 @@ Carefully review the messages and use your archival_memory_search and web_search
                 if str(chunk) == 'done':
                     break
 
-            # Extract tool results and calls for threading
-            tool_call_results = {}  # tool_call_id -> status
-            tool_return_data = {}   # tool_call_id -> return message content
-            reply_candidates = []   # (text, lang) tuples
-
-            # First pass: collect tool return statuses and data
-            for message in all_messages:
-                if hasattr(message, 'message_type') and message.message_type == 'tool_return_message':
-                    tool_call_id = getattr(message, 'tool_call_id', None)
-                    status = getattr(message, 'status', None)
-                    if tool_call_id:
-                        tool_call_results[tool_call_id] = status
-                        # Store the full tool_return for reply_to_bluesky_post to extract URI/CID
-                        if hasattr(message, 'tool_return'):
-                            tool_return_data[tool_call_id] = str(message.tool_return)
-
-            # Second pass: extract tool calls
-            last_reply_uri = None  # Track URI from reply_to_bluesky_post for threading
-            last_reply_cid = None  # Track CID from reply_to_bluesky_post for threading
-
-            for message in all_messages:
-                if hasattr(message, 'message_type') and message.message_type == 'tool_call_message':
-                    if not hasattr(message, 'tool_call') or not message.tool_call:
-                        continue
-
-                    tool_name = message.tool_call.name
-                    tool_call_id = message.tool_call.tool_call_id
-                    tool_status = tool_call_results.get(tool_call_id, 'unknown')
-
-                    if tool_status != 'success':
-                        continue
-
-                    if tool_name == 'reply_to_bluesky_post':
-                        # Extract the reply URI and CID from the tool return
-                        tool_return = tool_return_data.get(tool_call_id, '')
-                        # Format: "Successfully posted reply: at://... (CID: ...)"
-                        if 'Successfully posted reply:' in tool_return:
-                            uri_match = re.search(r'at://[^\s]+', tool_return)
-                            cid_match = re.search(r'\(CID: ([^)]+)\)', tool_return)
-                            if uri_match and cid_match:
-                                last_reply_uri = uri_match.group(0)
-                                last_reply_cid = cid_match.group(1)
-                                logger.debug(f"⚡ Captured reply for threading: {last_reply_uri}")
-
-                    elif tool_name == 'add_post_to_bluesky_reply_thread':
-                        try:
-                            args = json.loads(message.tool_call.arguments)
-                            reply_text = _clean_list_formatting(args.get('text', ''))
-                            reply_lang = args.get('lang', 'en-US')
-
-                            if reply_text:
-                                reply_candidates.append((reply_text, reply_lang))
-                                logger.debug(f"⚡ Found add_post_to_bluesky_reply_thread: {reply_text[:50]}...")
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse tool call arguments: {e}")
-
-            # Post the collected add_post_to_bluesky_reply_thread replies
-            if reply_candidates:
-                reply_messages_list = [text for text, lang in reply_candidates]
-                reply_lang = reply_candidates[0][1] if reply_candidates else 'en-US'
-                cleaned_messages = [bsky_utils.remove_outside_quotes(msg) for msg in reply_messages_list]
-
-                logger.info(f"⚡ Posting {len(cleaned_messages)} threaded posts from high-traffic batch")
-
-                if last_reply_uri and last_reply_cid:
-                    # Chain off the previously posted reply
-                    logger.debug(f"⚡ Chaining thread off reply: {last_reply_uri}")
-                    # Create a synthetic notification for the reply we just posted
-                    synthetic_notif = {
-                        'uri': last_reply_uri,
-                        'cid': last_reply_cid,
-                        'record': {}  # No reply info needed since this IS the new thread head
-                    }
-                    if len(cleaned_messages) == 1:
-                        response = bsky_utils.reply_to_notification(
-                            client=atproto_client,
-                            notification=synthetic_notif,
-                            reply_text=cleaned_messages[0],
-                            lang=reply_lang
-                        )
-                    else:
-                        response = bsky_utils.reply_with_thread_to_notification(
-                            client=atproto_client,
-                            notification=synthetic_notif,
-                            reply_messages=cleaned_messages,
-                            lang=reply_lang
-                        )
-                else:
-                    # No prior reply, use first notification as parent
-                    first_notif = batch_notifications[0]
-                    if len(cleaned_messages) == 1:
-                        response = bsky_utils.reply_to_notification(
-                            client=atproto_client,
-                            notification=first_notif,
-                            reply_text=cleaned_messages[0],
-                            lang=reply_lang
-                        )
-                    else:
-                        response = bsky_utils.reply_with_thread_to_notification(
-                            client=atproto_client,
-                            notification=first_notif,
-                            reply_messages=cleaned_messages,
-                            lang=reply_lang
-                        )
-
-                if response:
-                    logger.info(f"⚡ Successfully posted {len(cleaned_messages)} threaded replies")
-                else:
-                    logger.error(f"⚡ Failed to post threaded replies")
-
             # Detach user blocks
             if attached_handles:
                 try:
@@ -1569,7 +1403,7 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                         try:
                             args = json.loads(chunk.tool_call.arguments)
                             # Format based on tool type
-                            if tool_name in ['add_post_to_bluesky_reply_thread', 'bluesky_reply']:
+                            if tool_name == 'reply_to_bluesky_post':
                                 # Extract the text being posted (clean any list formatting)
                                 text = _clean_list_formatting(args.get('text', ''))
                                 if text:
@@ -1661,9 +1495,9 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                                     except Exception as e:
                                         logger.error(f"Error formatting archival memory results: {e}")
                                         log_with_panel(result_str[:100] + "...", f"Tool result: {tool_name} ✓", "green")
-                                elif tool_name == 'add_post_to_bluesky_reply_thread':
+                                elif tool_name == 'reply_to_bluesky_post':
                                     # Just show success for bluesky posts, the text was already shown in tool call
-                                    log_with_panel("Post queued successfully", f"Bluesky Post ✓", "green")
+                                    log_with_panel("Reply posted successfully", f"Bluesky Reply ✓", "green")
                                 elif tool_name == 'archival_memory_insert':
                                     # Skip archival memory insert results (always returns None)
                                     pass
@@ -1677,9 +1511,9 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                                 log_with_panel("Success", f"Tool result: {tool_name} ✓", "green")
                         elif status == 'error':
                             # Show error details
-                            if tool_name == 'add_post_to_bluesky_reply_thread':
+                            if tool_name == 'reply_to_bluesky_post':
                                 error_str = str(chunk.tool_return) if hasattr(chunk, 'tool_return') and chunk.tool_return else "Error occurred"
-                                log_with_panel(error_str, f"Bluesky Post ✗", "red")
+                                log_with_panel(error_str, f"Bluesky Reply ✗", "red")
                             elif tool_name == 'archival_memory_insert':
                                 # Skip archival memory insert errors too
                                 pass
@@ -1798,8 +1632,7 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
         logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
         logger.debug(f"Mention URI: {uri}")
 
-        # Extract successful add_post_to_bluesky_reply_thread tool calls from the agent's response
-        reply_candidates = []
+        # Extract tool call results from the agent's response
         tool_call_results = {}  # Map tool_call_id to status
         flagged_memories = []  # Track memories flagged for deletion
         direct_reply_posted = False  # Track if reply_to_bluesky_post was called successfully
@@ -1877,7 +1710,7 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                                 logger.info(f"🚫 Notification ignored - Category: {ignore_category}, Reason: {ignore_reason}")
                 elif message.name == 'bluesky_reply':
                     logger.error("DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
-                    logger.error("Please use add_post_to_bluesky_reply_thread instead.")
+                    logger.error("Please use reply_to_bluesky_post instead.")
                     logger.error("Update the agent's tools using register_tools.py")
                     # Export agent state before terminating
                     export_agent_state(CLIENT, umbra_agent, skip_git=SKIP_GIT)
@@ -1989,7 +1822,7 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
             if hasattr(message, 'tool_call') and message.tool_call:
                 if message.tool_call.name == 'bluesky_reply':
                     logger.error("DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
-                    logger.error("Please use add_post_to_bluesky_reply_thread instead.")
+                    logger.error("Please use reply_to_bluesky_post instead.")
                     logger.error("Update the agent's tools using register_tools.py")
                     # Export agent state before terminating
                     export_agent_state(CLIENT, umbra_agent, skip_git=SKIP_GIT)
@@ -2018,39 +1851,12 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse flag_archival_memory_for_deletion arguments: {e}")
                 
-                # Collect add_post_to_bluesky_reply_thread tool calls - only if they were successful
-                elif message.tool_call.name == 'add_post_to_bluesky_reply_thread':
-                    tool_call_id = message.tool_call.tool_call_id
-                    tool_status = tool_call_results.get(tool_call_id, 'unknown')
-
-                    # Only accept explicitly successful tool calls
-                    # Rejecting 'unknown' status prevents failed validations from being sent
-                    if tool_status == 'success':
-                        try:
-                            args = json.loads(message.tool_call.arguments)
-                            reply_text = _clean_list_formatting(args.get('text', ''))
-                            reply_lang = args.get('lang', 'en-US')
-
-                            if reply_text:  # Only add if there's actual content
-                                reply_candidates.append((reply_text, reply_lang))
-                                logger.debug(f"Found successful add_post_to_bluesky_reply_thread candidate: {reply_text[:50]}... (lang: {reply_lang})")
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse tool call arguments: {e}")
-                    elif tool_status == 'error':
-                        logger.debug(f"Skipping failed add_post_to_bluesky_reply_thread tool call (status: error)")
-                    elif tool_status == 'unknown':
-                        logger.error(f"❌ Skipping add_post_to_bluesky_reply_thread with unknown tool status (tool_call_id: {tool_call_id})")
-                        logger.error(f"   This indicates tool return parsing failed. Check Letta API version and message structure.")
-                        logger.error(f"   Tool call results captured: {list(tool_call_results.keys())}")
-
-                # Track reply_to_bluesky_post tool calls - these post DIRECTLY to Bluesky, not via handler
+                # Track reply_to_bluesky_post tool calls - these post directly to Bluesky
                 elif message.tool_call.name == 'reply_to_bluesky_post':
                     tool_call_id = message.tool_call.tool_call_id
                     tool_status = tool_call_results.get(tool_call_id, 'unknown')
 
                     # Only accept explicitly successful tool calls
-                    # NOTE: This tool posts directly to Bluesky, so we don't add to reply_candidates
-                    # (that would cause duplicate posting). We just track that a reply was posted.
                     if tool_status == 'success':
                         direct_reply_posted = True
                         logger.debug(f"Detected successful reply_to_bluesky_post (posted directly to Bluesky)")
@@ -2101,165 +1907,42 @@ THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debo
                 except Exception as e:
                     logger.error(f"Error processing memory deletion: {e}")
 
-        # Check for conflicting tool calls
-        if reply_candidates and ignored_notification:
-            logger.error(f"⚠️ CONFLICT: Agent called both add_post_to_bluesky_reply_thread and ignore_notification!")
-            logger.error(f"Reply candidates: {len(reply_candidates)}, Ignore reason: {ignore_reason}")
-            logger.warning("Item will be left in queue for manual review")
-            # Return False to keep in queue
+        # Check if agent returned an error first (before checking for intentional no-reply)
+        if agent_error_occurred:
+            if agent_error_details:
+                logger.error(f"[{correlation_id}] Agent error for @{author_handle}: {agent_error_details}", extra={
+                    'correlation_id': correlation_id,
+                    'author_handle': author_handle,
+                    'error': agent_error_details
+                })
+            else:
+                logger.error(f"[{correlation_id}] Agent error for @{author_handle} (no details provided)", extra={
+                    'correlation_id': correlation_id,
+                    'author_handle': author_handle
+                })
+            # Return False to trigger retry (will move to errors folder after max retries)
             return False
-        
-        if reply_candidates:
-            # Aggregate reply posts into a thread
-            reply_messages = []
-            reply_langs = []
-            for text, lang in reply_candidates:
-                reply_messages.append(text)
-                reply_langs.append(lang)
-            
-            # Use the first language for the entire thread (could be enhanced later)
-            reply_lang = reply_langs[0] if reply_langs else 'en-US'
-            
-            logger.debug(f"Found {len(reply_candidates)} add_post_to_bluesky_reply_thread calls, building thread")
-            
-            # Display the generated reply thread
-            if len(reply_messages) == 1:
-                content = reply_messages[0]
-                title = f"Reply to @{author_handle}"
-            else:
-                content = "\n\n".join([f"{j}. {msg}" for j, msg in enumerate(reply_messages, 1)])
-                title = f"Reply Thread to @{author_handle} ({len(reply_messages)} messages)"
-            
-            # Format with Unicode characters
-            print(f"\n✎ {title}")
-            print(f"  {'─' * len(title)}")
-            # Indent content lines
-            for line in content.split('\n'):
-                print(f"  {line}")
-
-            # Send the reply(s) with language (unless in testing mode)
-            if testing_mode:
-                logger.info("TESTING MODE: Skipping actual Bluesky post")
-                response = True  # Simulate success
-            else:
-                if len(reply_messages) == 1:
-                    # Single reply - use existing function
-                    cleaned_text = bsky_utils.remove_outside_quotes(reply_messages[0])
-                    logger.info(f"Sending single reply: {cleaned_text[:50]}... (lang: {reply_lang})")
-                    response = bsky_utils.reply_to_notification(
-                        client=atproto_client,
-                        notification=notification_data,
-                        reply_text=cleaned_text,
-                        lang=reply_lang,
-                        correlation_id=correlation_id
-                    )
-                else:
-                    # Multiple replies - use new threaded function
-                    cleaned_messages = [bsky_utils.remove_outside_quotes(msg) for msg in reply_messages]
-                    logger.info(f"Sending threaded reply with {len(cleaned_messages)} messages (lang: {reply_lang})")
-                    response = bsky_utils.reply_with_thread_to_notification(
-                        client=atproto_client,
-                        notification=notification_data,
-                        reply_messages=cleaned_messages,
-                        lang=reply_lang,
-                        correlation_id=correlation_id
-                    )
-
-            # Verify reply was sent successfully
-            # For threaded replies, reply_with_thread_to_notification returns list of responses or None
-            # For single replies, reply_to_notification returns dict or None
-            # In testing mode, response is True
-            reply_sent_successfully = False
-            if response is not None and response is not False:
-                # Additional validation for threaded replies
-                if isinstance(response, list):
-                    # Verify we sent all requested messages
-                    if len(response) == len(reply_messages):
-                        reply_sent_successfully = True
-                    else:
-                        logger.error(f"[{correlation_id}] Threaded reply incomplete: sent {len(response)}/{len(reply_messages)} messages")
-                else:
-                    # Single reply or testing mode
-                    reply_sent_successfully = True
-
-            if reply_sent_successfully:
-                logger.info(f"[{correlation_id}] Successfully replied to @{author_handle}", extra={
-                    'correlation_id': correlation_id,
-                    'author_handle': author_handle,
-                    'reply_count': len(reply_messages)
-                })
-
-                # Mark all notifications from the same consecutive chain as processed
-                # This prevents duplicate processing when a multi-part message arrives as multiple notifications
-                if NOTIFICATION_DB:
-                    try:
-                        # Extract author_did, root_uri, and indexed_at from notification_data
-                        if isinstance(notification_data, dict):
-                            author_did = notification_data.get('author', {}).get('did', '')
-                            indexed_at = notification_data.get('indexed_at', '')
-                            # Get root_uri from reply info or use notification uri
-                            record = notification_data.get('record', {})
-                            reply_info = record.get('reply', {}) if isinstance(record, dict) else {}
-                            root_info = reply_info.get('root', {}) if isinstance(reply_info, dict) else {}
-                            root_uri = root_info.get('uri') if isinstance(root_info, dict) else None
-                            if not root_uri:
-                                root_uri = notification_data.get('uri', '')
-                        else:
-                            author_did = getattr(getattr(notification_data, 'author', None), 'did', '')
-                            indexed_at = getattr(notification_data, 'indexed_at', '')
-                            root_uri = notification_data.uri
-
-                        if author_did and root_uri and indexed_at:
-                            NOTIFICATION_DB.mark_consecutive_chain_processed(
-                                root_uri=root_uri,
-                                author_did=author_did,
-                                reference_time=indexed_at
-                            )
-                    except Exception as e:
-                        logger.error(f"Error marking consecutive chain as processed: {e}")
-                        # Don't fail the operation if this cleanup fails
-
-                return True
-            else:
-                logger.error(f"Failed to send reply to @{author_handle}")
-                return False
+        # Check if notification was explicitly ignored
+        elif ignored_notification:
+            logger.info(f"[{correlation_id}] Notification from @{author_handle} was explicitly ignored (category: {ignore_category})", extra={
+                'correlation_id': correlation_id,
+                'author_handle': author_handle,
+                'ignore_category': ignore_category
+            })
+            return "ignored"
+        # Check if a direct reply was posted (via reply_to_bluesky_post tool)
+        elif direct_reply_posted:
+            logger.info(f"[{correlation_id}] Direct reply was posted to @{author_handle} via reply_to_bluesky_post tool", extra={
+                'correlation_id': correlation_id,
+                'author_handle': author_handle
+            })
+            return True  # Treat as successful reply
         else:
-            # Check if agent returned an error first (before checking for intentional no-reply)
-            if agent_error_occurred:
-                if agent_error_details:
-                    logger.error(f"[{correlation_id}] Agent error for @{author_handle}: {agent_error_details}", extra={
-                        'correlation_id': correlation_id,
-                        'author_handle': author_handle,
-                        'error': agent_error_details
-                    })
-                else:
-                    logger.error(f"[{correlation_id}] Agent error for @{author_handle} (no details provided)", extra={
-                        'correlation_id': correlation_id,
-                        'author_handle': author_handle
-                    })
-                # Return False to trigger retry (will move to errors folder after max retries)
-                return False
-            # Check if notification was explicitly ignored
-            elif ignored_notification:
-                logger.info(f"[{correlation_id}] Notification from @{author_handle} was explicitly ignored (category: {ignore_category})", extra={
-                    'correlation_id': correlation_id,
-                    'author_handle': author_handle,
-                    'ignore_category': ignore_category
-                })
-                return "ignored"
-            # Check if a direct reply was posted (via reply_to_bluesky_post tool)
-            elif direct_reply_posted:
-                logger.info(f"[{correlation_id}] Direct reply was posted to @{author_handle} via reply_to_bluesky_post tool", extra={
-                    'correlation_id': correlation_id,
-                    'author_handle': author_handle
-                })
-                return True  # Treat as successful reply
-            else:
-                logger.warning(f"[{correlation_id}] No reply generated for mention from @{author_handle}, moving to no_reply folder", extra={
-                    'correlation_id': correlation_id,
-                    'author_handle': author_handle
-                })
-                return "no_reply"
+            logger.warning(f"[{correlation_id}] No reply generated for mention from @{author_handle}, moving to no_reply folder", extra={
+                'correlation_id': correlation_id,
+                'author_handle': author_handle
+            })
+            return "no_reply"
 
     except Exception as e:
         logger.error(f"[{correlation_id}] Error processing mention: {e}", extra={

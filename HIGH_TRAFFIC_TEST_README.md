@@ -137,4 +137,4 @@ This test suite also validates fixes for:
 
 1. **Regular debounce processing**: Ensures `process_debounced_thread()` properly processes agent responses
 2. **Queue file cleanup**: Verifies no duplicate notifications after debounce
-3. **Tool call extraction**: Confirms both `add_post_to_bluesky_reply_thread` and `reply_to_bluesky_post` are handled
+3. **Tool call extraction**: Confirms `reply_to_bluesky_post` is handled properly

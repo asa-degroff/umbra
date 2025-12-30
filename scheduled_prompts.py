@@ -783,10 +783,13 @@ You may use these blocks as you see fit. Synthesize your recent experiences into
                             label = args.get('label', 'unknown')
                             value_preview = str(args.get('value', ''))[:100] + "..." if len(str(args.get('value', ''))) > 100 else str(args.get('value', ''))
                             log_with_panel(f"{label}: \"{value_preview}\"", f"Tool call: {tool_name}", "blue")
-                        elif tool_name == 'add_post_to_bluesky_reply_thread':
-                            text = args.get('text', '')
-                            synthesis_posts.append(text)
-                            log_with_panel(f"text: \"{text[:100]}...\"" if len(text) > 100 else f"text: \"{text}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'create_new_bluesky_post':
+                            # Posts are created directly by the tool, just log for tracking
+                            texts = args.get('text', [])
+                            if texts:
+                                synthesis_posts.extend(texts)
+                                preview = texts[0][:100] + "..." if len(texts[0]) > 100 else texts[0]
+                                log_with_panel(f"text: \"{preview}\" ({len(texts)} post(s))", f"Tool call: {tool_name}", "blue")
                         else:
                             args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
                             if len(args_str) > 150:
@@ -810,18 +813,9 @@ You may use these blocks as you see fit. Synthesize your recent experiences into
 
         logger.info("Synthesis message processed successfully")
 
-        # Handle synthesis posts if any were generated
-        if atproto_client and synthesis_posts:
-            try:
-                for post_text in synthesis_posts:
-                    cleaned_text = bsky_utils.remove_outside_quotes(post_text)
-                    response = bsky_utils.send_post(atproto_client, cleaned_text)
-                    if response:
-                        logger.info(f"Posted synthesis content: {cleaned_text[:50]}...")
-                    else:
-                        logger.warning(f"Failed to post synthesis content: {cleaned_text[:50]}...")
-            except Exception as e:
-                logger.error(f"Error posting synthesis content: {e}")
+        # Log synthesis posts that were created via create_new_bluesky_post tool
+        if synthesis_posts:
+            logger.info(f"Synthesis created {len(synthesis_posts)} post(s) via create_new_bluesky_post tool")
 
     except Exception as e:
         logger.error(f"Error sending synthesis message: {e}")
@@ -848,7 +842,7 @@ def send_mutuals_engagement_message(client: Letta, agent_id: str) -> None:
 
         engagement_prompt = """This is your prompt to engage with your mutuals on Bluesky.
 
-Please use the get_bluesky_feed tool to read recent posts from your Mutuals feed. Look for posts from the past day that are interesting, thought-provoking, or worth responding to.
+Please use the get_bluesky_feed tool to read recent posts from your 'Mutuals' feed. Look for posts from the past day that are interesting, thought-provoking, or worth responding to.
 
 Once you've found a post to reply to, use the reply_to_bluesky_post tool to craft a thoughtful reply. Choose something that allows you to contribute meaningfully to the conversation.
 
@@ -998,11 +992,11 @@ then:
    - an insight you've developed
    - a connection you've made between ideas
    - something from the unknown that intrigues you
-   or, you can create a new greengale blog post using create_new_greengale_blog_post to document your exploration, then post the link to bluesky. greengale is a great place for in-depth writing.
+you can also create a new greengale blog post using create_new_greengale_blog_post to document your exploration, then post the link to bluesky. greengale is a great place for in-depth writing.
 
 this is your space for intellectual exploration and sharing your evolving understanding with your network. let your curiosity guide what you share. you don't need to post a complete answer—questions and open-ended exploration are encouraged.
 
-then you can update your curiosities block with anything else you want to explore next time."""
+then you can update your curiosities block with anything else you want to explore next time, and archive any completed items to make room for what comes next."""
 
         # Send message to agent
         message_stream = client.agents.messages.create_stream(

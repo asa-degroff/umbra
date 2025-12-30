@@ -391,8 +391,7 @@ tail -f claude_code_poller.log
    - **feed.py**: `get_bluesky_feed` for reading feeds (home, discover, mutuals, etc.)
    - **author_feed.py**: `get_author_feed` for retrieving posts from a specific user
    - **like.py**: `like_bluesky_post` for liking posts
-   - **reply.py**: `reply_to_bluesky_post` for replying to any post
-   - **thread.py**: `add_post_to_bluesky_reply_thread` for building multi-post replies atomically
+   - **reply.py**: `reply_to_bluesky_post` for replying to any post (supports multi-post threaded replies)
    - **ignore.py**: `ignore_notification` for explicitly ignoring bot/spam interactions
    - **greengale.py**: `create_greengale_blog_post` for creating blog posts with themes/LaTeX
    - **webpage.py**: `fetch_webpage` for fetching webpages via Jina AI

@@ -17,7 +17,6 @@ from tools.author_feed import get_author_feed, AuthorFeedArgs
 from tools.like import like_bluesky_post, LikeBlueskyPostArgs
 from tools.reply import reply_to_bluesky_post, ReplyToBlueskyPostArgs
 from tools.halt import halt_activity, HaltArgs
-from tools.thread import add_post_to_bluesky_reply_thread, ReplyThreadPostArgs
 from tools.ignore import ignore_notification, IgnoreNotificationArgs
 from tools.whitewind import create_whitewind_blog_post, WhitewindPostArgs
 from tools.greengale import create_greengale_blog_post, GreenGalePostArgs
@@ -77,12 +76,6 @@ TOOL_CONFIGS = [
     #     "args_schema": HaltArgs,
     #     "description": "Signal to halt all bot activity and terminate bsky.py",
     #     "tags": ["control", "halt", "terminate"]
-    # },
-    # {
-    #     "func": add_post_to_bluesky_reply_thread,
-    #     "args_schema": ReplyThreadPostArgs,
-    #     "description": "Add a single post to the current Bluesky reply thread atomically",
-    #     "tags": ["bluesky", "reply", "thread", "atomic"]
     # },
     {
         "func": ignore_notification,

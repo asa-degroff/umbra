@@ -2,8 +2,8 @@
 Bluesky Reply Tool
 
 This tool allows umbra to reply to any post on Bluesky using its AT Protocol URI and CID.
-Unlike add_post_to_bluesky_reply_thread which only works in notification processing,
-this tool is self-contained and works anywhere (feed reading, search results, etc.).
+This tool is self-contained and works anywhere (notification processing, feed reading,
+search results, etc.).
 
 Supports multi-part replies by passing a list of texts, which creates a threaded reply chain.
 """
