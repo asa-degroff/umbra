@@ -460,6 +460,23 @@ def extract_quote_post_from_embed(embed) -> dict | None:
         if metrics:
             result['metrics'] = metrics
 
+        # Add thread context hints (for hybrid thread navigation)
+        thread_context = {}
+
+        # Reply count indicates replies exist below this post
+        if metrics.get('replies'):
+            thread_context['reply_count'] = metrics['replies']
+
+        # Check if quoted post is itself a reply (has parents above)
+        if hasattr(record, 'value') and record.value:
+            value = record.value
+            reply_ref = value.get('reply') if isinstance(value, dict) else getattr(value, 'reply', None)
+            if reply_ref:
+                thread_context['has_parents'] = True
+
+        if thread_context:
+            result['thread_context'] = thread_context
+
         # Check for nested embeds in the quoted post
         if hasattr(record, 'embeds') and record.embeds:
             nested_embeds = []

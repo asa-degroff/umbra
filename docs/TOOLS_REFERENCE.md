@@ -11,6 +11,7 @@ This document provides a complete reference for all tools available to umbra. To
 | `get_author_feed` | Get posts from a specific user | Active |
 | `like_bluesky_post` | Like a post | Active |
 | `reply_to_bluesky_post` | Reply to any post (single or multi-part) | Active |
+| `get_thread_by_uri` | Fetch full thread context for a post | Active |
 | `ignore_notification` | Explicitly ignore a notification | Active |
 | `create_greengale_blog_post` | Create GreenGale blog posts | Active |
 | `fetch_webpage` | Fetch and convert webpages to markdown | Active |
@@ -151,6 +152,44 @@ reply_to_bluesky_post(
         "And finally, the conclusion!"
     ]
 )
+```
+
+---
+
+### get_thread_by_uri
+
+Fetch the full thread context for a post by its URI. Use when you encounter a quote post or linked post and want to see the complete conversation.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `uri` | str | Yes | - | AT Protocol URI or bsky.app URL |
+| `include_replies` | bool | No | `True` | Include replies below the target post |
+| `max_depth` | int | No | `10` | Maximum reply depth to fetch (max 25) |
+
+**Supported URI Formats:**
+- AT Protocol: `at://did:plc:xyz/app.bsky.feed.post/abc123`
+- bsky.app: `https://bsky.app/profile/user.bsky.social/post/abc123`
+
+**Returns:** YAML-formatted thread with:
+- `thread_summary`: Parent count, reply count, total posts
+- `posts`: Chronological list with the target post marked (`is_target: true`)
+
+**Use Cases:**
+- Understanding full context when someone quotes a post from a longer thread
+- Seeing parent posts that provide context for a quoted reply
+- Viewing the complete discussion around a linked post
+
+**Example:**
+```python
+# From AT Protocol URI
+get_thread_by_uri(uri="at://did:plc:abc/app.bsky.feed.post/xyz")
+
+# From bsky.app URL
+get_thread_by_uri(uri="https://bsky.app/profile/user.bsky.social/post/abc123")
+
+# Without replies (just parent context)
+get_thread_by_uri(uri="at://...", include_replies=False)
 ```
 
 ---

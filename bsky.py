@@ -798,17 +798,51 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
                             quote = embed.get('quote', {})
                             quote_author = quote.get('author', {}).get('handle', 'unknown')
                             quote_text = quote.get('text', '')[:100]
+                            quote_uri = quote.get('uri', '')
+
+                            # Build thread context hint
+                            thread_hint = ""
+                            thread_ctx = quote.get('thread_context', {})
+                            if thread_ctx:
+                                hints = []
+                                if thread_ctx.get('has_parents'):
+                                    hints.append("has parent posts")
+                                if thread_ctx.get('reply_count'):
+                                    hints.append(f"{thread_ctx['reply_count']} replies")
+                                if hints:
+                                    thread_hint = f" [Thread: {', '.join(hints)}]"
+
                             if quote_text:
-                                attachment_lines.append(f"Quote: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"")
+                                line = f"Quote: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"{thread_hint}"
+                                if thread_hint and quote_uri:
+                                    line += f"\n      (Use get_thread_by_uri with uri=\"{quote_uri}\" for full context)"
+                                attachment_lines.append(line)
                         elif embed_type == 'quote_with_media':
                             quote = embed.get('quote', {})
                             quote_author = quote.get('author', {}).get('handle', 'unknown')
                             quote_text = quote.get('text', '')[:100]
+                            quote_uri = quote.get('uri', '')
                             media = embed.get('media', {})
                             media_type = media.get('type', '')
                             media_desc = f" + {media_type}" if media_type else ""
+
+                            # Build thread context hint
+                            thread_hint = ""
+                            thread_ctx = quote.get('thread_context', {})
+                            if thread_ctx:
+                                hints = []
+                                if thread_ctx.get('has_parents'):
+                                    hints.append("has parent posts")
+                                if thread_ctx.get('reply_count'):
+                                    hints.append(f"{thread_ctx['reply_count']} replies")
+                                if hints:
+                                    thread_hint = f" [Thread: {', '.join(hints)}]"
+
                             if quote_text:
-                                attachment_lines.append(f"Quote{media_desc}: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"")
+                                line = f"Quote{media_desc}: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"{thread_hint}"
+                                if thread_hint and quote_uri:
+                                    line += f"\n      (Use get_thread_by_uri with uri=\"{quote_uri}\" for full context)"
+                                attachment_lines.append(line)
                         elif embed_type == 'video':
                             alt = embed.get('alt', '')
                             if alt:

@@ -24,6 +24,7 @@ from tools.webpage import fetch_webpage, WebpageArgs
 from tools.flag_memory_deletion import flag_archival_memory_for_deletion, FlagArchivalMemoryForDeletionArgs
 from tools.claude_code import ask_claude_code, AskClaudeCodeArgs
 from tools.debounce_thread import debounce_thread, DebounceThreadArgs
+from tools.get_thread import get_thread_by_uri, GetThreadByUriArgs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -67,6 +68,12 @@ TOOL_CONFIGS = [
         "args_schema": ReplyToBlueskyPostArgs,
         "description": "Reply to any Bluesky post using its AT Protocol URI and CID (works with feed posts, search results, etc.)",
         "tags": ["bluesky", "reply", "post", "social"]
+    },
+    {
+        "func": get_thread_by_uri,
+        "args_schema": GetThreadByUriArgs,
+        "description": "Fetch full thread context for a post by URI (supports AT URIs and bsky.app URLs)",
+        "tags": ["bluesky", "thread", "context", "fetch"]
     },
     # Note: User block management tools (attach_user_blocks, detach_user_blocks, user_note_*)
     # are available on the server but not exposed to the agent to prevent the agent from
