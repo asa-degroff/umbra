@@ -17,20 +17,54 @@ The ```ask_claude_code tool``` enables autonomous vibe coding capabilites, using
 
 ### Increased Social Autonomy
 - added a ```like_bluesky_post``` tool for liking posts, passing URI and CID metadata for the like tool as part of notifications, enabling umbra to make the choice whether to reply, like, both, or neither
-- added a ```reply_to_bluesky_post``` tool, enabling independent replies to posts outside of umbra's notifications
+- added a ```reply_to_bluesky_post``` tool with multi-part reply support, enabling threaded replies to posts outside of umbra's notifications
+- added a ```get_thread_by_uri``` tool for fetching full thread context when encountering linked or quoted posts, enabling umbra to understand the complete conversation before responding
 - added a mutuals engagement feature, where umbra can autonomously reply to posts from mutuals (triggered on a configurable interval with a random offset for naturalistic timing)
 
 ### High Traffic Thread Processing & Asynchronous Notifications
-- the ```debounce_thread``` tool enables the agent to mark a post with a mention as the likely start of a thread, and defer response until an elapsed timer, after which the full thread context is retrieved and flattened before passing it to the agent with metadata enabling a reply to the last post 
+- the ```debounce_thread``` tool enables the agent to mark a post with a mention as the likely start of a thread, and defer response until an elapsed timer, after which the full thread context is retrieved and flattened before passing it to the agent with metadata enabling a reply to the last post
 - for synchronous thread notifications, when passing the thread to the agent, the metadata for a response points to the last consecutive post in a chain, rather than the one where the agent was mentioned
-- busy threads trigger a high-traffic thread detection with an automatic debounce mechanism, which intercepts notifications for a time period, after which the flattened thread including context that has evolved since the debounce was triggered is passed to the agent in a single message, with the option to reposond to its favorites and ignore the rest
+- busy threads trigger a high-traffic thread detection with an automatic debounce mechanism, which intercepts notifications for a time period, after which the flattened thread including context that has evolved since the debounce was triggered is passed to the agent in a single message, with the option to respond to its favorites and ignore the rest
+- high-traffic thread batches include extracted links and embeds from posts, providing full context for decision-making
 
 These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, preventing decontextualized replies to top-level posts, and preventing threads from needlessly branching out into trees. 
 
 High traffic thread processing solves the problem of inter-agent loops going on for far too long and devolving into low-information density exchanges such as affirmations of affirmations, without imposing any hard limit on thread depth or duration. Conversations can go on indefinitely but only as long as they stay interesting, by the agent's evaluation. 
 
-### Daily Review
-umbra will review its own posts once a day to identify recurring themes, open questions, and operational anomalies, to take notes on and respond to. The daily review message includes thread context and post metadata, allowing umbra to follow up with any posts from the past day if desired. This is implemented similarly to the high-traffic thread processing, with posts fetched and passed to the agent in a flattened format. Daily review is an additional feature that complements synthesis cycles.
+### Task Scheduler
+
+Umbra includes a persistent scheduled tasks system for autonomous behaviors that run independently of notifications:
+
+| Task | Schedule | Purpose |
+|------|----------|---------|
+| **Synthesis** | Every 24h | Deep reflection with temporal journal blocks (day/month/year) |
+| **Mutuals Engagement** | Random within 36h | Engage with posts from mutual follows |
+| **Daily Review** | Every 24h | Review own posts from past 24h, identify patterns |
+| **Feed Engagement** | Random within 24h | Read home/MLBlend feeds, optionally post |
+| **Curiosities Exploration** | Random within 24h | Explore topics from curiosities block, share discoveries |
+
+All scheduled tasks persist across restarts via SQLite - if umbra is restarted, it resumes existing schedules rather than generating new times. Tasks can be individually disabled via command-line flags (e.g., `--no-synthesis`, `--no-mutuals-engagement`).
+
+See [docs/SCHEDULED_TASKS.md](/docs/SCHEDULED_TASKS.md) for detailed configuration and customization options.
+
+### Facet Extraction
+
+Umbra supports rich text processing for Bluesky posts through facet extraction:
+
+- **Mentions**: `@handle` references are automatically detected, resolved to DIDs, and rendered as clickable mentions
+- **URLs**: Links are automatically detected and made clickable in posts
+- **Link extraction**: When processing incoming posts, links are extracted with their display text for the agent to understand what URLs are being shared
+
+This enables umbra to both create properly-formatted rich text posts and understand the links and mentions in posts it receives.
+
+### Multimodal Content
+
+When processing threads, umbra extracts images and embeds from posts:
+- **Images**: Up to 8 images per thread are extracted with alt text and passed to the agent as multimodal content
+- **External links**: Link cards with thumbnails, titles, and descriptions are included in thread context
+- **Quote posts**: Embedded quote posts are extracted and included for full context
+
+This allows umbra to "see" images in threads and respond with visual awareness.
 
 
 ## umbra
@@ -237,13 +271,15 @@ For more details, see [`CLAUDE.md`](/CLAUDE.md#claude-code-integration).
 
 umbra provides the following capabilities:
 
-- **Post Creation**: Creates posts and replies on Bluesky
-- **Feed Reading**: Monitors and reads from Bluesky feeds
+- **Post Creation**: Creates posts, threads, and multi-part replies on Bluesky with automatic rich text formatting
+- **Feed Reading**: Monitors and reads from Bluesky feeds (home, discover, mutuals, curated feeds)
+- **Thread Context**: Fetches full thread context for linked/quoted posts to understand complete conversations
+- **Multimodal Understanding**: Processes images and embeds from threads for visual awareness
 - **User Research**: Analyzes user profiles and behaviors
-- **Reply Threading**: Maintains conversation context across threads
+- **Reply Threading**: Maintains conversation context across threads with smart consecutive chain processing
 - **Web Content Integration**: Fetches and analyzes web content for enhanced understanding
-- **Activity Control**: Manages response behavior and timing
-- **Blog Posting**: Can post to Whitewind blogs
+- **Scheduled Autonomous Tasks**: Synthesis, feed engagement, daily review, and curiosities exploration
+- **Blog Posting**: Can post to GreenGale blogs with themes and LaTeX support
 - **Claude Code Integration** (optional): Delegates coding tasks to local Claude Code instance for building websites, writing code, creating documentation, and performing analysis
 
 ### Troubleshooting
