@@ -17,7 +17,7 @@ The scheduled tasks system is implemented in `scheduled_prompts.py` and provides
 |------|--------------|-----------------|-------------|
 | `synthesis` | Fixed interval | Every 24 hours | Deep reflection and memory synthesis |
 | `mutuals_engagement` | Random window | Within 36 hours | Engage with mutuals feed |
-| `daily_review` | Random window | Within 24 hours | Review own posts from past 24h |
+| `daily_review` | Fixed interval | Every 24 hours | Review own posts from past 24h |
 | `feed_engagement` | Random window | Within 24 hours | Read and engage with feeds |
 | `curiosities_exploration` | Random window | Within 24 hours | Explore topics from curiosities block |
 
@@ -64,7 +64,7 @@ These blocks are only attached during synthesis/daily review and detached afterw
 
 ### Daily Review
 
-**Schedule**: Random time within 24-hour window
+**Schedule**: Every 24 hours (fixed interval)
 
 **Purpose**: Self-reflection on umbra's own posting activity.
 

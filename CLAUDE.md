@@ -62,7 +62,7 @@ Task intervals and scheduling parameters are configured in `scheduled_prompts.py
 |------|----------|---------|
 | `synthesis` | Every 24h | Deep reflection with temporal journal blocks (day/month/year) |
 | `mutuals_engagement` | Random within 36h | Engage with posts from mutual follows |
-| `daily_review` | Random within 24h | Review own posts from past 24h, identify patterns |
+| `daily_review` | Every 24h | Review own posts from past 24h, identify patterns |
 | `feed_engagement` | Random within 24h | Read home/MLBlend feeds, optionally post |
 | `curiosities_exploration` | Random within 24h | Explore topics from curiosities block, share discoveries |
 
@@ -379,6 +379,8 @@ tail -f claude_code_poller.log
 2. **bsky_utils.py**: Bluesky API utilities
    - Session management and authentication
    - Thread processing and YAML conversion
+   - Facet extraction (mentions, URLs, links from posts)
+   - Image and embed extraction for multimodal content
    - Post creation and reply handling
 
 3. **utils.py**: Letta integration utilities
@@ -392,6 +394,7 @@ tail -f claude_code_poller.log
    - **author_feed.py**: `get_author_feed` for retrieving posts from a specific user
    - **like.py**: `like_bluesky_post` for liking posts
    - **reply.py**: `reply_to_bluesky_post` for replying to any post (supports multi-post threaded replies)
+   - **get_thread.py**: `get_thread_by_uri` for fetching full thread context from linked/quoted posts
    - **ignore.py**: `ignore_notification` for explicitly ignoring bot/spam interactions
    - **greengale.py**: `create_greengale_blog_post` for creating blog posts with themes/LaTeX
    - **webpage.py**: `fetch_webpage` for fetching webpages via Jina AI
@@ -471,7 +474,7 @@ PDS_URI=https://bsky.social  # Optional, defaults to bsky.social
 
 ## Key Development Patterns
 
-1. **Tool System**: Tools are defined as standalone functions in `tools/functions.py` with Pydantic schemas for validation, registered via `register_tools.py`
+1. **Tool System**: Tools are defined as standalone functions in individual files under `tools/` (e.g., `tools/post.py`, `tools/reply.py`) with Pydantic schemas for validation, registered via `register_tools.py`
 2. **Error Handling**: All Bluesky operations should handle authentication errors and rate limits
 3. **Memory Updates**: Use `upsert_block()` for updating memory blocks to ensure consistency
 4. **Thread Processing**: Convert threads to YAML format for better AI comprehension
