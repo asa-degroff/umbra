@@ -1,38 +1,6 @@
 """GreenGale blog post creation tool."""
-import time
-import random
 from typing import Optional, Literal
 from pydantic import BaseModel, Field
-
-
-# Base32 sortable alphabet used by AT Protocol TIDs
-TID_CHARSET = "234567abcdefghijklmnopqrstuvwxyz"
-
-
-def generate_tid() -> str:
-    """
-    Generate a TID (Timestamp Identifier) for AT Protocol records.
-
-    TIDs are 13-character base32-sortable identifiers that encode:
-    - Microsecond timestamp (high 53 bits)
-    - Clock identifier (low 10 bits, randomized)
-    """
-    # Get current time in microseconds
-    timestamp_us = int(time.time() * 1_000_000)
-
-    # Use random clock ID (10 bits)
-    clock_id = random.randint(0, 1023)
-
-    # Combine: timestamp in high bits, clock_id in low 10 bits
-    tid_int = (timestamp_us << 10) | clock_id
-
-    # Encode as base32-sortable (13 characters)
-    tid = ""
-    for _ in range(13):
-        tid = TID_CHARSET[tid_int & 0x1F] + tid
-        tid_int >>= 5
-
-    return tid
 
 
 class GreenGaleTheme(BaseModel):
@@ -120,6 +88,8 @@ def create_greengale_blog_post(
         Exception: If the post creation fails
     """
     import os
+    import time
+    import random
     import requests
     from datetime import datetime, timezone
 
@@ -163,7 +133,15 @@ def create_greengale_blog_post(
             raise Exception("Failed to get access token or DID from session")
 
         # Generate TID for the record key (needed for path field)
-        rkey = generate_tid()
+        # TID: 13-char base32-sortable identifier (microsecond timestamp + clock ID)
+        tid_charset = "234567abcdefghijklmnopqrstuvwxyz"
+        timestamp_us = int(time.time() * 1_000_000)
+        clock_id = random.randint(0, 1023)
+        tid_int = (timestamp_us << 10) | clock_id
+        rkey = ""
+        for _ in range(13):
+            rkey = tid_charset[tid_int & 0x1F] + rkey
+            tid_int >>= 5
 
         # Create blog post record using V2 lexicon
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
