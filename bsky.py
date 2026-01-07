@@ -2028,8 +2028,99 @@ def save_processed_notifications(processed_set):
     pass
 
 
-def save_notification_to_queue(notification, is_priority=None):
-    """Save a notification to the queue directory with priority-based filename."""
+def calculate_pending_thread_turns(notifications: list) -> dict:
+    """
+    Calculate pending conversation turns per thread from incoming notifications.
+
+    Groups consecutive posts from same author within 60 seconds as one turn,
+    matching the logic in notification_db.get_thread_notification_count().
+
+    Args:
+        notifications: List of notification dicts to analyze
+
+    Returns:
+        Dict mapping root_uri to turn count for that thread
+    """
+    # Group notifications by root_uri (thread)
+    threads = {}
+    for notif in notifications:
+        # Extract root_uri from notification
+        record = notif.get('record', {})
+        root_uri = None
+        if record and 'reply' in record and record['reply']:
+            reply_info = record['reply']
+            if reply_info and isinstance(reply_info, dict):
+                root_info = reply_info.get('root', {})
+                if root_info:
+                    root_uri = root_info.get('uri')
+
+        # If no root_uri in reply info, this notification IS the root
+        if not root_uri:
+            root_uri = notif.get('uri')
+
+        if root_uri:
+            if root_uri not in threads:
+                threads[root_uri] = []
+            threads[root_uri].append(notif)
+
+    # Calculate turns per thread using same grouping logic as get_thread_notification_count
+    result = {}
+    turn_gap_seconds = 60
+
+    for root_uri, notifs in threads.items():
+        # Sort by indexed_at
+        sorted_notifs = sorted(notifs, key=lambda n: n.get('indexed_at', ''))
+
+        turn_count = 0
+        last_author = None
+        last_time = None
+
+        for notif in sorted_notifs:
+            author = notif.get('author', {}).get('did', '')
+
+            # Parse indexed_at timestamp
+            current_time = None
+            indexed_at_str = notif.get('indexed_at', '')
+            if indexed_at_str:
+                try:
+                    # Handle both with and without timezone
+                    if '+' in indexed_at_str or indexed_at_str.endswith('Z'):
+                        indexed_at_str = indexed_at_str.replace('Z', '').split('+')[0]
+                    current_time = datetime.fromisoformat(indexed_at_str)
+                except (ValueError, TypeError):
+                    pass
+
+            if last_author is None:
+                # First notification in this thread
+                turn_count = 1
+            elif author != last_author:
+                # Different author = new turn
+                turn_count += 1
+            elif current_time and last_time:
+                # Same author - check time gap
+                time_gap = (current_time - last_time).total_seconds()
+                if time_gap > turn_gap_seconds:
+                    # Same author but long gap = new turn
+                    turn_count += 1
+
+            last_author = author
+            last_time = current_time
+
+        result[root_uri] = turn_count
+
+    return result
+
+
+def save_notification_to_queue(notification, is_priority=None, threads_to_predebounce=None):
+    """
+    Save a notification to the queue directory with priority-based filename.
+
+    Args:
+        notification: Notification object or dict to save
+        is_priority: Optional priority flag (True for priority, None for auto-detect)
+        threads_to_predebounce: Optional set of root_uris for threads that should be
+            pre-debounced (incoming batch will push them over high-traffic threshold)
+    """
     try:
         global NOTIFICATION_DB
         
@@ -2112,8 +2203,65 @@ def save_notification_to_queue(notification, is_priority=None):
                 # Get current thread state
                 thread_state = NOTIFICATION_DB.get_thread_state(root_uri)
 
+                # Pre-debounce check: incoming batch will push this thread over threshold
+                # This takes priority over existing state checks to ensure ALL notifications
+                # in a batch that exceeds threshold get debounced together
+                if threads_to_predebounce and root_uri in threads_to_predebounce:
+                    logger.info(f"⚡ Pre-debouncing {thread_type} (incoming batch will exceed threshold)")
+
+                    # Check for duplicate first
+                    add_result = NOTIFICATION_DB.add_notification(notif_dict)
+                    if add_result == "duplicate":
+                        logger.debug(f"⚡ Skipping duplicate {thread_type} (pre-debounce): {notification_uri}")
+                        return False
+                    elif add_result == "error":
+                        logger.error(f"⚡ Error adding {thread_type} to database: {notification_uri}")
+                        return False
+
+                    # Calculate debounce time
+                    debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
+                        threshold, is_mention, high_traffic_config
+                    )
+                    debounce_until = (datetime.now() + timedelta(seconds=debounce_seconds)).isoformat()
+
+                    # Check if we need to start or extend thread debouncing
+                    if thread_state and thread_state['state'] == 'debouncing':
+                        # Check if timer expired
+                        current_time = datetime.now().isoformat()
+                        thread_debounce_until = thread_state.get('debounce_until', '')
+                        timer_expired = thread_debounce_until and thread_debounce_until <= current_time
+
+                        if not timer_expired:
+                            # Extend existing debounce
+                            new_count = thread_state['notification_count'] + 1
+                            debounce_started_at = thread_state.get('debounce_started_at') or datetime.now().isoformat()
+                            new_debounce_until = NOTIFICATION_DB.extend_thread_debounce(
+                                root_uri, debounce_seconds, new_count, debounce_started_at
+                            )
+                            if new_debounce_until:
+                                debounce_until = new_debounce_until
+                                logger.info(f"⚡ Extended pre-debounce ({new_count} notifications)")
+                        else:
+                            # Timer expired - start fresh cycle
+                            NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=1)
+                    else:
+                        # No existing debounce state (or cooldown/unknown) - start fresh
+                        NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=1)
+
+                    # Set auto-debounce on notification
+                    reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
+                    NOTIFICATION_DB.set_auto_debounce(
+                        notification_uri,
+                        debounce_until,
+                        is_high_traffic=True,
+                        reason=reason_label,
+                        thread_chain_id=root_uri
+                    )
+
+                    skip_db_add = True
+
                 # Check if thread is in DEBOUNCING or COOLDOWN state
-                if thread_state:
+                elif thread_state:
                     if thread_state['state'] == 'debouncing':
                         # Check if the debounce timer has EXPIRED
                         # If expired, the batch is pending processing - start a NEW debounce cycle
@@ -2853,7 +3001,56 @@ def fetch_and_queue_new_notifications(atproto_client):
             skipped_processed = 0
             skipped_old_timestamp = 0
             processed_uris = load_processed_notifications()
-            
+
+            # Pre-analysis: identify threads that will exceed high-traffic threshold
+            # This ensures ALL notifications in a batch get debounced together
+            threads_to_predebounce = set()
+            config = get_config()
+            threading_config = config.get('threading', {})
+            high_traffic_config = threading_config.get('high_traffic_detection', {})
+
+            if high_traffic_config.get('enabled', False) and NOTIFICATION_DB:
+                threshold = high_traffic_config.get('notification_threshold', 10)
+                time_window = high_traffic_config.get('time_window_minutes', 60)
+
+                # Build list of eligible notifications (not likes, not already processed)
+                eligible_notifications = []
+                for notif in all_notifications:
+                    # Skip likes
+                    if hasattr(notif, 'reason') and notif.reason == 'like':
+                        continue
+
+                    notif_dict = notif.model_dump() if hasattr(notif, 'model_dump') else notif
+
+                    # Skip likes in dict form
+                    if notif_dict.get('reason') == 'like':
+                        continue
+
+                    # Skip already processed
+                    notif_uri = notif_dict.get('uri', '')
+                    if notif_uri in processed_uris:
+                        continue
+
+                    # Skip old timestamps
+                    if last_processed_time and notif_dict.get('indexed_at'):
+                        if notif_dict.get('indexed_at') <= last_processed_time:
+                            continue
+
+                    eligible_notifications.append(notif_dict)
+
+                # Calculate pending turns per thread
+                pending_turns = calculate_pending_thread_turns(eligible_notifications)
+
+                # Check which threads will exceed threshold
+                for root_uri, pending_count in pending_turns.items():
+                    # Get current DB count for this thread
+                    db_count = NOTIFICATION_DB.get_thread_notification_count(root_uri, time_window)
+                    combined_count = db_count + pending_count
+
+                    if combined_count >= threshold:
+                        threads_to_predebounce.add(root_uri)
+                        logger.info(f"⚡ Thread will exceed threshold: {db_count} DB + {pending_count} incoming = {combined_count} (threshold: {threshold})")
+
             # Queue all new notifications (except likes)
             for notif in all_notifications:
                 # 1. Skip likes first (fast check)
@@ -2907,7 +3104,7 @@ def fetch_and_queue_new_notifications(atproto_client):
                 indexed_at = notif_dict.get('indexed_at', 'unknown')
                 logger.debug(f"🔍 Attempting to queue notification: uri={notif_uri}, indexed_at={indexed_at}, author=@{author_handle}")
 
-                if save_notification_to_queue(notif_dict, is_priority=is_priority):
+                if save_notification_to_queue(notif_dict, is_priority=is_priority, threads_to_predebounce=threads_to_predebounce):
                     new_count += 1
                     logger.debug(f"✅ Queued notification from @{author_handle}: {notif_dict.get('reason', 'unknown')}")
             
