@@ -48,7 +48,7 @@ The High-Traffic Thread Debounce system provides:
 3. **Priority Queue**: Direct mentions receive shorter debounce times than replies
 4. **Variable Scaling**: Debounce duration increases with thread activity
 5. **Batch Processing**: All notifications presented together with complete thread context
-6. **Incremental Batches**: Subsequent batches only show NEW posts, not previously reviewed ones
+6. **Full Context Preservation**: Tree view always includes all context posts for complete thread understanding
 7. **State Machine**: Robust tracking of thread lifecycle (debouncing → cooldown → reset)
 
 ---
@@ -577,16 +577,19 @@ for queue_file in queue_files:
 
 ### The Problem
 
-When a thread continues generating notifications after a batch is processed, umbra shouldn't see the same posts again. The system needs to:
-1. Remember what posts were shown in previous batches
-2. Only show NEW posts in subsequent batches
+When a thread continues generating notifications after a batch is processed, umbra needs to maintain context about the full thread structure. Notifications may be replies to any post in the thread, so the agent must see the complete conversation to understand the context.
 
-### Solution: Thread Batch History
+### Solution: Full Tree View Always
 
-The `thread_batch_history` table persists independently of `thread_state`:
+The system always includes the complete tree view of all context posts (non-notification posts), regardless of whether it's a first batch or an incremental batch. This ensures:
+1. Notifications that reply to older posts have proper context
+2. The agent understands the full thread structure
+3. No context is lost due to optimization
+
+The `thread_batch_history` table tracks batch history for logging purposes:
 
 ```sql
--- Survives cooldown expiry, remembers history across batch cycles
+-- Records when batches were processed
 INSERT INTO thread_batch_history (root_uri, last_batch_processed_at, last_batch_newest_post_indexed_at)
 VALUES (?, ?, ?)
 ON CONFLICT(root_uri) DO UPDATE SET ...
@@ -596,43 +599,33 @@ ON CONFLICT(root_uri) DO UPDATE SET ...
 
 **First Batch:**
 1. Fetch entire thread
-2. Show all posts to agent
-3. Record newest post timestamp: `last_batch_newest_post_indexed_at = 2025-11-24T12:45:00Z`
+2. Show full tree view of all context posts
+3. Record newest post timestamp for logging
 
 **Second Batch (thread continues):**
 1. Fetch entire thread (may have grown)
-2. Look up batch history: `get_thread_batch_history(root_uri)`
-3. Split posts:
-   - Posts with `createdAt <= 2025-11-24T12:45:00Z` → **Previously reviewed** (show summary)
-   - Posts with `createdAt > 2025-11-24T12:45:00Z` → **New** (show full YAML)
-4. Update batch history with new newest timestamp
+2. Show full tree view of all context posts (same as first batch)
+3. Notifications section shows only new notifications
+4. Update batch history for tracking
 
-### Message Format for Incremental Batch
+### Message Format (Same for All Batches)
 
 ```
-This is a HIGH-TRAFFIC THREAD that generated N new notifications.
-You previously reviewed this thread on 2025-11-24T12:45:00.
+This is a HIGH-TRAFFIC THREAD that generated N notifications during the debounce period.
 
 ================================================================================
-1. PREVIOUSLY REVIEWED POSTS (Summary)
+1. Thread context (Pre-notification history)
 ================================================================================
 
-12 posts were in the thread when you last reviewed it.
-These posts have already been seen - focusing on new content below.
+These posts were in the thread BEFORE you received your notifications:
+
+Thread Structure:
+├─ @alice.bsky.social: "Original post that started the thread..."
+│  └─ @bob.bsky.social: "First reply..."
+│     └─ @charlie.bsky.social: "Continuing the conversation..."
 
 ================================================================================
-2. NEW POSTS SINCE LAST REVIEW
-================================================================================
-
-posts:
-  - author:
-      handle: newposter.bsky.social
-    record:
-      text: "This is a new post since your last review..."
-      createdAt: "2025-11-24T14:30:00Z"
-
-================================================================================
-3. NOTIFICATIONS (N posts you were notified about)
+2. NOTIFICATIONS (N posts you were notified about)
 ================================================================================
 ...
 ```

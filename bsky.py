@@ -629,47 +629,14 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             else:
                 context_posts.append(post)
 
-        # Further split context by what's new vs previously reviewed
-        new_context_posts = [p for p in context_posts if p.get('uri') in {np.get('uri') for np in new_posts}]
-
         # Build THREAD CONTEXT section
-        is_incremental_batch = len(previous_posts) > 0
-
-        if is_incremental_batch:
-            # INCREMENTAL BATCH: Show summary of previous + full detail of new
-            # Build summary of previous context
-            if previous_posts:
-                first_post = previous_posts[0]
-                first_author = first_post.get('author', {}).get('handle', 'unknown') if isinstance(first_post.get('author'), dict) else 'unknown'
-                last_reviewed = batch_history.get('last_batch_processed_at', 'unknown') if batch_history else 'unknown'
-                previous_summary = f"""You previously reviewed {len(previous_posts)} posts in this thread.
-- Thread started by: @{first_author}
-- Last review: {last_reviewed}
-- Previous posts will NOT be shown again to save context."""
-            else:
-                previous_summary = "(No previous context)"
-
-            # Build tree view of new posts (non-notification context posts that are new)
-            # Only tree view is needed for context - full metadata is in the NOTIFICATIONS section
-            if new_context_posts:
-                tree_view = bsky_utils.build_tree_view(new_context_posts)
-                new_context_yaml = f"Thread Structure:\n{tree_view}"
-            else:
-                new_context_yaml = "(No new context posts - only notifications are new)"
-
-            pre_notification_yaml = f"""=== PREVIOUS CONTEXT (already reviewed) ===
-{previous_summary}
-
-=== NEW CONTEXT (since last review) ===
-{new_context_yaml}"""
+        # Always include the full tree view for context - notifications can be replies
+        # to any post in the thread, so the agent needs to see the full structure
+        if context_posts:
+            tree_view = bsky_utils.build_tree_view(context_posts)
+            pre_notification_yaml = f"Thread Structure:\n{tree_view}"
         else:
-            # FIRST BATCH: Show tree view for context
-            # Only tree view is needed for context - full metadata is in the NOTIFICATIONS section
-            if context_posts:
-                tree_view = bsky_utils.build_tree_view(context_posts)
-                pre_notification_yaml = f"Thread Structure:\n{tree_view}"
-            else:
-                pre_notification_yaml = "(No context posts - notifications start the thread)"
+            pre_notification_yaml = "(No context posts - notifications start the thread)"
 
         # Build NOTIFICATIONS section with full text and metadata
         notification_entries = []
@@ -1300,9 +1267,9 @@ FULL THREAD CONTEXT:
 
 {context_note}
 
-Carefully review the message and use your archival_memory_search and web_search to find additional context if relevant. 
+Carefully review the message and use your archival_memory_search and web_search tools to find additional context. 
 
-If you choose to reply, use the reply_to_bluesly_post tool.
+To to reply, use the reply_to_bluesly_post tool.
 - You can use a list to create a multi-post threaded reply.
 
 If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it.
@@ -1313,8 +1280,7 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
         if debounce_enabled:
             debounce_minutes = debounce_seconds // 60
             prompt += f"""
-
-THREAD DEBOUNCING: If this looks like an incomplete multi-post thread, call debounce_thread(notification_uri="{uri}") to wait {debounce_minutes}min for completion before responding."""
+"""
 
         # Finalize prompt
         prompt = prompt
