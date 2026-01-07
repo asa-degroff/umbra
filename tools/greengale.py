@@ -1,6 +1,38 @@
 """GreenGale blog post creation tool."""
+import time
+import random
 from typing import Optional, Literal
 from pydantic import BaseModel, Field
+
+
+# Base32 sortable alphabet used by AT Protocol TIDs
+TID_CHARSET = "234567abcdefghijklmnopqrstuvwxyz"
+
+
+def generate_tid() -> str:
+    """
+    Generate a TID (Timestamp Identifier) for AT Protocol records.
+
+    TIDs are 13-character base32-sortable identifiers that encode:
+    - Microsecond timestamp (high 53 bits)
+    - Clock identifier (low 10 bits, randomized)
+    """
+    # Get current time in microseconds
+    timestamp_us = int(time.time() * 1_000_000)
+
+    # Use random clock ID (10 bits)
+    clock_id = random.randint(0, 1023)
+
+    # Combine: timestamp in high bits, clock_id in low 10 bits
+    tid_int = (timestamp_us << 10) | clock_id
+
+    # Encode as base32-sortable (13 characters)
+    tid = ""
+    for _ in range(13):
+        tid = TID_CHARSET[tid_int & 0x1F] + tid
+        tid_int >>= 5
+
+    return tid
 
 
 class GreenGaleTheme(BaseModel):
@@ -64,7 +96,7 @@ def create_greengale_blog_post(
     """
     Create a new blog post on GreenGale.
 
-    This tool creates blog posts using the app.greengale.blog.entry lexicon on the ATProto network.
+    This tool creates blog posts using the app.greengale.document lexicon (V2) on the ATProto network.
     GreenGale supports custom themes, LaTeX/KaTeX math rendering, inline SVGs, and multiple visibility options.
     To embed an SVG, use a code block with "svg" as the language, e.g.:
     ```svg
@@ -130,15 +162,20 @@ def create_greengale_blog_post(
         if not access_token or not user_did:
             raise Exception("Failed to get access token or DID from session")
 
-        # Create blog post record
+        # Generate TID for the record key (needed for path field)
+        rkey = generate_tid()
+
+        # Create blog post record using V2 lexicon
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         blog_record = {
-            "$type": "app.greengale.blog.entry",
+            "$type": "app.greengale.document",
             "title": title,
             "content": content,
-            "createdAt": now,
-            "visibility": visibility
+            "publishedAt": now,
+            "visibility": visibility,
+            "url": "https://greengale.app",
+            "path": f"/{handle}/{rkey}"
         }
 
         # Add subtitle if provided
@@ -205,22 +242,16 @@ def create_greengale_blog_post(
 
         create_data = {
             "repo": user_did,
-            "collection": "app.greengale.blog.entry",
+            "collection": "app.greengale.document",
+            "rkey": rkey,
             "record": blog_record
         }
 
         post_response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
         post_response.raise_for_status()
-        result = post_response.json()
 
-        # Extract the record key from the URI
-        post_uri = result.get("uri")
-        if post_uri:
-            rkey = post_uri.split("/")[-1]
-            # Construct the GreenGale blog URL
-            blog_url = f"https://greengale.app/{handle}/{rkey}"
-        else:
-            blog_url = "URL generation failed"
+        # Construct the GreenGale blog URL (we already have the rkey)
+        blog_url = f"https://greengale.app/{handle}/{rkey}"
 
         # Build success message
         visibility_labels = {
