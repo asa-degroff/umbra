@@ -880,7 +880,7 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Build prompt for agent with new two-section format
         separator = "━" * 80
         system_message = f"""
-This is a HIGH-TRAFFIC THREAD that generated {len(batch_notifications)} notifications during the debounce period.
+This is a high-traffic thread that generated {len(batch_notifications)} notifications during the debounce period.
 
 {separator}
 1. Thread context (Pre-notification history)
@@ -891,19 +891,19 @@ These posts were in the thread BEFORE you received your notifications:
 {pre_notification_yaml}
 
 {separator}
-2. NOTIFICATIONS ({len(batch_notifications)} posts you were notified about)
+2. Notifications: ({len(batch_notifications)} posts you were notified about)
 {separator}
 
 {notifications_section}
 
 {separator}
 
-Carefully review the messages and use your archival_memory_search and web_search to find additional context if relevant. 
+Carefully review the messages and use your archival_memory_search and web_search to find additional context. 
 
 - Review thread context to understand the conversation history
 - You received {len(batch_notifications)} notifications - these are the posts that might warrant a response
 - Respond to 0-{len(batch_notifications)} notifications depending on what's interesting
-- Use reply_to_bluesky_post with the URI and CID from the notification you want to reply to""".strip()
+- TO REPLY: Use reply_to_bluesky_post tool with the URI and CID from the notification you want to reply to""".strip()
 
         logger.info(f"Sending high-traffic batch to agent | {len(posts)} posts in thread | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
 

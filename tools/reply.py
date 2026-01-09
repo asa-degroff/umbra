@@ -95,7 +95,7 @@ def reply_to_bluesky_post(uri: str, cid: str, text: List[str], lang: str = "en-U
     # Validate character limits for all posts
     for i, reply_text in enumerate(text):
         if len(reply_text) > 300:
-            raise ValueError(f"Reply {i+1} exceeds 300 character limit (current: {len(reply_text)} characters)")
+            raise ValueError(f"Reply {i+1} exceeds 300 character limit (current: {len(reply_text)} characters). Try splitting into multiple replies.")
 
     # Get credentials from environment variables
     username = os.getenv("BSKY_USERNAME")
