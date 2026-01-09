@@ -6,6 +6,7 @@ This tool is self-contained and works anywhere (notification processing, feed re
 search results, etc.).
 
 Supports multi-part replies by passing a list of texts, which creates a threaded reply chain.
+Supports optional image attachments on the first reply.
 """
 
 from pydantic import BaseModel, Field, field_validator
@@ -31,6 +32,14 @@ class ReplyToBlueskyPostArgs(BaseModel):
         default="en-US",
         description="Language code for the reply (e.g., 'en-US', 'es', 'ja', 'th'). Defaults to 'en-US'"
     )
+    image_url: Optional[str] = Field(
+        default=None,
+        description="URL of an image to attach to the first reply. The image will be downloaded and uploaded to Bluesky."
+    )
+    image_alt: Optional[str] = Field(
+        default=None,
+        description="Alt text for the image (for accessibility). If not provided, a generic description is used."
+    )
 
     @field_validator("uri")
     @classmethod
@@ -52,7 +61,14 @@ class ReplyToBlueskyPostArgs(BaseModel):
         return v
 
 
-def reply_to_bluesky_post(uri: str, cid: str, text: List[str], lang: str = "en-US") -> str:
+def reply_to_bluesky_post(
+    uri: str,
+    cid: str,
+    text: List[str],
+    lang: str = "en-US",
+    image_url: Optional[str] = None,
+    image_alt: Optional[str] = None
+) -> str:
     """
     Reply to a post on Bluesky with one or more posts.
 
@@ -69,6 +85,8 @@ def reply_to_bluesky_post(uri: str, cid: str, text: List[str], lang: str = "en-U
         text: List of reply texts (each max 300 characters). Single item creates one reply,
               multiple items create a threaded reply chain.
         lang: Language code for the reply (e.g., 'en-US', 'es', 'ja', 'th'). Defaults to 'en-US'
+        image_url: Optional URL of an image to attach to the first reply.
+        image_alt: Optional alt text for the image. If not provided, uses a generic description.
 
     Returns:
         Success message with the reply URI(s)
@@ -153,6 +171,95 @@ def reply_to_bluesky_post(uri: str, cid: str, text: List[str], lang: str = "en-U
                 if root_ref and isinstance(root_ref, dict):
                     root_uri = root_ref.get("uri", uri)
                     root_cid = root_ref.get("cid", cid)
+
+        # Handle image upload if provided
+        image_embed = None
+        if image_url:
+            try:
+                # Download image from URL
+                img_response = requests.get(image_url, timeout=30)
+                img_response.raise_for_status()
+                image_bytes = img_response.content
+
+                # Check image size (Bluesky limit is 1MB = 1,000,000 bytes)
+                if len(image_bytes) > 1_000_000:
+                    # Try to resize using Pillow
+                    try:
+                        from PIL import Image
+                        import io
+
+                        img = Image.open(io.BytesIO(image_bytes))
+                        # Convert to RGB if necessary (for JPEG)
+                        if img.mode in ('RGBA', 'P'):
+                            img = img.convert('RGB')
+
+                        # Resize to fit under 1MB while maintaining aspect ratio
+                        quality = 85
+                        while len(image_bytes) > 1_000_000 and quality > 20:
+                            output = io.BytesIO()
+                            # Reduce dimensions if quality reduction isn't enough
+                            if quality < 50:
+                                new_size = (int(img.width * 0.8), int(img.height * 0.8))
+                                img = img.resize(new_size, Image.Resampling.LANCZOS)
+                            img.save(output, format='JPEG', quality=quality, optimize=True)
+                            image_bytes = output.getvalue()
+                            quality -= 10
+
+                        if len(image_bytes) > 1_000_000:
+                            raise Exception("Image is too large and could not be compressed under 1MB")
+
+                    except ImportError:
+                        raise Exception(
+                            f"Image is too large ({len(image_bytes)} bytes, max 1MB) and Pillow is not installed for resizing. "
+                            "Install with: uv pip install Pillow"
+                        )
+
+                # Detect content type
+                content_type = img_response.headers.get('content-type', 'image/jpeg')
+                if 'png' in content_type.lower():
+                    content_type = 'image/png'
+                elif 'webp' in content_type.lower():
+                    content_type = 'image/webp'
+                elif 'gif' in content_type.lower():
+                    content_type = 'image/gif'
+                else:
+                    content_type = 'image/jpeg'
+
+                # Upload blob to Bluesky
+                upload_url = f"{pds_host}/xrpc/com.atproto.repo.uploadBlob"
+                upload_headers = {
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": content_type
+                }
+                upload_response = requests.post(
+                    upload_url,
+                    headers=upload_headers,
+                    data=image_bytes,
+                    timeout=30
+                )
+                upload_response.raise_for_status()
+                blob_data = upload_response.json()
+
+                # Build embed structure
+                blob_ref = blob_data.get("blob")
+                if not blob_ref:
+                    raise Exception("Failed to get blob reference from upload response")
+
+                image_embed = {
+                    "$type": "app.bsky.embed.images",
+                    "images": [{
+                        "image": blob_ref,
+                        "alt": image_alt or "AI-generated image",
+                        "aspectRatio": {"width": 1, "height": 1}
+                    }]
+                }
+
+            except requests.exceptions.RequestException as e:
+                raise Exception(f"Failed to download or upload image: {str(e)}")
+            except Exception as e:
+                if "image" in str(e).lower() or "blob" in str(e).lower():
+                    raise
+                raise Exception(f"Error processing image: {str(e)}")
 
         # Step 3: Create replies (single or threaded chain)
         create_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
@@ -249,6 +356,10 @@ def reply_to_bluesky_post(uri: str, cid: str, text: List[str], lang: str = "en-U
             if facets:
                 reply_record["facets"] = facets
 
+            # Add image embed to the first reply only
+            if i == 0 and image_embed:
+                reply_record["embed"] = image_embed
+
             # Submit the reply
             create_data = {
                 "repo": user_did,
@@ -275,11 +386,15 @@ def reply_to_bluesky_post(uri: str, cid: str, text: List[str], lang: str = "en-U
             parent_cid = new_cid
 
         # Return appropriate message based on single reply or thread
+        image_info = ""
+        if image_embed:
+            image_info = f"\nImage attached: Yes (alt text: {image_alt or 'AI-generated image'})"
+
         if len(text) == 1:
-            return f"Successfully posted reply: {reply_uris[0]} (CID: {parent_cid})"
+            return f"Successfully posted reply: {reply_uris[0]} (CID: {parent_cid}){image_info}"
         else:
             uris_text = "\n".join([f"Reply {i+1}: {u}" for i, u in enumerate(reply_uris)])
-            return f"Successfully created reply thread with {len(text)} posts!\n{uris_text}"
+            return f"Successfully created reply thread with {len(text)} posts!\n{uris_text}{image_info}"
 
     except requests.exceptions.RequestException as e:
         # Handle network/API errors

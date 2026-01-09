@@ -7,7 +7,7 @@ from typing import List
 from letta_client import Letta
 from rich.console import Console
 from rich.table import Table
-from config_loader import get_letta_config, get_bluesky_config, get_r2_config, get_config
+from config_loader import get_letta_config, get_bluesky_config, get_r2_config, get_image_generation_config, get_config
 
 # Import standalone functions and their schemas
 from tools.search import search_bluesky_posts, SearchArgs
@@ -25,6 +25,7 @@ from tools.flag_memory_deletion import flag_archival_memory_for_deletion, FlagAr
 from tools.claude_code import ask_claude_code, AskClaudeCodeArgs
 from tools.debounce_thread import debounce_thread, DebounceThreadArgs
 from tools.get_thread import get_thread_by_uri, GetThreadByUriArgs
+from tools.generate_image import generate_image, GenerateImageArgs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -126,6 +127,12 @@ TOOL_CONFIGS = [
         "description": "Defer processing of a notification to allow multi-post threads to complete before responding",
         "tags": ["threading", "debounce", "defer", "notification"]
     },
+    {
+        "func": generate_image,
+        "args_schema": GenerateImageArgs,
+        "description": "Generate an AI image using Leonardo Lucid Origin. Returns URL for review - use with post/reply tools to attach.",
+        "tags": ["image", "generation", "ai", "creative", "art"]
+    },
 ]
 
 
@@ -183,6 +190,11 @@ def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool 
                         'R2_BUCKET_NAME': r2_config['bucket_name']
                     })
 
+                # Add Replicate API token if configured (for image generation)
+                image_config = get_image_generation_config()
+                if image_config.get('replicate_api_token'):
+                    env_vars['REPLICATE_API_TOKEN'] = image_config['replicate_api_token']
+
                 console.print(f"\n[bold cyan]Setting tool execution environment variables:[/bold cyan]")
                 console.print(f"  BSKY_USERNAME: {env_vars['BSKY_USERNAME']}")
                 console.print(f"  PDS_URI: {env_vars['PDS_URI']}")
@@ -195,6 +207,11 @@ def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool 
                     console.print(f"  R2_BUCKET_NAME: {env_vars['R2_BUCKET_NAME']}")
                 else:
                     console.print(f"  [dim]R2 credentials not configured (Claude Code tool will not work)[/dim]")
+
+                if 'REPLICATE_API_TOKEN' in env_vars:
+                    console.print(f"  REPLICATE_API_TOKEN: {env_vars['REPLICATE_API_TOKEN'][:8]}...")
+                else:
+                    console.print(f"  [dim]Replicate API token not configured (image generation will not work)[/dim]")
 
                 console.print()
 
@@ -256,6 +273,37 @@ def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool 
                 logger.error(f"Error registering tool {tool_name}: {e}")
 
         console.print(table)
+
+        # Configure tool rules for image generation workflow
+        # TerminalToolRule (exit_loop) stops agent after generate_image
+        # This allows app-level orchestration to inject the image back for visual review
+        try:
+            console.print(f"\n[bold cyan]Configuring tool rules:[/bold cyan]")
+
+            # Check if generate_image is in the registered tools
+            registered_tool_names = [t["func"].__name__ for t in tools_to_register]
+            if 'generate_image' in registered_tool_names:
+                # Import the TerminalToolRule class
+                from letta_client import TerminalToolRule
+
+                # TerminalToolRule: agent stops after generate_image
+                # bsky.py will then inject the image for visual review
+                tool_rules = [
+                    TerminalToolRule(tool_name="generate_image")
+                ]
+
+                client.agents.modify(
+                    agent_id=agent_id,
+                    tool_rules=tool_rules
+                )
+                console.print(f"  ✓ generate_image: exit_loop (stops for app-level image injection)")
+            else:
+                console.print(f"  [dim]generate_image not registered, skipping tool rules[/dim]")
+
+            console.print("[green]✓ Tool rules configured successfully[/green]\n")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Failed to set tool rules: {e}[/yellow]\n")
+            logger.warning(f"Failed to set tool rules: {e}")
 
     except Exception as e:
         console.print(f"[red]Error: {str(e)}[/red]")

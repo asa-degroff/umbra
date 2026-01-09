@@ -197,6 +197,15 @@ def get_r2_config() -> Dict[str, Any]:
         'bucket_name': config.get('cloudflare_r2.bucket_name', os.getenv('R2_BUCKET_NAME', 'umbra-claude-code')),
     }
 
+def get_image_generation_config() -> Dict[str, Any]:
+    """Get image generation configuration for Replicate API integration."""
+    config = get_config()
+    return {
+        'replicate_api_token': config.get('image_generation.replicate_api_token', os.getenv('REPLICATE_API_TOKEN', '')),
+        'default_model': config.get('image_generation.default_model', 'leonardoai/lucid-origin'),
+        'default_aspect_ratio': config.get('image_generation.default_aspect_ratio', '1:1'),
+    }
+
 def get_claude_code_config() -> Dict[str, Any]:
     """Get Claude Code configuration."""
     config = get_config()

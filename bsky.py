@@ -37,6 +37,52 @@ from scheduled_prompts import (
     detach_temporal_blocks,
 )
 
+def download_image_as_base64(url: str, timeout: int = 30) -> tuple[str, str] | None:
+    """Download an image from URL and convert to base64.
+
+    Args:
+        url: The image URL to download
+        timeout: Request timeout in seconds
+
+    Returns:
+        Tuple of (base64_data, media_type) or None if failed
+    """
+    import requests
+    import base64
+
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+
+        image_data = response.content
+
+        # Detect media type from magic bytes (file signature), NOT URL or headers
+        # This is critical because Replicate URLs may have .png extension but serve JPEG
+        if image_data[:8] == b'\x89PNG\r\n\x1a\n':
+            media_type = 'image/png'
+        elif image_data[:3] == b'\xff\xd8\xff':
+            media_type = 'image/jpeg'
+        elif image_data[:6] in (b'GIF87a', b'GIF89a'):
+            media_type = 'image/gif'
+        elif image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP':
+            media_type = 'image/webp'
+        else:
+            # Default to JPEG if unknown (most common for AI-generated images)
+            media_type = 'image/jpeg'
+            logging.getLogger('void_bot').warning(
+                f"Unknown image format (magic bytes: {image_data[:8].hex()}), defaulting to JPEG"
+            )
+
+        logging.getLogger('void_bot').info(f"Detected image format from magic bytes: {media_type}")
+
+        base64_data = base64.b64encode(image_data).decode('utf-8')
+        return (base64_data, media_type)
+
+    except Exception as e:
+        logging.getLogger('void_bot').warning(f"Failed to download image for base64: {e}")
+        return None
+
+
 def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str:
     """Build multimodal content blocks with text and images.
 
@@ -1342,6 +1388,7 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
             consecutive_ping_count = 0
             STREAMING_TIMEOUT_SECONDS = 300  # 5 minutes without meaningful content = timeout
             MAX_CONSECUTIVE_PINGS = 30  # Allow ~5 minutes of pings at 10s intervals
+            pending_generated_image = None  # For IMAGE_GENERATED signal handling
 
             for chunk in message_stream:
                 # Log condensed chunk info
@@ -1481,6 +1528,22 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                                     pass
                                 elif tool_name == 'update_block':
                                     log_with_panel("Memory block updated", f"Tool result: {tool_name} ✓", "green")
+                                elif tool_name == 'generate_image':
+                                    # Check for IMAGE_GENERATED signal (only parse first line)
+                                    first_line = result_str.split('\n')[0]
+                                    if first_line.startswith('IMAGE_GENERATED|'):
+                                        parts = first_line.split('|')
+                                        if len(parts) >= 4:
+                                            pending_generated_image = {
+                                                'url': parts[1],
+                                                'prompt': parts[2],
+                                                'aspect_ratio': parts[3],
+                                                'generation_time': parts[4] if len(parts) > 4 else "unknown"
+                                            }
+                                            logger.info(f"🎨 Image generated in {pending_generated_image['generation_time']}s - will show to agent for review")
+                                            log_with_panel(f"Generated image ready for review\nURL: {parts[1][:60]}...", "Image Generated ✓", "magenta")
+                                    else:
+                                        log_with_panel(result_str[:100], f"Tool result: {tool_name} ✓", "green")
                                 else:
                                     # Generic success with preview
                                     preview = result_str[:100] + "..." if len(result_str) > 100 else result_str
@@ -1555,6 +1618,7 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
             message_response = type('StreamingResponse', (), {
                 'messages': [msg for msg in all_messages if hasattr(msg, 'message_type')]
             })()
+            logger.info(f"🔍 DEBUG: After streaming, pending_generated_image = {pending_generated_image}")
         except Exception as api_error:
             import traceback
             error_str = str(api_error)
@@ -1607,6 +1671,7 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
 
         # Log successful response
         logger.info(f"✓ Successfully received response from Letta API for @{author_handle}")
+        logger.info(f"🔍 DEBUG: After try block, pending_generated_image = {pending_generated_image}")
         logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
         logger.debug(f"Mention URI: {uri}")
 
@@ -1618,11 +1683,12 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
         agent_error_details = None  # Store error content if available
 
         logger.debug(f"Processing {len(message_response.messages)} response messages...")
-        
+
         # First pass: collect tool return statuses
         ignored_notification = False
         ignore_reason = ""
         ignore_category = ""
+        # Note: pending_generated_image is set during streaming above, don't reset it here
 
         for message in message_response.messages:
             # Debug: log message type and attributes
@@ -1667,26 +1733,70 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                         # tool_returns is a list of DICTS, not objects - use dict access
                         tool_call_id = tool_ret.get('tool_call_id') if isinstance(tool_ret, dict) else None
                         status = tool_ret.get('status', 'unknown') if isinstance(tool_ret, dict) else 'unknown'
+                        tool_name = tool_ret.get('name') if isinstance(tool_ret, dict) else None
+                        tool_return_value = tool_ret.get('tool_return') if isinstance(tool_ret, dict) else None
 
                         if tool_call_id:
                             tool_call_results[tool_call_id] = status
                             logger.debug(f"Tool result (from array): {tool_call_id} -> {status}")
 
-            # Check for ignore_notification tool
+                        # Check for generate_image in tool_returns array
+                        if tool_return_value:
+                            tool_return_str = str(tool_return_value)
+                            if 'IMAGE_GENERATED|' in tool_return_str:
+                                logger.info(f"🎨 Found IMAGE_GENERATED in tool_returns array: {tool_return_str[:200]}...")
+                                # Parse only the first line (signal line)
+                                first_line = tool_return_str.split('\n')[0]
+                                if first_line.startswith('IMAGE_GENERATED|'):
+                                    parts = first_line.split('|')
+                                    if len(parts) >= 4:
+                                        pending_generated_image = {
+                                            'url': parts[1],
+                                            'prompt': parts[2],
+                                            'aspect_ratio': parts[3],
+                                            'generation_time': parts[4] if len(parts) > 4 else "unknown"
+                                        }
+                                        logger.info(f"🎨 Image generated successfully - showing to agent for review")
+
+            # Check for tool return messages by name (simplified detection)
+            if hasattr(message, 'name') and hasattr(message, 'tool_return'):
+                tool_name = message.name
+                tool_return_str = str(message.tool_return)
+
+                if tool_name == 'generate_image':
+                    logger.info(f"🎨 Found generate_image tool return: {tool_return_str[:200]}...")
+                    # Parse only the first line (signal line)
+                    first_line = tool_return_str.split('\n')[0]
+                    if first_line.startswith('IMAGE_GENERATED|'):
+                        parts = first_line.split('|')
+                        if len(parts) >= 4:
+                            generated_image_url = parts[1]
+                            generated_image_prompt = parts[2]
+                            generated_image_aspect = parts[3]
+                            generation_time = parts[4] if len(parts) > 4 else "unknown"
+                            logger.info(f"🎨 Image generated successfully in {generation_time}s - showing to agent for review")
+                            # Store for follow-up multimodal message
+                            pending_generated_image = {
+                                'url': generated_image_url,
+                                'prompt': generated_image_prompt,
+                                'aspect_ratio': generated_image_aspect,
+                                'generation_time': generation_time
+                            }
+                    else:
+                        logger.warning(f"🎨 generate_image tool return doesn't start with IMAGE_GENERATED|: {tool_return_str[:100]}")
+
+                elif tool_name == 'ignore_notification':
+                    if 'IGNORED_NOTIFICATION::' in tool_return_str:
+                        parts = tool_return_str.split('::')
+                        if len(parts) >= 3:
+                            ignore_category = parts[1]
+                            ignore_reason = parts[2]
+                            ignored_notification = True
+                            logger.info(f"🚫 Notification ignored - Category: {ignore_category}, Reason: {ignore_reason}")
+
+            # Check for deprecated bluesky_reply tool
             if hasattr(message, 'tool_call_id') and hasattr(message, 'status') and hasattr(message, 'name'):
-                if message.name == 'ignore_notification':
-                    # Check if the tool was successful
-                    if hasattr(message, 'tool_return') and message.status == 'success':
-                        # Parse the return value to extract category and reason
-                        result_str = str(message.tool_return)
-                        if 'IGNORED_NOTIFICATION::' in result_str:
-                            parts = result_str.split('::')
-                            if len(parts) >= 3:
-                                ignore_category = parts[1]
-                                ignore_reason = parts[2]
-                                ignored_notification = True
-                                logger.info(f"🚫 Notification ignored - Category: {ignore_category}, Reason: {ignore_reason}")
-                elif message.name == 'bluesky_reply':
+                if message.name == 'bluesky_reply':
                     logger.error("DEPRECATED TOOL DETECTED: bluesky_reply is no longer supported!")
                     logger.error("Please use reply_to_bluesky_post instead.")
                     logger.error("Update the agent's tools using register_tools.py")
@@ -1884,6 +1994,168 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
 
                 except Exception as e:
                     logger.error(f"Error processing memory deletion: {e}")
+
+        # Send follow-up multimodal message if an image was generated
+        logger.info(f"🔍 DEBUG: Reached follow-up check. pending_generated_image = {pending_generated_image}")
+        if pending_generated_image:
+            try:
+                logger.info(f"🖼️ Sending generated image to agent for visual review...")
+
+                # Build multimodal content with the generated image
+                # Include original notification context so agent can properly continue
+                original_uri = notification_data.get('uri', '')
+                original_cid = notification_data.get('cid', '')
+                original_author = notification_data.get('author', {})
+                original_handle = original_author.get('handle', 'unknown')
+                original_record = notification_data.get('record', {})
+                original_text = original_record.get('text', '')
+
+                # Simple, direct prompt following Letta's recommended pattern
+                image_review_prompt = (
+                    f"Here's the generated image for your review.\n\n"
+                    f"Original request from @{original_handle}: \"{original_text}\"\n\n"
+                    f"Review this image and decide:\n"
+                    f"- If satisfied: call reply_to_bluesky_post with uri=\"{original_uri}\", cid=\"{original_cid}\", "
+                    f"image_url=\"{pending_generated_image['url']}\", image_alt=\"{pending_generated_image['prompt']}\"\n"
+                    f"- If not satisfied: call generate_image again with a revised prompt"
+                )
+
+                # Download image and convert to base64 with correct media type detection
+                # This is necessary because Replicate URLs may have .png extension but serve JPEG
+                # Letta/Anthropic will reject if media type doesn't match actual image format
+                image_url = pending_generated_image['url']
+                logger.info(f"🖼️ Downloading image for base64 conversion: {image_url[:80]}...")
+
+                base64_result = download_image_as_base64(image_url)
+                if not base64_result:
+                    logger.error(f"❌ Failed to download image for review")
+                    print(f"\n❌ Failed to download generated image for review")
+                    pending_generated_image = None
+                    raise Exception("Failed to download image for agent review")
+
+                base64_data, media_type = base64_result
+                logger.info(f"🖼️ Image downloaded: {len(base64_data)} chars base64, media_type={media_type}")
+
+                # Create multimodal content with base64 image and correct media type
+                image_content = [
+                    {"type": "text", "text": image_review_prompt},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": base64_data
+                        }
+                    }
+                ]
+
+                # Debug: log the message format (without full base64 data)
+                logger.info(f"🔍 Sending follow-up message to agent {umbra_agent.id}")
+                logger.info(f"🔍 Message: text prompt + base64 image ({media_type}, {len(base64_data)} chars)")
+
+                # Small delay to ensure agent state is ready after TerminalToolRule exit
+                import time as time_module
+                time_module.sleep(1)
+                logger.info(f"🔍 Delay complete, sending follow-up now...")
+
+                # Use streaming to avoid 502/timeout errors (same pattern as notification processing)
+                followup_stream = CLIENT.agents.messages.create_stream(
+                    agent_id=umbra_agent.id,
+                    messages=[{"role": "user", "content": image_content}],
+                    stream_tokens=False,
+                    max_steps=100
+                )
+
+                # Collect streaming response and display it
+                followup_messages = []
+                print(f"\n🖼️ Image Review")
+                print(f"  ─────────────")
+                for chunk in followup_stream:
+                    # Debug: log all message types to understand what we're receiving
+                    msg_type = getattr(chunk, 'message_type', 'NO_TYPE')
+                    logger.info(f"🔍 Follow-up chunk: type={msg_type}")
+                    # Log raw chunk representation for debugging
+                    logger.debug(f"🔍 Raw chunk: {chunk}")
+
+                    # Log error message content if present
+                    if msg_type == 'error_message':
+                        error_content = getattr(chunk, 'content', 'NO CONTENT')
+                        # Also try other common error attributes
+                        error_msg = getattr(chunk, 'message', None)
+                        error_detail = getattr(chunk, 'detail', None)
+                        # Log all attributes of the chunk for debugging
+                        chunk_attrs = {k: str(getattr(chunk, k, None))[:200] for k in dir(chunk) if not k.startswith('_')}
+                        logger.error(f"❌ Follow-up ERROR content: {error_content}")
+                        logger.error(f"❌ Follow-up ERROR message: {error_msg}")
+                        logger.error(f"❌ Follow-up ERROR detail: {error_detail}")
+                        logger.error(f"❌ Follow-up ERROR chunk attrs: {chunk_attrs}")
+                        print(f"\n❌ Image Review Error: {error_content or error_msg or error_detail or 'Unknown error'}")
+                    if hasattr(chunk, 'message_type'):
+                        if chunk.message_type == 'reasoning_message':
+                            reasoning = getattr(chunk, 'reasoning', '')
+                            if reasoning:
+                                print(f"\n◆ Image Review Reasoning")
+                                print(f"  ─────────────────────")
+                                for line in reasoning.split('\n'):
+                                    print(f"  {line}")
+                        elif chunk.message_type == 'assistant_message':
+                            content = getattr(chunk, 'content', '')
+                            if content:
+                                print(f"\n▶ Agent Response (Image Review)")
+                                print(f"  ──────────────────────────────")
+                                for line in content.split('\n'):
+                                    print(f"  {line}")
+                        elif chunk.message_type == 'tool_call_message':
+                            tool_call = getattr(chunk, 'tool_call', None)
+                            if tool_call:
+                                tool_name = tool_call.name
+                                print(f"\n⚙ Tool call: {tool_name}")
+                                try:
+                                    args = json.loads(tool_call.arguments)
+                                    if tool_name in ['reply_to_bluesky_post', 'create_new_bluesky_post']:
+                                        texts = args.get('text', [])
+                                        if texts:
+                                            print(f"  ─────────────")
+                                            for i, text in enumerate(texts, 1):
+                                                print(f"  [{i}] {text}")
+                                        if args.get('image_url'):
+                                            print(f"  📎 Image attached: {args.get('image_url', '')[:50]}...")
+                                except:
+                                    pass
+                        elif chunk.message_type == 'tool_return_message':
+                            status = getattr(chunk, 'status', '')
+                            tool_name = getattr(chunk, 'name', 'unknown')
+                            if status == 'success':
+                                log_with_panel("Success", f"Tool result: {tool_name} ✓", "green")
+                            elif status == 'error':
+                                error_msg = str(getattr(chunk, 'tool_return', ''))[:100]
+                                log_with_panel(f"Error: {error_msg}", f"Tool result: {tool_name} ✗", "red")
+                        followup_messages.append(chunk)
+
+                    # Check for 'done' signal (like main streaming loop)
+                    if str(chunk) == 'done':
+                        logger.info(f"🔍 Follow-up stream: received 'done' signal")
+                        break
+
+                logger.info(f"✓ Image sent to agent for review ({len(followup_messages)} response messages)")
+
+                # Process the follow-up response for any tool calls
+                for followup_message in followup_messages:
+                    # Check for reply_to_bluesky_post with the image
+                    if hasattr(followup_message, 'tool_call') and followup_message.tool_call:
+                        if followup_message.tool_call.name == 'reply_to_bluesky_post':
+                            direct_reply_posted = True
+                            logger.info(f"🎨 Agent posted reply with generated image")
+                        elif followup_message.tool_call.name == 'create_new_bluesky_post':
+                            direct_reply_posted = True
+                            logger.info(f"🎨 Agent posted new post with generated image")
+                        elif followup_message.tool_call.name == 'generate_image':
+                            # Agent requested another image (retry)
+                            logger.info(f"🎨 Agent requested to regenerate the image")
+
+            except Exception as e:
+                logger.error(f"Error sending generated image to agent: {e}")
+                # Continue processing even if follow-up fails
 
         # Check if agent returned an error first (before checking for intentional no-reply)
         if agent_error_occurred:
