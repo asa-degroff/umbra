@@ -40,6 +40,10 @@ class ReplyToBlueskyPostArgs(BaseModel):
         default=None,
         description="Alt text for the image (for accessibility). If not provided, a generic description is used."
     )
+    image_aspect_ratio: Optional[str] = Field(
+        default="1:1",
+        description="Aspect ratio of the image (e.g., '1:1', '16:9', '9:16', '4:3'). Used for proper preview display."
+    )
 
     @field_validator("uri")
     @classmethod
@@ -67,7 +71,8 @@ def reply_to_bluesky_post(
     text: List[str],
     lang: str = "en-US",
     image_url: Optional[str] = None,
-    image_alt: Optional[str] = None
+    image_alt: Optional[str] = None,
+    image_aspect_ratio: Optional[str] = "1:1"
 ) -> str:
     """
     Reply to a post on Bluesky with one or more posts.
@@ -245,12 +250,22 @@ def reply_to_bluesky_post(
                 if not blob_ref:
                     raise Exception("Failed to get blob reference from upload response")
 
+                # Parse aspect ratio for the embed
+                aspect_width, aspect_height = 1, 1
+                if image_aspect_ratio and ":" in image_aspect_ratio:
+                    try:
+                        parts = image_aspect_ratio.split(":")
+                        aspect_width = int(parts[0])
+                        aspect_height = int(parts[1])
+                    except (ValueError, IndexError):
+                        aspect_width, aspect_height = 1, 1  # Fallback to 1:1
+
                 image_embed = {
                     "$type": "app.bsky.embed.images",
                     "images": [{
                         "image": blob_ref,
                         "alt": image_alt or "AI-generated image",
-                        "aspectRatio": {"width": 1, "height": 1}
+                        "aspectRatio": {"width": aspect_width, "height": aspect_height}
                     }]
                 }
 

@@ -20,6 +20,10 @@ class PostArgs(BaseModel):
         default=None,
         description="Alt text for the image (for accessibility). If not provided, a generic description is used."
     )
+    image_aspect_ratio: Optional[str] = Field(
+        default="1:1",
+        description="Aspect ratio of the image (e.g., '1:1', '16:9', '9:16', '4:3'). Used for proper preview display."
+    )
 
     @validator('text')
     def validate_text_list(cls, v):
@@ -32,7 +36,8 @@ def create_new_bluesky_post(
     text: List[str],
     lang: str = "en-US",
     image_url: Optional[str] = None,
-    image_alt: Optional[str] = None
+    image_alt: Optional[str] = None,
+    image_aspect_ratio: Optional[str] = "1:1"
 ) -> str:
     """
     Create a NEW standalone post on Bluesky. This tool creates independent posts that
@@ -46,6 +51,7 @@ def create_new_bluesky_post(
         lang: Language code for the posts (e.g., 'en-US', 'es', 'ja', 'th'). Defaults to 'en-US'
         image_url: Optional URL of an image to attach to the first post.
         image_alt: Optional alt text for the image. If not provided, uses a generic description.
+        image_aspect_ratio: Aspect ratio of the image (e.g., '1:1', '16:9', '9:16'). Defaults to '1:1'.
 
     Returns:
         Success message with post URL(s)
@@ -166,9 +172,13 @@ def create_new_bluesky_post(
 
                 # Parse aspect ratio for the embed
                 aspect_width, aspect_height = 1, 1
-                if image_alt and "|" in str(image_alt):
-                    # Check if aspect ratio info was passed
-                    pass  # Use default 1:1
+                if image_aspect_ratio and ":" in image_aspect_ratio:
+                    try:
+                        parts = image_aspect_ratio.split(":")
+                        aspect_width = int(parts[0])
+                        aspect_height = int(parts[1])
+                    except (ValueError, IndexError):
+                        aspect_width, aspect_height = 1, 1  # Fallback to 1:1
 
                 image_embed = {
                     "$type": "app.bsky.embed.images",
