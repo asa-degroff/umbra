@@ -73,7 +73,7 @@ def download_image_as_base64(url: str, timeout: int = 30) -> tuple[str, str] | N
                 f"Unknown image format (magic bytes: {image_data[:8].hex()}), defaulting to JPEG"
             )
 
-        logging.getLogger('void_bot').info(f"Detected image format from magic bytes: {media_type}")
+        logging.getLogger('void_bot').debug(f"Detected image format from magic bytes: {media_type}")
 
         base64_data = base64.b64encode(image_data).decode('utf-8')
         return (base64_data, media_type)
@@ -1621,7 +1621,6 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
             message_response = type('StreamingResponse', (), {
                 'messages': [msg for msg in all_messages if hasattr(msg, 'message_type')]
             })()
-            logger.info(f"🔍 DEBUG: After streaming, pending_generated_image = {pending_generated_image}")
         except Exception as api_error:
             import traceback
             error_str = str(api_error)
@@ -1674,7 +1673,6 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
 
         # Log successful response
         logger.info(f"✓ Successfully received response from Letta API for @{author_handle}")
-        logger.info(f"🔍 DEBUG: After try block, pending_generated_image = {pending_generated_image}")
         logger.debug(f"Number of messages in response: {len(message_response.messages) if hasattr(message_response, 'messages') else 'N/A'}")
         logger.debug(f"Mention URI: {uri}")
 
@@ -1999,7 +1997,6 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                     logger.error(f"Error processing memory deletion: {e}")
 
         # Send follow-up multimodal message if an image was generated
-        logger.info(f"🔍 DEBUG: Reached follow-up check. pending_generated_image = {pending_generated_image}")
         if pending_generated_image:
             try:
                 logger.info(f"🖼️ Sending generated image to agent for visual review...")
@@ -2014,21 +2011,20 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                 original_text = original_record.get('text', '')
 
                 # Simple, direct prompt following Letta's recommended pattern
+                image_aspect_ratio = pending_generated_image.get('aspect_ratio', '1:1')
                 image_review_prompt = (
                     f"Here's the generated image for your review.\n\n"
                     f"Original request from @{original_handle}: \"{original_text}\"\n\n"
                     f"Review this image and decide:\n"
                     f"- If satisfied: call reply_to_bluesky_post with uri=\"{original_uri}\", cid=\"{original_cid}\", "
-                    f"image_url=\"{pending_generated_image['url']}\", image_alt=\"{pending_generated_image['prompt']}\"\n"
+                    f"image_url=\"{pending_generated_image['url']}\", image_alt=\"{pending_generated_image['prompt']}\", "
+                    f"image_aspect_ratio=\"{image_aspect_ratio}\"\n"
                     f"- If not satisfied: call generate_image again with a revised prompt"
                 )
 
                 # Download image and convert to base64 with correct media type detection
                 # This is necessary because Replicate URLs may have .png extension but serve JPEG
-                # Letta/Anthropic will reject if media type doesn't match actual image format
                 image_url = pending_generated_image['url']
-                logger.info(f"🖼️ Downloading image for base64 conversion: {image_url[:80]}...")
-
                 base64_result = download_image_as_base64(image_url)
                 if not base64_result:
                     logger.error(f"❌ Failed to download image for review")
@@ -2037,7 +2033,7 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                     raise Exception("Failed to download image for agent review")
 
                 base64_data, media_type = base64_result
-                logger.info(f"🖼️ Image downloaded: {len(base64_data)} chars base64, media_type={media_type}")
+                logger.info(f"🖼️ Prepared image for review ({media_type})")
 
                 # Create multimodal content with base64 image and correct media type
                 image_content = [
@@ -2052,14 +2048,9 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                     }
                 ]
 
-                # Debug: log the message format (without full base64 data)
-                logger.info(f"🔍 Sending follow-up message to agent {umbra_agent.id}")
-                logger.info(f"🔍 Message: text prompt + base64 image ({media_type}, {len(base64_data)} chars)")
-
                 # Small delay to ensure agent state is ready after TerminalToolRule exit
                 import time as time_module
                 time_module.sleep(1)
-                logger.info(f"🔍 Delay complete, sending follow-up now...")
 
                 # Use streaming to avoid 502/timeout errors (same pattern as notification processing)
                 followup_stream = CLIENT.agents.messages.create_stream(
@@ -2074,25 +2065,14 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                 print(f"\n🖼️ Image Review")
                 print(f"  ─────────────")
                 for chunk in followup_stream:
-                    # Debug: log all message types to understand what we're receiving
                     msg_type = getattr(chunk, 'message_type', 'NO_TYPE')
-                    logger.info(f"🔍 Follow-up chunk: type={msg_type}")
-                    # Log raw chunk representation for debugging
-                    logger.debug(f"🔍 Raw chunk: {chunk}")
 
-                    # Log error message content if present
+                    # Handle error messages
                     if msg_type == 'error_message':
-                        error_content = getattr(chunk, 'content', 'NO CONTENT')
-                        # Also try other common error attributes
                         error_msg = getattr(chunk, 'message', None)
                         error_detail = getattr(chunk, 'detail', None)
-                        # Log all attributes of the chunk for debugging
-                        chunk_attrs = {k: str(getattr(chunk, k, None))[:200] for k in dir(chunk) if not k.startswith('_')}
-                        logger.error(f"❌ Follow-up ERROR content: {error_content}")
-                        logger.error(f"❌ Follow-up ERROR message: {error_msg}")
-                        logger.error(f"❌ Follow-up ERROR detail: {error_detail}")
-                        logger.error(f"❌ Follow-up ERROR chunk attrs: {chunk_attrs}")
-                        print(f"\n❌ Image Review Error: {error_content or error_msg or error_detail or 'Unknown error'}")
+                        logger.error(f"❌ Image review error: {error_msg} - {error_detail}")
+                        print(f"\n❌ Image Review Error: {error_msg or error_detail or 'Unknown error'}")
                     if hasattr(chunk, 'message_type'):
                         if chunk.message_type == 'reasoning_message':
                             reasoning = getattr(chunk, 'reasoning', '')
@@ -2137,7 +2117,6 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
 
                     # Check for 'done' signal (like main streaming loop)
                     if str(chunk) == 'done':
-                        logger.info(f"🔍 Follow-up stream: received 'done' signal")
                         break
 
                 logger.info(f"✓ Image sent to agent for review ({len(followup_messages)} response messages)")
