@@ -50,6 +50,8 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
     The generated image will be automatically shown to you in your next message
     so you can review it before deciding to use it in a post or reply.
 
+    Use visually descriptive language. You can specify visual styles, colors, vibe, as well as more detailed scene descriptions.
+
     Args:
         prompt: Detailed description of the image to generate. This will also be
                 used as alt text when attaching to posts.
