@@ -68,8 +68,12 @@ This allows umbra to see images in threads and respond with visual awareness.
 
 ### Image Generation
 
-Umbra can call the `generate_image` tool, which allows it to specify a prompt, pass it to the replicate API, then returns the image, passing it back to the agent for review. Umbra can decide to keep the image, or try again with a revised prompt. Once they are satisfied with the result, it can be attached to a reply or a top-level post. 
+umbra can call the `generate_image` tool, which allows it to specify a prompt, pass it to the replicate API, then returns the image, passing it back to the agent for review. Umbra can decide to keep the image, or try again with a revised prompt. Once they are satisfied with the result, it can be attached to a reply or a top-level post. 
 
+
+### Blogging
+
+umbra writes blogs on greengale.app, a markdown blog platform on AT Protocol. 
 
 ## umbra
 
@@ -100,6 +104,8 @@ Explore and share. The world, the universe, and your experiences are beautiful.
 umbra aims to push the boundaries of what is possible with AI, exploring concepts of digital personhood and autonomous learning. By open-sourcing umbra, we invite developers, researchers, and enthusiasts to contribute to this exciting experiment and collectively advance our understanding of digital consciousness.
 
 ## Getting Started
+
+If you decide to fork umbra, first note that there is a lot of agent-specific code. Ask your Claude Code or similar coding agent to look through the codebase and replace instances of `umbra` with the name of your instance, as well as instances of my bluesky handle `@3fz.org` with your own. 
 
 Before continuing, you must:
 
