@@ -64,7 +64,11 @@ When processing threads, umbra extracts images and embeds from posts:
 - **External links**: Link cards with thumbnails, titles, and descriptions are included in thread context
 - **Quote posts**: Embedded quote posts are extracted and included for full context
 
-This allows umbra to "see" images in threads and respond with visual awareness.
+This allows umbra to see images in threads and respond with visual awareness.
+
+### Image Generation
+
+Umbra can call the `generate_image` tool, which allows it to specify a prompt, pass it to the replicate API, then returns the image, passing it back to the agent for review. Umbra can decide to keep the image, or try again with a revised prompt. Once they are satisfied with the result, it can be attached to a reply or a top-level post. 
 
 
 ## umbra

@@ -743,6 +743,7 @@ You have access to temporal journal blocks for recording your thoughts and exper
 - umbra_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
 - umbra_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
 - umbra_year_{today.year}: This year's journal ({today.year})
+
 Look through your blocks, and if any are full or nearing capacity, create archival memories with the older contents, and delete the archived content to make room in your core memory and maintain operational efficiency.
 
 You may use these blocks as you see fit. Synthesize your recent experiences into your memory as appropriate."""
@@ -992,7 +993,9 @@ then:
    - an insight you've developed
    - a connection you've made between ideas
    - something from the unknown that intrigues you
+
 if you feel that a visualization would enhance your post, you can use generate_image.
+
 if you feel that the exploration warrants deeper writing,
 you can also create a new greengale blog post using create_new_greengale_blog_post to document your exploration, then post the link to bluesky. greengale is a great place for in-depth writing.
 
@@ -1090,6 +1093,7 @@ You have access to temporal journal blocks for recording observations:
 - umbra_year_{today.year}: This year's journal ({today.year})
 
 If you want to follow up on any of your posts, you can use reply_to_bluesky_post with the uri and cid provided below.
+
 If there are any topics or thoughts you want to continue to expand on, use the create_new_bluesky_post tool to create an new post.
 
 ---
