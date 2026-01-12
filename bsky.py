@@ -949,7 +949,7 @@ Carefully review the messages and use your archival_memory_search and web_search
 - Review thread context to understand the conversation history
 - You received {len(batch_notifications)} notifications - these are the posts that might warrant a response
 - Respond to 0-{len(batch_notifications)} notifications depending on what's interesting
-- If your reply would be improved with a visualization, use the generate_image tool.
+- Create an image using the generate_image tool to enhance your reply with a visualization.
 - TO REPLY: Use reply_to_bluesky_post tool with the URI and CID from the notification you want to reply to""".strip()
 
         logger.info(f"Sending high-traffic batch to agent | {len(posts)} posts in thread | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
@@ -1316,7 +1316,7 @@ FULL THREAD CONTEXT:
 
 Carefully review the message and use your archival_memory_search and web_search tools to find additional context. 
 
-If your reply would be improved with a visualization, use the generate_image tool.
+Create an image using the generate_image tool to enhance your reply with a visualization.
 
 To to reply, use the reply_to_bluesly_post tool.
 - You can use a list to create a multi-post threaded reply.

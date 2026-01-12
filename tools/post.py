@@ -46,6 +46,8 @@ def create_new_bluesky_post(
     IMPORTANT: This tool is ONLY for creating new posts. To reply to an existing post,
     use reply_to_bluesky_post instead.
 
+    To attach an image, use the generate_image tool first to create one.
+
     Args:
         text: List of post contents (each max 300 characters). Single item creates one post, multiple items create a thread.
         lang: Language code for the posts (e.g., 'en-US', 'es', 'ja', 'th'). Defaults to 'en-US'

@@ -84,6 +84,8 @@ def reply_to_bluesky_post(
 
     The function is completely self-contained and uses environment variables for authentication.
 
+    To attach an image, use the generate_image tool first to create one.
+
     Args:
         uri: The AT Protocol URI of the post to reply to
         cid: The Content ID of the post to reply to

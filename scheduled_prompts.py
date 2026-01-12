@@ -583,8 +583,15 @@ def fetch_own_posts_for_review(atproto_client, limit: int = 50) -> str:
                 'created_at': created_at_str,
                 'uri': post.uri,
                 'cid': post.cid,
-                'reply_count': post.reply_count if hasattr(post, 'reply_count') else 0,
             }
+
+            # Only include engagement counts if above zero
+            like_count = post.like_count if hasattr(post, 'like_count') else 0
+            reply_count = post.reply_count if hasattr(post, 'reply_count') else 0
+            if like_count > 0:
+                post_data['like_count'] = like_count
+            if reply_count > 0:
+                post_data['reply_count'] = reply_count
 
             # Track thread structure
             root_uri = post.uri  # Default: this post is its own root
