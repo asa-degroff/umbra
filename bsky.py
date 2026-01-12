@@ -2068,6 +2068,44 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                 logger.error(f"Error sending generated image to agent: {e}")
                 # Continue processing even if follow-up fails
 
+        # Mark all notifications in the consecutive chain as processed to prevent duplicates
+        # This handles the case where multiple notifications point to the same chain
+        if is_using_last_consecutive and NOTIFICATION_DB:
+            try:
+                # Extract root_uri from reply info (unchanged by consecutive post detection)
+                chain_root_uri = None
+                if isinstance(notification_data, dict):
+                    record = notification_data.get('record', {})
+                    reply_info = record.get('reply', {})
+                    root_info = reply_info.get('root', {})
+                    chain_root_uri = root_info.get('uri')
+                    if not chain_root_uri:
+                        chain_root_uri = original_mention_uri  # This post is the root
+
+                    chain_author_did = notification_data.get('author', {}).get('did')
+                    chain_indexed_at = notification_data.get('indexed_at') or record.get('createdAt', '')
+                else:
+                    # Object-based notification
+                    if hasattr(notification_data.record, 'reply') and notification_data.record.reply:
+                        chain_root_uri = getattr(notification_data.record.reply.root, 'uri', None)
+                    if not chain_root_uri:
+                        chain_root_uri = original_mention_uri
+                    chain_author_did = notification_data.author.did
+                    chain_indexed_at = getattr(notification_data, 'indexed_at', '') or notification_data.record.created_at
+
+                if chain_root_uri and chain_author_did:
+                    chain_marked_count = NOTIFICATION_DB.mark_consecutive_chain_processed(
+                        root_uri=chain_root_uri,
+                        author_did=chain_author_did,
+                        reference_time=chain_indexed_at,
+                        status='processed',
+                        time_window_seconds=120  # 2 minute window
+                    )
+                    if chain_marked_count > 0:
+                        logger.info(f"[{correlation_id}] Marked {chain_marked_count} additional consecutive chain notifications as processed")
+            except Exception as e:
+                logger.warning(f"[{correlation_id}] Failed to mark consecutive chain as processed: {e}")
+
         # Check if agent returned an error first (before checking for intentional no-reply)
         if agent_error_occurred:
             if agent_error_details:
@@ -2367,9 +2405,11 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
                         logger.error(f"⚡ Error adding {thread_type} to database: {notification_uri}")
                         return False
 
-                    # Calculate debounce time
+                    # Calculate debounce time based on actual thread count (not threshold)
+                    # Use thread_count + 1 to account for this notification being added
+                    effective_count = thread_count + 1
                     debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
-                        threshold, is_mention, high_traffic_config
+                        effective_count, is_mention, high_traffic_config
                     )
                     debounce_until = (datetime.now() + timedelta(seconds=debounce_seconds)).isoformat()
 
@@ -2381,9 +2421,14 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
                         timer_expired = thread_debounce_until and thread_debounce_until <= current_time
 
                         if not timer_expired:
-                            # Extend existing debounce
-                            new_count = thread_state['notification_count'] + 1
+                            # Extend existing debounce - use the higher of stored count or actual count
+                            stored_count = thread_state['notification_count']
+                            new_count = max(stored_count, effective_count)
                             debounce_started_at = thread_state.get('debounce_started_at') or datetime.now().isoformat()
+                            # Recalculate debounce_seconds with the new count
+                            debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
+                                new_count, is_mention, high_traffic_config
+                            )
                             new_debounce_until = NOTIFICATION_DB.extend_thread_debounce(
                                 root_uri, debounce_seconds, new_count, debounce_started_at
                             )
@@ -2391,11 +2436,11 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
                                 debounce_until = new_debounce_until
                                 logger.info(f"⚡ Extended pre-debounce ({new_count} notifications)")
                         else:
-                            # Timer expired - start fresh cycle
-                            NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=1)
+                            # Timer expired - start fresh cycle with actual count
+                            NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=effective_count)
                     else:
-                        # No existing debounce state (or cooldown/unknown) - start fresh
-                        NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=1)
+                        # No existing debounce state (or cooldown/unknown) - start fresh with actual count
+                        NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=effective_count)
 
                     # Set auto-debounce on notification
                     reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
@@ -2446,14 +2491,15 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
                                     return False
 
                                 # Start fresh debounce cycle with NEW start time
-                                min_minutes = high_traffic_config.get(
-                                    'mention_debounce_min' if is_mention else 'reply_debounce_min', 7
+                                # Use actual thread count for proper scaling
+                                effective_count = thread_count + 1
+                                debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
+                                    effective_count, is_mention, high_traffic_config
                                 )
-                                min_seconds = min_minutes * 60
-                                debounce_until = (datetime.now() + timedelta(seconds=min_seconds)).isoformat()
-                                NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=1)
+                                debounce_until = (datetime.now() + timedelta(seconds=debounce_seconds)).isoformat()
+                                NOTIFICATION_DB.set_thread_debouncing(root_uri, debounce_until, notification_count=effective_count)
 
-                                logger.info(f"⚡ Started new debounce cycle for {thread_type} (duration: {min_minutes}min)")
+                                logger.info(f"⚡ Started new debounce cycle for {thread_type} ({effective_count} notifications, duration: {debounce_seconds/60:.1f}min)")
 
                                 # Set auto-debounce on the newly added notification
                                 reason_label = 'high_traffic_mention' if is_mention else 'high_traffic_reply'
@@ -2485,7 +2531,10 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
                                 return False
 
                             # Only extend if it's a genuinely new notification
-                            new_count = thread_state['notification_count'] + 1
+                            # Use the higher of stored count or actual count from DB
+                            stored_count = thread_state['notification_count']
+                            effective_count = thread_count + 1
+                            new_count = max(stored_count + 1, effective_count)
 
                             # Recalculate debounce time based on new count
                             new_debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
