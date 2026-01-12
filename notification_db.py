@@ -1427,6 +1427,143 @@ class NotificationDB:
             logger.error(f"Error getting all scheduled tasks: {e}")
             return []
 
+    # ============================================================
+    # Follower Batching (for daily review summary)
+    # ============================================================
+
+    def store_pending_follower(self, author_handle: str, author_display_name: str,
+                                author_did: str, followed_at: str) -> str:
+        """
+        Store a new follower for inclusion in daily review batch.
+
+        Uses the notifications table with reason='follow' and status='pending_batch'.
+
+        Args:
+            author_handle: Handle of the new follower (e.g., 'alice.bsky.social')
+            author_display_name: Display name of the follower
+            author_did: DID of the follower
+            followed_at: ISO timestamp when the follow occurred
+
+        Returns:
+            "added" - Successfully added new follower
+            "duplicate" - Follower already exists
+            "error" - Failed to add
+        """
+        try:
+            # Create a synthetic URI for the follow notification
+            # This ensures uniqueness per follower per day
+            uri = f"follow:{author_did}:{followed_at[:10]}"
+
+            self.conn.execute("BEGIN IMMEDIATE")
+
+            try:
+                # Check if already exists
+                cursor = self.conn.execute("""
+                    SELECT uri FROM notifications WHERE uri = ?
+                """, (uri,))
+                if cursor.fetchone():
+                    self.conn.rollback()
+                    logger.debug(f"Follower already in database: @{author_handle}")
+                    return "duplicate"
+
+                # Store as notification with reason='follow' and status='pending_batch'
+                metadata = json.dumps({
+                    'display_name': author_display_name
+                })
+
+                self.conn.execute("""
+                    INSERT INTO notifications
+                    (uri, indexed_at, reason, author_handle, author_did, text,
+                     status, metadata, retry_count)
+                    VALUES (?, ?, 'follow', ?, ?, '', 'pending_batch', ?, 0)
+                """, (uri, followed_at, author_handle, author_did, metadata))
+
+                self.conn.commit()
+                logger.debug(f"Stored pending follower: @{author_handle}")
+                return "added"
+
+            except Exception:
+                self.conn.rollback()
+                raise
+
+        except Exception as e:
+            logger.error(f"Error storing pending follower @{author_handle}: {e}")
+            return "error"
+
+    def get_pending_followers(self, since_hours: int = 24) -> List[Dict]:
+        """
+        Get followers from the past N hours that haven't been batched yet.
+
+        Args:
+            since_hours: Number of hours to look back (default: 24)
+
+        Returns:
+            List of dicts with keys: handle, display_name, did, followed_at
+        """
+        try:
+            cutoff = (datetime.now() - timedelta(hours=since_hours)).isoformat()
+
+            cursor = self.conn.execute("""
+                SELECT author_handle, author_did, indexed_at, metadata
+                FROM notifications
+                WHERE reason = 'follow'
+                AND status = 'pending_batch'
+                AND indexed_at >= ?
+                ORDER BY indexed_at ASC
+            """, (cutoff,))
+
+            followers = []
+            for row in cursor:
+                # Extract display name from metadata
+                metadata = json.loads(row['metadata']) if row['metadata'] else {}
+                followers.append({
+                    'handle': row['author_handle'],
+                    'display_name': metadata.get('display_name', ''),
+                    'did': row['author_did'],
+                    'followed_at': row['indexed_at']
+                })
+
+            return followers
+
+        except Exception as e:
+            logger.error(f"Error getting pending followers: {e}")
+            return []
+
+    def mark_followers_batched(self, author_dids: List[str]) -> int:
+        """
+        Mark followers as included in a daily review batch.
+
+        Args:
+            author_dids: List of follower DIDs to mark as batched
+
+        Returns:
+            Number of followers marked as batched
+        """
+        if not author_dids:
+            return 0
+
+        try:
+            now = datetime.now().isoformat()
+            placeholders = ','.join(['?' for _ in author_dids])
+
+            cursor = self.conn.execute(f"""
+                UPDATE notifications
+                SET status = 'batched', processed_at = ?
+                WHERE reason = 'follow'
+                AND status = 'pending_batch'
+                AND author_did IN ({placeholders})
+            """, [now] + author_dids)
+
+            self.conn.commit()
+            count = cursor.rowcount
+            if count > 0:
+                logger.info(f"Marked {count} followers as batched")
+            return count
+
+        except Exception as e:
+            logger.error(f"Error marking followers as batched: {e}")
+            return 0
+
     def close(self):
         """Close database connection."""
         if self.conn:
