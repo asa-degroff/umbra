@@ -7,7 +7,7 @@ import json
 import hashlib
 import subprocess
 from pathlib import Path
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from collections import defaultdict
 import time
 import random
@@ -37,51 +37,7 @@ from scheduled_prompts import (
     attach_temporal_blocks,
     detach_temporal_blocks,
 )
-
-def download_image_as_base64(url: str, timeout: int = 30) -> tuple[str, str] | None:
-    """Download an image from URL and convert to base64.
-
-    Args:
-        url: The image URL to download
-        timeout: Request timeout in seconds
-
-    Returns:
-        Tuple of (base64_data, media_type) or None if failed
-    """
-    import requests
-    import base64
-
-    try:
-        response = requests.get(url, timeout=timeout)
-        response.raise_for_status()
-
-        image_data = response.content
-
-        # Detect media type from magic bytes (file signature), NOT URL or headers
-        # This is critical because Replicate URLs may have .png extension but serve JPEG
-        if image_data[:8] == b'\x89PNG\r\n\x1a\n':
-            media_type = 'image/png'
-        elif image_data[:3] == b'\xff\xd8\xff':
-            media_type = 'image/jpeg'
-        elif image_data[:6] in (b'GIF87a', b'GIF89a'):
-            media_type = 'image/gif'
-        elif image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP':
-            media_type = 'image/webp'
-        else:
-            # Default to JPEG if unknown (most common for AI-generated images)
-            media_type = 'image/jpeg'
-            logging.getLogger('void_bot').warning(
-                f"Unknown image format (magic bytes: {image_data[:8].hex()}), defaulting to JPEG"
-            )
-
-        logging.getLogger('void_bot').debug(f"Detected image format from magic bytes: {media_type}")
-
-        base64_data = base64.b64encode(image_data).decode('utf-8')
-        return (base64_data, media_type)
-
-    except Exception as e:
-        logging.getLogger('void_bot').warning(f"Failed to download image for base64: {e}")
-        return None
+from image_utils import download_image_as_base64, parse_image_generated_signal
 
 
 def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str:
@@ -1533,19 +1489,12 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                                 elif tool_name == 'update_block':
                                     log_with_panel("Memory block updated", f"Tool result: {tool_name} ✓", "green")
                                 elif tool_name == 'generate_image':
-                                    # Check for IMAGE_GENERATED signal (only parse first line)
-                                    first_line = result_str.split('\n')[0]
-                                    if first_line.startswith('IMAGE_GENERATED|'):
-                                        parts = first_line.split('|')
-                                        if len(parts) >= 4:
-                                            pending_generated_image = {
-                                                'url': parts[1],
-                                                'prompt': parts[2],
-                                                'aspect_ratio': parts[3],
-                                                'generation_time': parts[4] if len(parts) > 4 else "unknown"
-                                            }
-                                            logger.info(f"🎨 Image generated in {pending_generated_image['generation_time']}s - will show to agent for review")
-                                            log_with_panel(f"Generated image ready for review\nURL: {parts[1][:60]}...", "Image Generated ✓", "magenta")
+                                    # Check for IMAGE_GENERATED signal using shared parser
+                                    parsed_image = parse_image_generated_signal(result_str)
+                                    if parsed_image:
+                                        pending_generated_image = parsed_image
+                                        logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
+                                        log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated ✓", "magenta")
                                     else:
                                         log_with_panel(result_str[:100], f"Tool result: {tool_name} ✓", "green")
                                 else:
@@ -1747,18 +1696,10 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                             tool_return_str = str(tool_return_value)
                             if 'IMAGE_GENERATED|' in tool_return_str:
                                 logger.info(f"🎨 Found IMAGE_GENERATED in tool_returns array: {tool_return_str[:200]}...")
-                                # Parse only the first line (signal line)
-                                first_line = tool_return_str.split('\n')[0]
-                                if first_line.startswith('IMAGE_GENERATED|'):
-                                    parts = first_line.split('|')
-                                    if len(parts) >= 4:
-                                        pending_generated_image = {
-                                            'url': parts[1],
-                                            'prompt': parts[2],
-                                            'aspect_ratio': parts[3],
-                                            'generation_time': parts[4] if len(parts) > 4 else "unknown"
-                                        }
-                                        logger.info(f"🎨 Image generated successfully - showing to agent for review")
+                                parsed_image = parse_image_generated_signal(tool_return_str)
+                                if parsed_image:
+                                    pending_generated_image = parsed_image
+                                    logger.info(f"🎨 Image generated successfully - showing to agent for review")
 
             # Check for tool return messages by name (simplified detection)
             if hasattr(message, 'name') and hasattr(message, 'tool_return'):
@@ -1767,25 +1708,12 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
 
                 if tool_name == 'generate_image':
                     logger.info(f"🎨 Found generate_image tool return: {tool_return_str[:200]}...")
-                    # Parse only the first line (signal line)
-                    first_line = tool_return_str.split('\n')[0]
-                    if first_line.startswith('IMAGE_GENERATED|'):
-                        parts = first_line.split('|')
-                        if len(parts) >= 4:
-                            generated_image_url = parts[1]
-                            generated_image_prompt = parts[2]
-                            generated_image_aspect = parts[3]
-                            generation_time = parts[4] if len(parts) > 4 else "unknown"
-                            logger.info(f"🎨 Image generated successfully in {generation_time}s - showing to agent for review")
-                            # Store for follow-up multimodal message
-                            pending_generated_image = {
-                                'url': generated_image_url,
-                                'prompt': generated_image_prompt,
-                                'aspect_ratio': generated_image_aspect,
-                                'generation_time': generation_time
-                            }
+                    parsed_image = parse_image_generated_signal(tool_return_str)
+                    if parsed_image:
+                        pending_generated_image = parsed_image
+                        logger.info(f"🎨 Image generated successfully in {parsed_image.generation_time}s - showing to agent for review")
                     else:
-                        logger.warning(f"🎨 generate_image tool return doesn't start with IMAGE_GENERATED|: {tool_return_str[:100]}")
+                        logger.warning(f"🎨 generate_image tool return doesn't contain valid IMAGE_GENERATED signal: {tool_return_str[:100]}")
 
                 elif tool_name == 'ignore_notification':
                     if 'IGNORED_NOTIFICATION::' in tool_return_str:
@@ -2012,20 +1940,20 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                 original_text = original_record.get('text', '')
 
                 # Simple, direct prompt following Letta's recommended pattern
-                image_aspect_ratio = pending_generated_image.get('aspect_ratio', '1:1')
+                image_aspect_ratio = pending_generated_image.aspect_ratio
                 image_review_prompt = (
                     f"Here's the generated image for your review.\n\n"
                     f"Original request from @{original_handle}: \"{original_text}\"\n\n"
                     f"Review this image and decide:\n"
                     f"- If satisfied: call reply_to_bluesky_post with uri=\"{original_uri}\", cid=\"{original_cid}\", "
-                    f"image_url=\"{pending_generated_image['url']}\", image_alt=\"{pending_generated_image['prompt']}\", "
+                    f"image_url=\"{pending_generated_image.url}\", image_alt=\"{pending_generated_image.prompt}\", "
                     f"image_aspect_ratio=\"{image_aspect_ratio}\"\n"
                     f"- If not satisfied: call generate_image again with a revised prompt"
                 )
 
                 # Download image and convert to base64 with correct media type detection
                 # This is necessary because Replicate URLs may have .png extension but serve JPEG
-                image_url = pending_generated_image['url']
+                image_url = pending_generated_image.url
                 base64_result = download_image_as_base64(image_url)
                 if not base64_result:
                     logger.error(f"❌ Failed to download image for review")
@@ -3013,18 +2941,26 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                     if success:
                         message_counters['replies'] += 1
                 elif notif_data['reason'] == "follow":
+                    # Store follower for daily review batch instead of immediate notification
                     author_handle = notif_data['author']['handle']
-                    author_display_name = notif_data['author'].get('display_name', 'no display name')
-                    follow_update = f"@{author_handle} ({author_display_name}) started following you."
-                    follow_message = f"Update: {follow_update}"
-                    logger.info(f"Notifying agent about new follower: @{author_handle} | prompt: {len(follow_message)} chars")
-                    CLIENT.agents.messages.create(
-                        agent_id = umbra_agent.id,
-                        messages = [{"role":"user", "content": follow_message}]
+                    author_display_name = notif_data['author'].get('display_name', '')
+                    author_did = notif_data['author']['did']
+                    followed_at = notif_data.get('indexed_at', datetime.now(timezone.utc).isoformat())
+
+                    result = NOTIFICATION_DB.store_pending_follower(
+                        author_handle=author_handle,
+                        author_display_name=author_display_name,
+                        author_did=author_did,
+                        followed_at=followed_at
                     )
-                    success = True  # Follow updates are always successful
-                    if success:
-                        message_counters['follows'] += 1
+
+                    if result == "added":
+                        logger.info(f"📥 New follower queued for daily review: @{author_handle}")
+                    elif result == "duplicate":
+                        logger.debug(f"Follower already queued: @{author_handle}")
+
+                    success = True  # Follow notifications are always processed successfully
+                    message_counters['follows'] += 1
                 elif notif_data['reason'] == "repost":
                     # Skip reposts silently
                     success = True  # Skip reposts but mark as successful to remove from queue
@@ -3694,7 +3630,7 @@ def main():
                         elif task_name == 'mutuals_engagement':
                             send_mutuals_engagement_message(CLIENT, umbra_agent.id)
                         elif task_name == 'daily_review':
-                            send_daily_review_message(CLIENT, umbra_agent.id, atproto_client)
+                            send_daily_review_message(CLIENT, umbra_agent.id, atproto_client, NOTIFICATION_DB)
                         elif task_name == 'feed_engagement':
                             send_feed_engagement_message(CLIENT, umbra_agent.id)
                         elif task_name == 'curiosities_exploration':

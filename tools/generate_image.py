@@ -124,8 +124,11 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
 
         # Return the signal format that bsky.py will detect
         # Format: IMAGE_GENERATED|url|prompt|aspect_ratio|generation_time
-        # Use a delimiter that won't appear in prompts (unlikely in URLs too)
-        signal = f"IMAGE_GENERATED|{image_url}|{prompt}|{aspect_ratio}|{generation_time:.1f}"
+        # Sanitize prompt for signal line:
+        # - Replace newlines with spaces to keep signal on one line
+        # - Replace pipe characters to prevent parsing issues
+        signal_prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('|', '-')
+        signal = f"IMAGE_GENERATED|{image_url}|{signal_prompt}|{aspect_ratio}|{generation_time:.1f}"
 
         # Add human-readable instructions for the agent
         # The signal must be on the first line for bsky.py detection

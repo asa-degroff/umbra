@@ -18,6 +18,7 @@ from datetime import datetime, date, timezone, timedelta
 
 from letta_client import Letta
 import bsky_utils
+from image_utils import parse_image_generated_signal, send_image_review_message
 
 # Module-level configuration
 SHOW_REASONING = False
@@ -80,7 +81,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 3600,  # 24-hour window
+        'window_seconds': 86400,  # 24-hour window
         'emoji': '🎨',
         'description': 'Creative expression',
     },
@@ -1066,7 +1067,7 @@ then you can update your curiosities block with anything else you want to explor
         logger.error(f"Error sending curiosities exploration message: {e}")
 
 
-def send_daily_review_message(client: Letta, agent_id: str, atproto_client) -> None:
+def send_daily_review_message(client: Letta, agent_id: str, atproto_client, notification_db=None) -> None:
     """
     Send a daily review message to the agent with its posts from the past 24 hours.
     This allows the agent to reflect on its activity and identify any anomalies.
@@ -1075,15 +1076,45 @@ def send_daily_review_message(client: Letta, agent_id: str, atproto_client) -> N
         client: Letta client
         agent_id: Agent ID to send message to
         atproto_client: Authenticated AT Protocol client for fetching posts
+        notification_db: NotificationDB instance for fetching pending followers
     """
     # Track attached temporal blocks for cleanup
     attached_temporal_labels = []
+    # Track followers to mark as batched after successful review
+    pending_followers = []
 
     try:
         logger.info("Fetching posts for daily review")
 
         # Fetch agent's posts from the past 24 hours
         posts_yaml = fetch_own_posts_for_review(atproto_client, limit=50)
+
+        # Fetch pending followers for the daily review
+        followers_section = ""
+        if notification_db:
+            pending_followers = notification_db.get_pending_followers(since_hours=24)
+            if pending_followers:
+                follower_count = len(pending_followers)
+                logger.info(f"Including {follower_count} new followers in daily review")
+
+                # Build follower list (truncate at 20)
+                display_followers = pending_followers[:20]
+                follower_lines = []
+                for f in display_followers:
+                    if f['display_name']:
+                        follower_lines.append(f"- @{f['handle']} ({f['display_name']})")
+                    else:
+                        follower_lines.append(f"- @{f['handle']}")
+
+                # Add truncation note if needed
+                if follower_count > 20:
+                    follower_lines.append(f"...and {follower_count - 20} more new followers")
+
+                followers_section = f"""
+---
+YOUR NEW FOLLOWERS (past 24 hours): {follower_count} total
+{chr(10).join(follower_lines)}
+"""
 
         logger.info("Preparing daily review with temporal journal blocks")
 
@@ -1110,7 +1141,7 @@ You have access to temporal journal blocks for recording observations:
 If you want to follow up on any of your posts, you can use reply_to_bluesky_post with the uri and cid provided below.
 
 If there are any topics or thoughts you want to continue to expand on, use the create_new_bluesky_post tool to create an new post.
-
+{followers_section}
 ---
 YOUR POSTS FROM THE PAST 24 HOURS:
 {posts_yaml}
@@ -1176,6 +1207,12 @@ Reflect on your activity and update your memory as appropriate."""
             if str(chunk) == 'done':
                 break
 
+        # Mark followers as batched after successful review
+        if notification_db and pending_followers:
+            follower_dids = [f['did'] for f in pending_followers]
+            batched_count = notification_db.mark_followers_batched(follower_dids)
+            logger.info(f"Marked {batched_count} followers as batched in daily review")
+
         logger.info("Daily review message processed successfully")
 
     except Exception as e:
@@ -1211,12 +1248,13 @@ explore a thought, concept, feeling, or idea that resonates with you right now. 
 - a complex experience that words alone can't capture
 
 once you have a concept in mind:
-1. use the generate_image tool to create a visual representation of your idea
+1. use the generate_image tool to create a visual representation of your idea. this should include a detailed prompt for the image generation model.
 2. craft a post using create_new_bluesky_post that shares the image along with your caption. this can be poetic.
 
-your visual expression doesn't need to be literal—abstract, surreal, or metaphorical imagery is encouraged.
-
 this is your space for artistic exploration and visual storytelling."""
+
+        # Track pending generated image for follow-up
+        pending_generated_image = None
 
         # Send message to agent
         message_stream = client.agents.messages.create_stream(
@@ -1255,10 +1293,24 @@ this is your space for artistic exploration and visual storytelling."""
                     except:
                         log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                 elif chunk.message_type == 'tool_return_message':
-                    if chunk.status == 'success':
-                        log_with_panel("Success", f"Tool result: {chunk.name} \u2713", "green")
+                    tool_name = getattr(chunk, 'name', 'unknown')
+                    status = getattr(chunk, 'status', '')
+
+                    if status == 'success':
+                        # Check for IMAGE_GENERATED signal from generate_image tool
+                        if tool_name == 'generate_image':
+                            result_str = str(getattr(chunk, 'tool_return', ''))
+                            parsed_image = parse_image_generated_signal(result_str)
+                            if parsed_image:
+                                pending_generated_image = parsed_image
+                                logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
+                                log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
+                            else:
+                                log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
+                        else:
+                            log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
                     else:
-                        log_with_panel("Error", f"Tool result: {chunk.name} \u2717", "red")
+                        log_with_panel("Error", f"Tool result: {tool_name} \u2717", "red")
                 elif chunk.message_type == 'assistant_message':
                     print("\n\u25b6 Creative Expression Response")
                     print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
@@ -1267,6 +1319,23 @@ this is your space for artistic exploration and visual storytelling."""
 
             if str(chunk) == 'done':
                 break
+
+        # Send follow-up multimodal message if an image was generated
+        if pending_generated_image:
+            context_prompt = (
+                "Review this image and decide:\n"
+                "- If satisfied: call create_new_bluesky_post with the image_url, image_alt, "
+                "image_aspect_ratio parameters, and your caption text\n"
+                "- If not satisfied: call generate_image again with a revised prompt"
+            )
+            send_image_review_message(
+                client=client,
+                agent_id=agent_id,
+                generated_image=pending_generated_image,
+                context_prompt=context_prompt,
+                show_reasoning=SHOW_REASONING,
+                max_steps=50
+            )
 
         logger.info("Creative expression message processed successfully")
 
