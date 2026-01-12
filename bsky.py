@@ -942,6 +942,7 @@ Carefully review the messages and use your archival_memory_search and web_search
 
             # Process response stream (message-based pattern) with timeout detection
             all_messages = []
+            pending_generated_image = None  # Track image generation for follow-up
             last_meaningful_chunk_time = time.time()
             consecutive_ping_count = 0
             STREAMING_TIMEOUT_SECONDS = 300  # 5 minutes without meaningful content = timeout
@@ -961,7 +962,16 @@ Carefully review the messages and use your archival_memory_search and web_search
                         tool_name = chunk.tool_call.name
                         logger.info(f"⚡ Tool call: {tool_name}")
                     elif chunk.message_type == 'tool_return_message':
-                        logger.debug(f"⚡ Tool result: {chunk.name} - {chunk.status}")
+                        tool_name = chunk.name
+                        logger.debug(f"⚡ Tool result: {tool_name} - {chunk.status}")
+
+                        # Check for image generation result
+                        if tool_name == 'generate_image' and hasattr(chunk, 'tool_return') and chunk.tool_return:
+                            result_str = str(chunk.tool_return)
+                            parsed_image = parse_image_generated_signal(result_str)
+                            if parsed_image:
+                                pending_generated_image = parsed_image
+                                logger.info(f"⚡ 🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
                     elif chunk.message_type == 'assistant_message':
                         logger.info(f"⚡ Assistant: {chunk.content[:100]}...")
                     elif chunk.message_type == 'error_message':
@@ -989,6 +999,65 @@ Carefully review the messages and use your archival_memory_search and web_search
                 all_messages.append(chunk)
                 if str(chunk) == 'done':
                     break
+
+            # If an image was generated, send it back to the agent for review
+            if pending_generated_image:
+                try:
+                    logger.info(f"⚡ 🖼️ Sending generated image to agent for visual review...")
+
+                    image_url = pending_generated_image.url
+                    image_prompt = pending_generated_image.prompt
+                    image_aspect_ratio = pending_generated_image.aspect_ratio
+
+                    # Download and encode image to base64
+                    base64_result = download_image_as_base64(image_url)
+                    base64_data, media_type = base64_result
+
+                    # Create review prompt for high-traffic batch context
+                    image_review_prompt = f"""Here's the generated image for your review.\n\n
+
+**Image prompt used:** {image_prompt}
+**Aspect ratio:** {image_aspect_ratio}
+
+Please review the image. If you're satisfied with it, you can post it as a reply using `reply_to_bluesky_post` with the `image_url`, `image_alt`, and `image_aspect_ratio` parameters.
+
+Image URL: {image_url}
+"""
+
+                    # Create multimodal content with base64 image
+                    image_content = [
+                        {"type": "text", "text": image_review_prompt},
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}
+                    ]
+
+                    # Sleep 1 second to ensure agent state is ready
+                    import time as time_module
+                    time_module.sleep(1)
+
+                    # Send follow-up stream with the image
+                    followup_stream = CLIENT.agents.messages.create_stream(
+                        agent_id=umbra_agent.id,
+                        messages=[{"role": "user", "content": image_content}],
+                        stream_tokens=False,
+                        max_steps=100
+                    )
+
+                    followup_messages = []
+                    for followup_chunk in followup_stream:
+                        followup_messages.append(followup_chunk)
+
+                        # Check for tool calls
+                        if hasattr(followup_chunk, 'tool_call') and followup_chunk.tool_call:
+                            if followup_chunk.tool_call.name == 'reply_to_bluesky_post':
+                                logger.info(f"⚡ 🎨 Agent posted reply with generated image")
+                            elif followup_chunk.tool_call.name == 'create_new_bluesky_post':
+                                logger.info(f"⚡ 🎨 Agent posted new post with generated image")
+
+                    logger.info(f"⚡ ✓ Image sent to agent for review ({len(followup_messages)} response messages)")
+
+                except Exception as e:
+                    logger.error(f"⚡ Error sending generated image to agent: {e}")
+                    # Continue processing even if follow-up fails
 
             # Detach user blocks
             if attached_handles:
@@ -1937,13 +2006,11 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                 original_author = notification_data.get('author', {})
                 original_handle = original_author.get('handle', 'unknown')
                 original_record = notification_data.get('record', {})
-                original_text = original_record.get('text', '')
 
                 # Simple, direct prompt following Letta's recommended pattern
                 image_aspect_ratio = pending_generated_image.aspect_ratio
                 image_review_prompt = (
                     f"Here's the generated image for your review.\n\n"
-                    f"Original request from @{original_handle}: \"{original_text}\"\n\n"
                     f"Review this image and decide:\n"
                     f"- If satisfied: call reply_to_bluesky_post with uri=\"{original_uri}\", cid=\"{original_cid}\", "
                     f"image_url=\"{pending_generated_image.url}\", image_alt=\"{pending_generated_image.prompt}\", "
