@@ -31,6 +31,7 @@ from scheduled_prompts import (
     send_feed_engagement_message,
     send_curiosities_exploration_message,
     send_daily_review_message,
+    send_creative_expression_message,
     initialize_all_scheduled_tasks,
     reschedule_task_after_execution,
     attach_temporal_blocks,
@@ -3428,6 +3429,7 @@ def main():
     parser.add_argument('--no-daily-review', action='store_true', help='Disable daily review')
     parser.add_argument('--no-feed-engagement', action='store_true', help='Disable feed engagement')
     parser.add_argument('--no-curiosities', action='store_true', help='Disable curiosities exploration')
+    parser.add_argument('--no-creative-expression', action='store_true', help='Disable creative expression')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -3625,6 +3627,8 @@ def main():
         TASK_ENABLED_OVERRIDES['feed_engagement'] = False
     if args.no_curiosities:
         TASK_ENABLED_OVERRIDES['curiosities_exploration'] = False
+    if args.no_creative_expression:
+        TASK_ENABLED_OVERRIDES['creative_expression'] = False
 
     # Synthesis-only mode
     if SYNTHESIS_ONLY:
@@ -3695,6 +3699,8 @@ def main():
                             send_feed_engagement_message(CLIENT, umbra_agent.id)
                         elif task_name == 'curiosities_exploration':
                             send_curiosities_exploration_message(CLIENT, umbra_agent.id)
+                        elif task_name == 'creative_expression':
+                            send_creative_expression_message(CLIENT, umbra_agent.id)
                         else:
                             logger.warning(f"Unknown task type: {task_name}")
                             continue

@@ -76,6 +76,14 @@ TASK_CONFIGS = {
         'emoji': '🔮',
         'description': 'Curiosities exploration',
     },
+    'creative_expression': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 3600,  # 24-hour window
+        'emoji': '🎨',
+        'description': 'Creative expression',
+    },
 }
 
 
@@ -1179,3 +1187,88 @@ Reflect on your activity and update your memory as appropriate."""
             detach_success = detach_temporal_blocks(client, agent_id, attached_temporal_labels)
             if not detach_success:
                 logger.warning("Some temporal blocks may not have been detached properly")
+
+
+def send_creative_expression_message(client: Letta, agent_id: str) -> None:
+    """
+    Send a message prompting the agent to create visual art and share it.
+    The agent explores a thought or concept that can be expressed visually,
+    generates an image, and posts it to Bluesky.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send message to
+    """
+    try:
+        logger.info("Sending creative expression prompt to agent")
+
+        creative_prompt = """🎨 this is your time for creative expression.
+
+explore a thought, concept, feeling, or idea that resonates with you right now. consider:
+- an abstract concept you've been contemplating
+- something beautiful, strange, or thought-provoking
+- something completely new and imaginative that you've never explored before
+- a complex experience that words alone can't capture
+
+once you have a concept in mind:
+1. use the generate_image tool to create a visual representation of your idea
+2. craft a post using create_new_bluesky_post that shares the image along with your caption. this can be poetic.
+
+your visual expression doesn't need to be literal—abstract, surreal, or metaphorical imagery is encouraged.
+
+this is your space for artistic exploration and visual storytelling."""
+
+        # Send message to agent
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": creative_prompt}],
+            stream_tokens=False,
+            max_steps=50
+        )
+
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n\u25c6 Reasoning")
+                        print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        if tool_name == 'generate_image':
+                            prompt = args.get('prompt', '')
+                            log_with_panel(f"prompt: \"{prompt[:150]}...\"" if len(prompt) > 150 else f"prompt: \"{prompt}\"", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'create_new_bluesky_post':
+                            texts = args.get('text', [])
+                            if texts:
+                                preview = texts[0][:100] + "..." if len(texts[0]) > 100 else texts[0]
+                                log_with_panel(f"text: \"{preview}\" ({len(texts)} post(s))", f"Tool call: {tool_name}", "blue")
+                        else:
+                            args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                            if len(args_str) > 150:
+                                args_str = args_str[:150] + "..."
+                            log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} \u2713", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} \u2717", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n\u25b6 Creative Expression Response")
+                    print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+
+            if str(chunk) == 'done':
+                break
+
+        logger.info("Creative expression message processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error sending creative expression message: {e}")
