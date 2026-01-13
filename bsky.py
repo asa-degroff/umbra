@@ -567,6 +567,12 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             logger.error("Failed to get thread context for high-traffic batch")
             return False  # Retry later
 
+        # Extract images from thread for multimodal content
+        batch_images = extract_images_from_thread(thread, max_images=8)
+        batch_image_urls = {img.get('fullsize') for img in batch_images if img.get('fullsize')}
+        if batch_images:
+            logger.debug(f"   Extracted {len(batch_images)} images from main thread")
+
         # Extract all posts from thread
         flattened = bsky_utils.flatten_thread_structure(thread)
         posts = flattened.get('posts', [])
@@ -599,6 +605,14 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
                             posts.append(p)
                             existing_uris.add(p_uri)
                             logger.debug(f"   Added missing parent post: {p_uri}")
+
+                    # Extract images from notification's parent chain (deduplicate)
+                    notif_images = extract_images_from_thread(notif_thread, max_images=8)
+                    for img in notif_images:
+                        img_url = img.get('fullsize')
+                        if img_url and img_url not in batch_image_urls and len(batch_images) < 8:
+                            batch_images.append(img)
+                            batch_image_urls.add(img_url)
             except Exception as e:
                 logger.warning(f"Failed to fetch parent chain for notification {notif_uri}: {e}")
 
@@ -932,10 +946,15 @@ Carefully review the messages and use your archival_memory_search and web_search
                 except Exception as e:
                     logger.warning(f"Failed to attach user blocks: {e}")
 
+            # Build multimodal content if images are present
+            content = build_multimodal_content(system_message, batch_images)
+            if batch_images:
+                logger.info(f"Sending high-traffic batch with {len(batch_images)} image(s)")
+
             # Call the agent with the batch context using streaming
             message_stream = CLIENT.agents.messages.create_stream(
                 agent_id=umbra_agent.id,
-                messages=[{"role": "user", "content": system_message}],
+                messages=[{"role": "user", "content": content}],
                 stream_tokens=False,  # Step streaming only (faster than token streaming)
                 max_steps=100
             )
