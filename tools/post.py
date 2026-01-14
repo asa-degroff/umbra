@@ -41,7 +41,7 @@ def create_new_bluesky_post(
 ) -> str:
     """
     Create a NEW standalone post on Bluesky. This tool creates independent posts that
-    start new conversations.
+    start new conversations. Use a list of texts to create a threaded reply chain to the first post.
 
     IMPORTANT: This tool is ONLY for creating new posts. To reply to an existing post,
     use reply_to_bluesky_post instead.
@@ -73,7 +73,7 @@ def create_new_bluesky_post(
         # Validate character limits for all posts
         for i, post_text in enumerate(text):
             if len(post_text) > 300:
-                raise Exception(f"Post {i+1} exceeds 300 character limit (current: {len(post_text)} characters)")
+                raise Exception(f"Post {i+1} exceeds 300 character limit (current: {len(post_text)} characters). Use a list to split it into a thread.")
         
         # Get credentials from environment
         username = os.getenv("BSKY_USERNAME")
