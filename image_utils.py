@@ -112,12 +112,17 @@ def send_image_review_message(
     generated_image: GeneratedImage,
     context_prompt: str,
     show_reasoning: bool = False,
-    max_steps: int = 50
+    max_steps: int = 50,
+    max_regenerations: int = 5
 ) -> bool:
     """Send a follow-up multimodal message for the agent to review a generated image.
 
     Downloads the image, converts to base64, and sends it to the agent with
     instructions on how to proceed (post or regenerate).
+
+    If the agent calls generate_image again (regeneration), this function will
+    detect the new IMAGE_GENERATED signal and loop back to show the new image
+    for review, up to max_regenerations times.
 
     Args:
         client: Letta client instance
@@ -126,117 +131,149 @@ def send_image_review_message(
         context_prompt: Additional context for the review (e.g., original request info)
         show_reasoning: Whether to display reasoning output
         max_steps: Maximum agent steps for the follow-up
+        max_regenerations: Maximum number of regeneration attempts (default 5)
 
     Returns:
         True if image was successfully sent and agent responded, False otherwise
     """
     try:
-        logger.info(f"🖼️ Sending generated image to agent for visual review...")
+        current_image = generated_image
+        regeneration_count = 0
 
-        # Download image and convert to base64
-        base64_result = download_image_as_base64(generated_image.url)
-        if not base64_result:
-            logger.error(f"❌ Failed to download image for review")
-            print(f"\n❌ Failed to download generated image for review")
-            return False
+        while regeneration_count <= max_regenerations:
+            logger.info(f"🖼️ Sending generated image to agent for visual review (attempt {regeneration_count + 1})...")
 
-        base64_data, media_type = base64_result
-        logger.info(f"🖼️ Prepared image for review ({media_type})")
+            # Download image and convert to base64
+            base64_result = download_image_as_base64(current_image.url)
+            if not base64_result:
+                logger.error(f"❌ Failed to download image for review")
+                print(f"\n❌ Failed to download generated image for review")
+                return False
 
-        # Build review prompt
-        image_review_prompt = (
-            f"Here's the generated image for your review.\n\n"
-            f"{context_prompt}\n\n"
-            f"Image details:\n"
-            f"- URL: {generated_image.url}\n"
-            f"- Alt text: {generated_image.prompt}\n"
-            f"- Aspect ratio: {generated_image.aspect_ratio}"
-        )
+            base64_data, media_type = base64_result
+            logger.info(f"🖼️ Prepared image for review ({media_type})")
 
-        # Create multimodal content with base64 image
-        image_content = [
-            {"type": "text", "text": image_review_prompt},
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": base64_data
+            # Build review prompt
+            image_review_prompt = (
+                f"Here's the generated image for your review.\n\n"
+                f"{context_prompt}\n\n"
+                f"Image details:\n"
+                f"- URL: {current_image.url}\n"
+                f"- Alt text: {current_image.prompt}\n"
+                f"- Aspect ratio: {current_image.aspect_ratio}"
+            )
+
+            # Create multimodal content with base64 image
+            image_content = [
+                {"type": "text", "text": image_review_prompt},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64_data
+                    }
                 }
-            }
-        ]
+            ]
 
-        # Small delay to ensure agent state is ready
-        time.sleep(1)
+            # Small delay to ensure agent state is ready
+            time.sleep(1)
 
-        # Send follow-up with image for review
-        followup_stream = client.agents.messages.create_stream(
-            agent_id=agent_id,
-            messages=[{"role": "user", "content": image_content}],
-            stream_tokens=False,
-            max_steps=max_steps
-        )
+            # Send follow-up with image for review
+            followup_stream = client.agents.messages.create_stream(
+                agent_id=agent_id,
+                messages=[{"role": "user", "content": image_content}],
+                stream_tokens=False,
+                max_steps=max_steps
+            )
 
-        # Process follow-up response
-        print(f"\n🖼️ Image Review")
-        print(f"  ────────────")
-        image_posted = False
+            # Process follow-up response
+            print(f"\n🖼️ Image Review" + (f" (regeneration {regeneration_count})" if regeneration_count > 0 else ""))
+            print(f"  ────────────")
+            image_posted = False
+            new_generated_image = None
 
-        for chunk in followup_stream:
-            if hasattr(chunk, 'message_type'):
-                if chunk.message_type == 'reasoning_message':
-                    if show_reasoning:
-                        reasoning = getattr(chunk, 'reasoning', '')
-                        if reasoning:
-                            print(f"\n◆ Image Review Reasoning")
-                            print(f"  ─────────────────────")
-                            for line in reasoning.split('\n'):
+            for chunk in followup_stream:
+                if hasattr(chunk, 'message_type'):
+                    if chunk.message_type == 'reasoning_message':
+                        if show_reasoning:
+                            reasoning = getattr(chunk, 'reasoning', '')
+                            if reasoning:
+                                print(f"\n◆ Image Review Reasoning")
+                                print(f"  ─────────────────────")
+                                for line in reasoning.split('\n'):
+                                    print(f"  {line}")
+
+                    elif chunk.message_type == 'assistant_message':
+                        content = getattr(chunk, 'content', '')
+                        if content:
+                            print(f"\n▶ Agent Response (Image Review)")
+                            print(f"  ──────────────────────────────")
+                            for line in content.split('\n'):
                                 print(f"  {line}")
 
-                elif chunk.message_type == 'assistant_message':
-                    content = getattr(chunk, 'content', '')
-                    if content:
-                        print(f"\n▶ Agent Response (Image Review)")
-                        print(f"  ──────────────────────────────")
-                        for line in content.split('\n'):
-                            print(f"  {line}")
+                    elif chunk.message_type == 'tool_call_message':
+                        tool_call = getattr(chunk, 'tool_call', None)
+                        if tool_call:
+                            tool_name = tool_call.name
+                            print(f"\n⚙ Tool call: {tool_name}")
+                            try:
+                                args = json.loads(tool_call.arguments)
+                                if tool_name in ['reply_to_bluesky_post', 'create_new_bluesky_post']:
+                                    texts = args.get('text', [])
+                                    if texts:
+                                        print(f"  ─────────────")
+                                        for i, text in enumerate(texts, 1):
+                                            print(f"  [{i}] {text}")
+                                    if args.get('image_url'):
+                                        print(f"  📎 Image attached")
+                                elif tool_name == 'generate_image':
+                                    print(f"  🔄 Regenerating image...")
+                            except:
+                                pass
 
-                elif chunk.message_type == 'tool_call_message':
-                    tool_call = getattr(chunk, 'tool_call', None)
-                    if tool_call:
-                        tool_name = tool_call.name
-                        print(f"\n⚙ Tool call: {tool_name}")
-                        try:
-                            args = json.loads(tool_call.arguments)
-                            if tool_name in ['reply_to_bluesky_post', 'create_new_bluesky_post']:
-                                texts = args.get('text', [])
-                                if texts:
-                                    print(f"  ─────────────")
-                                    for i, text in enumerate(texts, 1):
-                                        print(f"  [{i}] {text}")
-                                if args.get('image_url'):
-                                    print(f"  📎 Image attached")
-                        except:
-                            pass
+                    elif chunk.message_type == 'tool_return_message':
+                        status = getattr(chunk, 'status', '')
+                        tool_name = getattr(chunk, 'name', 'unknown')
+                        tool_return = getattr(chunk, 'tool_return', '')
 
-                elif chunk.message_type == 'tool_return_message':
-                    status = getattr(chunk, 'status', '')
-                    tool_name = getattr(chunk, 'name', 'unknown')
-                    if status == 'success':
-                        print(f"\n✓ {tool_name}")
-                        print(f"  Success")
-                        if tool_name in ['create_new_bluesky_post', 'reply_to_bluesky_post']:
-                            image_posted = True
-                            logger.info(f"🎨 Agent posted with generated image via {tool_name}")
-                    elif status == 'error':
-                        error_msg = str(getattr(chunk, 'tool_return', ''))[:100]
-                        print(f"\n✗ {tool_name}")
-                        print(f"  Error: {error_msg}")
+                        if status == 'success':
+                            print(f"\n✓ {tool_name}")
+                            print(f"  Success")
+                            if tool_name in ['create_new_bluesky_post', 'reply_to_bluesky_post']:
+                                image_posted = True
+                                logger.info(f"🎨 Agent posted with generated image via {tool_name}")
+                            elif tool_name == 'generate_image':
+                                # Parse the new IMAGE_GENERATED signal
+                                tool_return_str = str(tool_return)
+                                if 'IMAGE_GENERATED|' in tool_return_str:
+                                    parsed = parse_image_generated_signal(tool_return_str)
+                                    if parsed:
+                                        new_generated_image = parsed
+                                        logger.info(f"🎨 Agent regenerated image - will show new image for review")
+                        elif status == 'error':
+                            error_msg = str(tool_return)[:100]
+                            print(f"\n✗ {tool_name}")
+                            print(f"  Error: {error_msg}")
 
-            if str(chunk) == 'done':
-                break
+                if str(chunk) == 'done':
+                    break
 
-        logger.info(f"✓ Image review completed (posted: {image_posted})")
+            # Check if we should loop for a regenerated image
+            if new_generated_image:
+                regeneration_count += 1
+                if regeneration_count > max_regenerations:
+                    logger.warning(f"🎨 Max regenerations ({max_regenerations}) reached, stopping image review loop")
+                    print(f"\n⚠️ Max regenerations reached")
+                    break
+                current_image = new_generated_image
+                logger.info(f"🎨 Looping back to show regenerated image (attempt {regeneration_count + 1}/{max_regenerations + 1})")
+                continue
+
+            # No regeneration requested, we're done
+            logger.info(f"✓ Image review completed (posted: {image_posted}, regenerations: {regeneration_count})")
+            return True
+
         return True
 
     except Exception as e:
