@@ -2689,10 +2689,11 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
                                 return False
 
                             # Only extend if it's a genuinely new notification
-                            # Use the higher of stored count or actual count from DB
+                            # Use stored_count from thread_state as the authoritative count
+                            # for this debounce cycle (don't use historical thread_count which
+                            # may include notifications from before a batch was processed)
                             stored_count = thread_state['notification_count']
-                            effective_count = thread_count + 1
-                            new_count = max(stored_count + 1, effective_count)
+                            new_count = stored_count + 1
 
                             # Recalculate debounce time based on new count
                             new_debounce_seconds = NOTIFICATION_DB.calculate_variable_debounce(
