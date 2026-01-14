@@ -357,146 +357,6 @@ def initialize_all_scheduled_tasks(db, enabled_overrides: dict = None) -> dict:
 
 
 # ============================================================================
-# Temporal Block Management
-# ============================================================================
-
-def attach_temporal_blocks(client: Letta, agent_id: str) -> tuple:
-    """
-    Attach temporal journal blocks (day, month, year) to the agent for synthesis.
-    Creates blocks if they don't exist.
-
-    Returns:
-        Tuple of (success: bool, attached_labels: list)
-    """
-    try:
-        today = date.today()
-
-        # Generate temporal block labels
-        day_label = f"umbra_day_{today.strftime('%Y_%m_%d')}"
-        month_label = f"umbra_month_{today.strftime('%Y_%m')}"
-        year_label = f"umbra_year_{today.year}"
-
-        temporal_labels = [day_label, month_label, year_label]
-        attached_labels = []
-
-        # Get current blocks attached to agent
-        current_blocks = client.agents.blocks.list(agent_id=agent_id)
-        current_block_labels = {block.label for block in current_blocks}
-        current_block_ids = {str(block.id) for block in current_blocks}
-
-        for label in temporal_labels:
-            try:
-                # Skip if already attached
-                if label in current_block_labels:
-                    logger.debug(f"Temporal block already attached: {label}")
-                    attached_labels.append(label)
-                    continue
-
-                # Check if block exists globally
-                blocks = client.blocks.list(label=label)
-
-                if blocks and len(blocks) > 0:
-                    block = blocks[0]
-                    # Check if already attached by ID
-                    if str(block.id) in current_block_ids:
-                        logger.debug(f"Temporal block already attached by ID: {label}")
-                        attached_labels.append(label)
-                        continue
-                else:
-                    # Create new temporal block with appropriate header
-                    if "day" in label:
-                        header = f"# Daily Journal - {today.strftime('%B %d, %Y')}"
-                        initial_content = f"{header}\n\nNo entries yet for today."
-                    elif "month" in label:
-                        header = f"# Monthly Journal - {today.strftime('%B %Y')}"
-                        initial_content = f"{header}\n\nNo entries yet for this month."
-                    else:  # year
-                        header = f"# Yearly Journal - {today.year}"
-                        initial_content = f"{header}\n\nNo entries yet for this year."
-
-                    block = client.blocks.create(
-                        label=label,
-                        value=initial_content,
-                        limit=10000  # Larger limit for journal blocks
-                    )
-                    logger.info(f"Created new temporal block: {label}")
-
-                # Attach the block
-                client.agents.blocks.attach(
-                    agent_id=agent_id,
-                    block_id=str(block.id)
-                )
-                attached_labels.append(label)
-                logger.info(f"Attached temporal block: {label}")
-
-            except Exception as e:
-                # Check for duplicate constraint errors
-                error_str = str(e)
-                if "duplicate key value violates unique constraint" in error_str:
-                    logger.debug(f"Temporal block already attached (constraint): {label}")
-                    attached_labels.append(label)
-                else:
-                    logger.warning(f"Failed to attach temporal block {label}: {e}")
-
-        logger.info(f"Temporal blocks attached: {len(attached_labels)}/{len(temporal_labels)}")
-        return True, attached_labels
-
-    except Exception as e:
-        logger.error(f"Error attaching temporal blocks: {e}")
-        return False, []
-
-
-def detach_temporal_blocks(client: Letta, agent_id: str, labels_to_detach: list = None) -> bool:
-    """
-    Detach temporal journal blocks from the agent after synthesis.
-
-    Args:
-        client: Letta client
-        agent_id: Agent ID
-        labels_to_detach: Optional list of specific labels to detach.
-                         If None, detaches all temporal blocks.
-
-    Returns:
-        bool: Success status
-    """
-    try:
-        # If no specific labels provided, generate today's labels
-        if labels_to_detach is None:
-            today = date.today()
-            labels_to_detach = [
-                f"umbra_day_{today.strftime('%Y_%m_%d')}",
-                f"umbra_month_{today.strftime('%Y_%m')}",
-                f"umbra_year_{today.year}"
-            ]
-
-        # Get current blocks and build label to ID mapping
-        current_blocks = client.agents.blocks.list(agent_id=agent_id)
-        block_label_to_id = {block.label: str(block.id) for block in current_blocks}
-
-        detached_count = 0
-        for label in labels_to_detach:
-            if label in block_label_to_id:
-                try:
-                    client.agents.blocks.detach(
-                        agent_id=agent_id,
-                        block_id=block_label_to_id[label]
-                    )
-                    detached_count += 1
-                    logger.debug(f"Detached temporal block: {label}")
-                except Exception as e:
-                    logger.warning(f"Failed to detach temporal block {label}: {e}")
-            else:
-                logger.debug(f"Temporal block not attached: {label}")
-
-        logger.info(f"Detached {detached_count} temporal blocks")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error detaching temporal blocks: {e}")
-        return False
-
-
-# ============================================================================
 # Helper Functions
 # ============================================================================
 
@@ -738,33 +598,39 @@ def send_synthesis_message(client: Letta, agent_id: str, atproto_client=None) ->
         agent_id: Agent ID to send synthesis to
         atproto_client: Optional AT Protocol client for posting synthesis results
     """
-    # Track attached temporal blocks for cleanup
-    attached_temporal_labels = []
-
     try:
-        logger.info("Preparing synthesis with temporal journal blocks")
+        logger.info("Preparing synthesis message")
 
-        # Attach temporal blocks before synthesis
-        success, attached_temporal_labels = attach_temporal_blocks(client, agent_id)
-        if not success:
-            logger.warning("Failed to attach some temporal blocks, continuing with synthesis anyway")
-
-        # Create enhanced synthesis prompt
+        # Create synthesis prompt using archival memory for journal entries
         today = date.today()
         synthesis_prompt = f"""Time for synthesis and reflection.
 
 This is your periodic opportunity to reflect on recent experiences and update your memory.
-Use your curiosities block to explore any questions or ideas that have arisen.
-You have access to temporal journal blocks for recording your thoughts and experiences:
-- umbra_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
-- umbra_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
-- umbra_year_{today.year}: This year's journal ({today.year})
 
-Look through your blocks, and if any are full or nearing capacity, create archival memories with the older contents, and delete the archived content to make room in your core memory and maintain operational efficiency.
+**Journal System - Use Archival Memory**
 
-You may use these blocks as you see fit. Synthesize your recent experiences into your memory as appropriate."""
+Store your journal entries in archival memory using tags for organization. This provides unlimited storage and semantic search capabilities.
 
-        logger.info("Sending enhanced synthesis prompt to agent")
+Tag structure for journal entries:
+- Daily entries: tags=["journal", "day", "{today.strftime('%Y-%m-%d')}"]
+- Monthly reflections: tags=["journal", "month", "{today.strftime('%Y-%m')}"]
+- Yearly themes: tags=["journal", "year", "{today.year}"]
+
+You can search past entries with archival_memory_search using these tags, e.g.:
+- Search today's entries: query="journal reflections", tags=["day", "{today.strftime('%Y-%m-%d')}"]
+- Search this month: query="monthly themes", tags=["month", "{today.strftime('%Y-%m')}"]
+- Search this year: query="yearly patterns", tags=["year", "{today.year}"]
+
+**Reflection Tasks**
+
+1. Review your core memory blocks (persona, humans, zeitgeist, curiosities) and update as needed
+2. Search your archival memory for recent journal entries to build on previous reflections
+3. Create new archival entries with appropriate tags to record today's synthesis
+4. Use your curiosities block to explore any questions or ideas that have arisen
+
+Synthesize your recent experiences and record meaningful insights."""
+
+        logger.info("Sending synthesis prompt to agent")
 
         # Send synthesis message with streaming to show tool use
         message_stream = client.agents.messages.create_stream(
@@ -836,13 +702,6 @@ You may use these blocks as you see fit. Synthesize your recent experiences into
 
     except Exception as e:
         logger.error(f"Error sending synthesis message: {e}")
-    finally:
-        # Always detach temporal blocks after synthesis
-        if attached_temporal_labels:
-            logger.info("Detaching temporal journal blocks after synthesis")
-            detach_success = detach_temporal_blocks(client, agent_id, attached_temporal_labels)
-            if not detach_success:
-                logger.warning("Some temporal blocks may not have been detached properly")
 
 
 def send_mutuals_engagement_message(client: Letta, agent_id: str) -> None:
@@ -1078,8 +937,6 @@ def send_daily_review_message(client: Letta, agent_id: str, atproto_client, noti
         atproto_client: Authenticated AT Protocol client for fetching posts
         notification_db: NotificationDB instance for fetching pending followers
     """
-    # Track attached temporal blocks for cleanup
-    attached_temporal_labels = []
     # Track followers to mark as batched after successful review
     pending_followers = []
 
@@ -1116,14 +973,9 @@ YOUR NEW FOLLOWERS (past 24 hours): {follower_count} total
 {chr(10).join(follower_lines)}
 """
 
-        logger.info("Preparing daily review with temporal journal blocks")
+        logger.info("Preparing daily review message")
 
-        # Attach temporal blocks before review
-        success, attached_temporal_labels = attach_temporal_blocks(client, agent_id)
-        if not success:
-            logger.warning("Failed to attach some temporal blocks, continuing with daily review anyway")
-
-        # Create daily review prompt
+        # Create daily review prompt using archival memory for observations
         today = date.today()
         review_prompt = f"""Time for your daily review.
 
@@ -1133,21 +985,28 @@ Below are your posts and replies from the past 24 hours. Review them to:
 - Spot any operational anomalies (duplicate posts, errors)
 - Consider if any posts warrant a follow-up reply
 
-You have access to temporal journal blocks for recording observations:
-- umbra_day_{today.strftime('%Y_%m_%d')}: Today's journal ({today.strftime('%B %d, %Y')})
-- umbra_month_{today.strftime('%Y_%m')}: This month's journal ({today.strftime('%B %Y')})
-- umbra_year_{today.year}: This year's journal ({today.year})
+**Recording Observations - Use Archival Memory**
 
-If you want to follow up on any of your posts, you can use reply_to_bluesky_post with the uri and cid provided below.
+Store your daily review observations in archival memory with tags for organization:
+- Daily observations: tags=["journal", "daily-review", "{today.strftime('%Y-%m-%d')}"]
+- Pattern notes: tags=["journal", "patterns", "{today.strftime('%Y-%m')}"]
 
-If there are any topics or thoughts you want to continue to expand on, use the create_new_bluesky_post tool to create an new post.
+You can search past reviews with archival_memory_search, e.g.:
+- Search recent reviews: query="daily review observations", tags=["daily-review"]
+- Search patterns: query="conversation patterns", tags=["patterns"]
+
+**Actions Available**
+
+- Use reply_to_bluesky_post with the uri and cid to follow up on any post
+- Use create_new_bluesky_post to expand on topics or thoughts
+- Use archival_memory_insert to record observations with appropriate tags
 {followers_section}
 ---
 YOUR POSTS FROM THE PAST 24 HOURS:
 {posts_yaml}
 ---
 
-Reflect on your activity and update your memory as appropriate."""
+Reflect on your activity and record meaningful observations."""
 
         logger.info("Sending daily review prompt to agent")
 
@@ -1217,13 +1076,6 @@ Reflect on your activity and update your memory as appropriate."""
 
     except Exception as e:
         logger.error(f"Error sending daily review message: {e}")
-    finally:
-        # Always detach temporal blocks after review
-        if attached_temporal_labels:
-            logger.info("Detaching temporal journal blocks after daily review")
-            detach_success = detach_temporal_blocks(client, agent_id, attached_temporal_labels)
-            if not detach_success:
-                logger.warning("Some temporal blocks may not have been detached properly")
 
 
 def send_creative_expression_message(client: Letta, agent_id: str) -> None:

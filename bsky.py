@@ -34,8 +34,6 @@ from scheduled_prompts import (
     send_creative_expression_message,
     initialize_all_scheduled_tasks,
     reschedule_task_after_execution,
-    attach_temporal_blocks,
-    detach_temporal_blocks,
 )
 from image_utils import download_image_as_base64, download_and_save_image, parse_image_generated_signal
 

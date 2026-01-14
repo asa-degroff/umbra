@@ -32,17 +32,20 @@ The scheduled tasks system is implemented in `scheduled_prompts.py` and provides
 **Purpose**: Prompts umbra to synthesize recent experiences and update memory. This is the most comprehensive scheduled task.
 
 **What it does**:
-1. Attaches temporal journal blocks (day, month, year) for recording reflections
-2. Sends a synthesis prompt to the agent
-3. Agent can update memory blocks, create journal entries, and post synthesis content
-4. Detaches temporal blocks after completion
+1. Sends a synthesis prompt to the agent
+2. Agent reviews core memory blocks and updates as needed
+3. Agent stores journal entries in archival memory with tags
+4. Agent can post synthesis content to Bluesky
 
-**Temporal Blocks**:
-- `umbra_day_YYYY_MM_DD`: Daily journal for current date
-- `umbra_month_YYYY_MM`: Monthly journal for current month
-- `umbra_year_YYYY`: Yearly journal for current year
+**Journal System - Archival Memory with Tags**:
 
-These blocks are only attached during synthesis/daily review and detached afterward.
+Instead of fixed-size blocks, journal entries are stored in archival memory with tags for unlimited capacity and semantic search:
+
+- Daily entries: `tags=["journal", "day", "YYYY-MM-DD"]`
+- Monthly reflections: `tags=["journal", "month", "YYYY-MM"]`
+- Yearly themes: `tags=["journal", "year", "YYYY"]`
+
+The agent can search past entries with `archival_memory_search` using these tags.
 
 ---
 
@@ -70,10 +73,10 @@ These blocks are only attached during synthesis/daily review and detached afterw
 
 **What it does**:
 1. Fetches umbra's own posts and replies from the past 24 hours
-2. Attaches temporal journal blocks
+2. Includes new followers from the past 24 hours
 3. Presents posts to agent with metadata (uri, cid) for potential follow-ups
 4. Agent can:
-   - Update memory with observations
+   - Store observations in archival memory with tags (e.g., `["journal", "daily-review", "YYYY-MM-DD"]`)
    - Identify operational anomalies (duplicate posts, errors)
    - Follow up on previous posts using `reply_to_bluesky_post`
    - Create new posts to expand on topics
@@ -217,7 +220,7 @@ Each task type has distinctive log messages:
 
 | Task | Start Message | Complete Message |
 |------|---------------|------------------|
-| Synthesis | `Preparing synthesis with temporal journal blocks` | `Synthesis message processed successfully` |
+| Synthesis | `Preparing synthesis message` | `Synthesis message processed successfully` |
 | Mutuals Engagement | `Sending mutuals engagement prompt to agent` | `Mutuals engagement message processed successfully` |
 | Daily Review | `Fetching posts for daily review` | `Daily review message processed successfully` |
 | Feed Engagement | `Sending feed engagement prompt to agent` | `Feed engagement message processed successfully` |

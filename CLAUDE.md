@@ -61,7 +61,7 @@ Task intervals and scheduling parameters are configured in `scheduled_prompts.py
 
 | Task | Schedule | Purpose |
 |------|----------|---------|
-| `synthesis` | Every 24h | Deep reflection with temporal journal blocks (day/month/year) |
+| `synthesis` | Every 24h | Deep reflection using archival memory with tagged journal entries |
 | `mutuals_engagement` | Random within 36h | Engage with posts from mutual follows |
 | `daily_review` | Every 24h | Review own posts from past 24h, identify patterns |
 | `feed_engagement` | Random within 24h | Read home/MLBlend feeds, optionally post |
@@ -408,7 +408,7 @@ tail -f claude_code_poller.log
 
 5. **scheduled_prompts.py**: Scheduled tasks system for autonomous behaviors
    - Synthesis, mutuals engagement, daily review, feed engagement, curiosities exploration
-   - Temporal journal blocks for reflection (day/month/year)
+   - Journal entries stored in archival memory with tags for organization
    - Persistent scheduling across restarts
 
 6. **claude_code_poller.py**: Local daemon that polls R2 for coding requests from umbra and executes them via Claude Code CLI
