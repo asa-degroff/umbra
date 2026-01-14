@@ -37,7 +37,7 @@ from scheduled_prompts import (
     attach_temporal_blocks,
     detach_temporal_blocks,
 )
-from image_utils import download_image_as_base64, parse_image_generated_signal
+from image_utils import download_image_as_base64, download_and_save_image, parse_image_generated_signal
 
 
 def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str:
@@ -1034,12 +1034,16 @@ Carefully review the messages and use your archival_memory_search and web_search
                         image_prompt = current_image.prompt
                         image_aspect_ratio = current_image.aspect_ratio
 
-                        # Download and encode image to base64
-                        base64_result = download_image_as_base64(image_url)
-                        if not base64_result:
+                        # Download, save to local storage, and encode image to base64
+                        download_result = download_and_save_image(
+                            url=image_url,
+                            prompt=image_prompt,
+                            aspect_ratio=image_aspect_ratio
+                        )
+                        if not download_result:
                             logger.error(f"⚡ ❌ Failed to download image for review")
                             break
-                        base64_data, media_type = base64_result
+                        base64_data, media_type, saved_path = download_result
 
                         # Create review prompt for high-traffic batch context
                         image_review_prompt = f"""Here's the generated image for your review.
@@ -2082,16 +2086,19 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                         f"- If not satisfied: call generate_image again with a revised prompt"
                     )
 
-                    # Download image and convert to base64 with correct media type detection
+                    # Download, save to local storage, and convert to base64
                     # This is necessary because Replicate URLs may have .png extension but serve JPEG
-                    image_url = current_image.url
-                    base64_result = download_image_as_base64(image_url)
-                    if not base64_result:
+                    download_result = download_and_save_image(
+                        url=current_image.url,
+                        prompt=current_image.prompt,
+                        aspect_ratio=image_aspect_ratio
+                    )
+                    if not download_result:
                         logger.error(f"❌ Failed to download image for review")
                         print(f"\n❌ Failed to download generated image for review")
                         raise Exception("Failed to download image for agent review")
 
-                    base64_data, media_type = base64_result
+                    base64_data, media_type, saved_path = download_result
                     logger.info(f"🖼️ Prepared image for review ({media_type})")
 
                     # Create multimodal content with base64 image and correct media type

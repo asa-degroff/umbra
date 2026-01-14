@@ -13,3 +13,6 @@ umbra-projects/
 claude_code_workspace/
 *.log
 claude_code_poller.log
+
+# Generated images backup
+generated_images/
