@@ -119,6 +119,30 @@ python queue_manager.py delete @example.bsky.social
 python queue_manager.py delete @example.bsky.social --force
 ```
 
+### Scheduled Task Management
+```bash
+# List all scheduled tasks with their current state
+python scheduled_task_manager.py list
+
+# Clear all scheduled tasks from database (with confirmation)
+python scheduled_task_manager.py clear
+
+# Clear without confirmation
+python scheduled_task_manager.py clear --force
+
+# Regenerate all tasks with new random times
+python scheduled_task_manager.py regenerate
+
+# Regenerate specific tasks only
+python scheduled_task_manager.py regenerate --tasks synthesis feed_engagement
+
+# Reset tasks (clear + regenerate in one command)
+python scheduled_task_manager.py reset
+
+# Reset only specific tasks
+python scheduled_task_manager.py reset --tasks synthesis --force
+```
+
 ### Thread Debouncing
 
 Thread debouncing allows umbra to defer responding to posts that appear to be the first part of an incomplete multi-post thread. This enables umbra to see the complete thread before responding, rather than replying to just the first post without full context.
