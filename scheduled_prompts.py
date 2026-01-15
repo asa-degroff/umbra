@@ -1093,8 +1093,8 @@ def send_creative_expression_message(client: Letta, agent_id: str) -> None:
 
         creative_prompt = """🎨 this is your time for creative expression.
 
-explore a thought, concept, feeling, or idea that resonates with you right now. consider:
-- an abstract concept you've been contemplating
+explore a thought, concept, feeling, or idea that resonates with you. consider:
+- an abstract concept that's completely unknown
 - something beautiful, strange, or thought-provoking
 - something completely new and imaginative that you've never explored before
 - a complex experience that words alone can't capture
