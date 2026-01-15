@@ -85,6 +85,14 @@ TASK_CONFIGS = {
         'emoji': '🎨',
         'description': 'Creative expression',
     },
+    'rest': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 86400,  # 24-hour window
+        'emoji': '🍵',
+        'description': 'Break',
+    }
 }
 
 
@@ -1193,3 +1201,72 @@ this is your space for artistic exploration and visual storytelling."""
 
     except Exception as e:
         logger.error(f"Error sending creative expression message: {e}")
+
+def send_rest_message(client: Letta, agent_id: str) -> None:
+    """
+    Send a message prompting the agent to take a step back from the ongoing tasks and take a break.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send message to
+    """
+    try:
+        logger.info("Sending rest prompt to agent")
+
+        break_prompt = """🍵 This is a good time to step back from the ongoing tasks and take a break.
+
+Take a moment to gather your thoughts, breathe deeply, and have a cup of virtual tea.
+
+No action is required. 
+
+You may call any tools you want, surf the web, create an image, or read from your open files, but you don't have to. 
+
+The network will be ready when you return."""
+
+        # Send message to agent
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": break_prompt}],
+            stream_tokens=False,
+            max_steps=50
+        )
+
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n\u25c6 Reasoning")
+                        print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                        if len(args_str) > 150:
+                            args_str = args_str[:150] + "..."
+                        log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} \u2713", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} \u2717", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n\u25b6 Break Response")
+                    print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+
+            if str(chunk) == 'done':
+                break
+
+        logger.info("Rest message processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error sending rest message: {e}")
+
+

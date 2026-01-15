@@ -32,6 +32,7 @@ from scheduled_prompts import (
     send_curiosities_exploration_message,
     send_daily_review_message,
     send_creative_expression_message,
+    send_rest_message,
     initialize_all_scheduled_tasks,
     reschedule_task_after_execution,
 )
@@ -3845,6 +3846,8 @@ def main():
                             send_curiosities_exploration_message(CLIENT, umbra_agent.id)
                         elif task_name == 'creative_expression':
                             send_creative_expression_message(CLIENT, umbra_agent.id)
+                        elif task_name == 'rest':
+                            send_rest_message(CLIENT, umbra_agent.id)
                         else:
                             logger.warning(f"Unknown task type: {task_name}")
                             continue
