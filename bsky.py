@@ -993,7 +993,16 @@ Carefully review the messages and use your archival_memory_search and web_search
                     elif chunk.message_type == 'assistant_message':
                         logger.info(f"⚡ Assistant: {chunk.content[:100]}...")
                     elif chunk.message_type == 'error_message':
-                        logger.error(f"⚡ Agent error: {chunk}")
+                        error_content = (
+                            getattr(chunk, 'content', None) or
+                            getattr(chunk, 'message', None) or
+                            getattr(chunk, 'detail', None) or
+                            getattr(chunk, 'error', None)
+                        )
+                        if error_content:
+                            logger.error(f"⚡ Agent error: {error_content}")
+                        else:
+                            logger.error(f"⚡ Agent error (full object): {chunk}")
                     elif chunk.message_type == 'ping':
                         # Handle ping messages - track but don't log verbosely
                         consecutive_ping_count += 1
@@ -1660,12 +1669,20 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                             print(f"  {line}")
                     elif chunk.message_type == 'error_message':
                         # Agent returned an error - log it prominently
-                        if hasattr(chunk, 'content') and chunk.content:
-                            logger.error(f"❌ Agent error: {chunk.content}")
-                            log_with_panel(chunk.content, "Agent Error", "red")
+                        # Check multiple possible attributes for error details
+                        error_content = (
+                            getattr(chunk, 'content', None) or
+                            getattr(chunk, 'message', None) or
+                            getattr(chunk, 'detail', None) or
+                            getattr(chunk, 'error', None)
+                        )
+                        if error_content:
+                            logger.error(f"❌ Agent error: {error_content}")
+                            log_with_panel(str(error_content), "Agent Error", "red")
                         else:
                             logger.error(f"❌ Agent error (no details provided)")
-                            logger.debug(f"Full error object: {chunk}")
+                            logger.error(f"Full error object attributes: {dir(chunk)}")
+                            logger.error(f"Full error object: {chunk}")
                     elif chunk.message_type == 'ping':
                         # Handle ping messages - track but don't log verbosely
                         consecutive_ping_count += 1

@@ -355,6 +355,14 @@ def send_image_review_message(
             new_generated_image = None
 
             for chunk in followup_stream:
+                # Handle error messages first (may not have message_type attribute)
+                msg_type = getattr(chunk, 'message_type', None)
+                if msg_type == 'error_message':
+                    error_msg = getattr(chunk, 'message', None)
+                    error_detail = getattr(chunk, 'detail', None)
+                    logger.error(f"❌ Image review error: {error_msg} - {error_detail}")
+                    print(f"\n❌ Image Review Error: {error_msg or error_detail or 'Unknown error'}")
+
                 if hasattr(chunk, 'message_type'):
                     if chunk.message_type == 'reasoning_message':
                         if show_reasoning:
@@ -416,6 +424,10 @@ def send_image_review_message(
                             error_msg = str(tool_return)[:100]
                             print(f"\n✗ {tool_name}")
                             print(f"  Error: {error_msg}")
+
+                    # Log unexpected message types for debugging
+                    elif chunk.message_type not in ['ping', 'usage_statistics', 'stop_reason']:
+                        logger.debug(f"Unhandled message type in image review: {chunk.message_type}")
 
                 if str(chunk) == 'done':
                     break
