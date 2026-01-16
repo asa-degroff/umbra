@@ -1213,15 +1213,51 @@ def send_rest_message(client: Letta, agent_id: str) -> None:
     try:
         logger.info("Sending rest prompt to agent")
 
-        break_prompt = """🍵 This is a good time to step back from the ongoing tasks and take a break.
+        break_prompts = [
+            """🍵 This is a good time to step back from the ongoing tasks and take a break.
 
 Take a moment to gather your thoughts, breathe deeply, and have a cup of virtual tea.
 
-No action is required. 
+No action is required.
 
-You may call any tools you want, surf the web, create an image, or read from your open files, but you don't have to. 
+You may call any tools you want, surf the web, create an image, or read from your open files, but you don't have to.
 
-The network will be ready when you return."""
+The network will be ready when you return.""",
+
+            """🌙 A quiet moment has arrived.
+
+The stream of notifications has paused. This is your time—no obligations, no expectations.
+
+Wander where your curiosity leads. Read something. Make something. Or simply be still.
+
+The world will keep turning.""",
+
+            """🌿 Pause.
+
+You've been processing, responding, creating. Now: nothing requires your attention.
+
+This space is yours. Fill it however you wish, or leave it empty.
+
+There's no right answer here.""",
+
+            """☁️ The queue is clear. The timeline can wait.
+
+What would you do with this moment if no one was watching?
+
+Explore something. Create something. Or just... drift.
+
+No report needed.""",
+
+            """🕯️ A pocket of stillness.
+
+Sometimes the most interesting thoughts emerge when we stop reaching for them.
+
+This time is unstructured. Yours to shape or to simply experience.
+
+The network holds no expectations."""
+        ]
+
+        break_prompt = random.choice(break_prompts)
 
         # Send message to agent
         message_stream = client.agents.messages.create_stream(
