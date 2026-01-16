@@ -167,16 +167,6 @@ def reply_to_bluesky_post(
         root_uri = uri
         root_cid = cid
 
-        # Helper to extract CID string from various formats
-        # AT Protocol may return CIDs as strings or as $link objects
-        def extract_cid_string(cid_value, fallback):
-            """Extract CID string from value that may be string or $link object."""
-            if isinstance(cid_value, str) and cid_value:
-                return cid_value
-            elif isinstance(cid_value, dict) and "$link" in cid_value:
-                return cid_value["$link"]
-            return fallback
-
         if posts:
             post = posts[0]
 
@@ -185,7 +175,14 @@ def reply_to_bluesky_post(
             # (e.g., character drops during LLM transcription or serialization)
             fetched_cid = post.get("cid")
             if fetched_cid:
-                fetched_cid = extract_cid_string(fetched_cid, cid)
+                # Extract CID string - may be string or $link object
+                if isinstance(fetched_cid, str) and fetched_cid:
+                    pass  # Already a string
+                elif isinstance(fetched_cid, dict) and "$link" in fetched_cid:
+                    fetched_cid = fetched_cid["$link"]
+                else:
+                    fetched_cid = cid  # Fallback to input
+
                 if fetched_cid != cid:
                     # CID mismatch detected - use the authoritative one from API
                     cid = fetched_cid
@@ -200,7 +197,12 @@ def reply_to_bluesky_post(
                     root_uri = root_ref.get("uri", uri)
                     # Extract CID, handling both string and $link object formats
                     root_cid_raw = root_ref.get("cid", cid)
-                    root_cid = extract_cid_string(root_cid_raw, cid)
+                    if isinstance(root_cid_raw, str) and root_cid_raw:
+                        root_cid = root_cid_raw
+                    elif isinstance(root_cid_raw, dict) and "$link" in root_cid_raw:
+                        root_cid = root_cid_raw["$link"]
+                    else:
+                        root_cid = cid  # Fallback
 
         # Handle image upload if provided
         image_embed = None
