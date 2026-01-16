@@ -167,8 +167,29 @@ def reply_to_bluesky_post(
         root_uri = uri
         root_cid = cid
 
+        # Helper to extract CID string from various formats
+        # AT Protocol may return CIDs as strings or as $link objects
+        def extract_cid_string(cid_value, fallback):
+            """Extract CID string from value that may be string or $link object."""
+            if isinstance(cid_value, str) and cid_value:
+                return cid_value
+            elif isinstance(cid_value, dict) and "$link" in cid_value:
+                return cid_value["$link"]
+            return fallback
+
         if posts:
             post = posts[0]
+
+            # IMPORTANT: Use the CID from the fetched post as the authoritative source
+            # This corrects any corruption that may have occurred in the input CID
+            # (e.g., character drops during LLM transcription or serialization)
+            fetched_cid = post.get("cid")
+            if fetched_cid:
+                fetched_cid = extract_cid_string(fetched_cid, cid)
+                if fetched_cid != cid:
+                    # CID mismatch detected - use the authoritative one from API
+                    cid = fetched_cid
+
             record = post.get("record", {})
             reply_info = record.get("reply")
 
@@ -177,7 +198,9 @@ def reply_to_bluesky_post(
                 root_ref = reply_info.get("root")
                 if root_ref and isinstance(root_ref, dict):
                     root_uri = root_ref.get("uri", uri)
-                    root_cid = root_ref.get("cid", cid)
+                    # Extract CID, handling both string and $link object formats
+                    root_cid_raw = root_ref.get("cid", cid)
+                    root_cid = extract_cid_string(root_cid_raw, cid)
 
         # Handle image upload if provided
         image_embed = None
