@@ -622,6 +622,16 @@ def flatten_thread_structure(thread_data):
                 post_dict['uri'] = post.uri
             if hasattr(post, 'cid'):
                 post_dict['cid'] = post.cid
+                # Diagnostic: validate CID format to catch corruption early
+                cid_str = post.cid
+                if cid_str and isinstance(cid_str, str):
+                    # CIDv1 base32 should be ~59-63 chars, alphanumeric only
+                    if len(cid_str) < 50 or len(cid_str) > 70:
+                        logger.warning(f"⚠️ Unusual CID length ({len(cid_str)} chars) for {post.uri}: {cid_str}")
+                    # Check for non-alphanumeric chars (except common base encodings)
+                    import re
+                    if not re.match(r'^[A-Za-z0-9+/=]+$', cid_str):
+                        logger.warning(f"⚠️ CID contains unexpected characters for {post.uri}: {cid_str}")
 
             # Extract author info
             if hasattr(post, 'author') and post.author:

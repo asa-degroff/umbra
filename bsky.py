@@ -665,6 +665,21 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
                 uri = matching_post.get('uri', 'unknown')
                 cid = matching_post.get('cid', 'unknown')
 
+                # Diagnostic: compare CID from fresh fetch with database metadata
+                # This helps diagnose CID corruption issues
+                db_metadata_str = notif.get('metadata')
+                if db_metadata_str:
+                    try:
+                        db_metadata = json.loads(db_metadata_str)
+                        db_cid = db_metadata.get('cid')
+                        if db_cid and cid != 'unknown' and db_cid != cid:
+                            logger.warning(f"⚠️ CID mismatch detected for {uri}:")
+                            logger.warning(f"   Fresh API CID: {cid}")
+                            logger.warning(f"   Database CID:  {db_cid}")
+                            logger.warning(f"   Using fresh API CID (authoritative)")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
                 # Get author info
                 author = matching_post.get('author', {})
                 author_handle = author.get('handle', 'unknown') if isinstance(author, dict) else 'unknown'
