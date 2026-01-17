@@ -566,16 +566,13 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             logger.error("Failed to get thread context for high-traffic batch")
             return False  # Retry later
 
-        # Extract images from thread for multimodal content
-        batch_images = extract_images_from_thread(thread, max_images=8)
-        batch_image_urls = {img.get('fullsize') for img in batch_images if img.get('fullsize')}
-        if batch_images:
-            logger.debug(f"   Extracted {len(batch_images)} images from main thread")
-
-        # Extract all posts from thread
+        # Extract all posts from thread first (before images)
         flattened = bsky_utils.flatten_thread_structure(thread)
         posts = flattened.get('posts', [])
         existing_uris = {p.get('uri') for p in posts}
+
+        # Track notification threads for image extraction (will be populated below)
+        notification_threads = []  # List of (notif_uri, notif_thread) tuples
 
         # For each notification, fetch its parent chain to ensure we have full context
         # This handles cases where depth limit prevents reaching notification's ancestors
@@ -593,6 +590,9 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
                     depth=0            # Don't need replies, just parents
                 )
                 if notif_thread:
+                    # Save for image extraction later
+                    notification_threads.append((notif_uri, notif_thread))
+
                     # Extract posts from notification's thread (includes parents)
                     notif_flattened = bsky_utils.flatten_thread_structure(notif_thread)
                     notif_posts = notif_flattened.get('posts', [])
@@ -604,16 +604,85 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
                             posts.append(p)
                             existing_uris.add(p_uri)
                             logger.debug(f"   Added missing parent post: {p_uri}")
-
-                    # Extract images from notification's parent chain (deduplicate)
-                    notif_images = extract_images_from_thread(notif_thread, max_images=8)
-                    for img in notif_images:
-                        img_url = img.get('fullsize')
-                        if img_url and img_url not in batch_image_urls and len(batch_images) < 8:
-                            batch_images.append(img)
-                            batch_image_urls.add(img_url)
             except Exception as e:
                 logger.warning(f"Failed to fetch parent chain for notification {notif_uri}: {e}")
+
+        # IMAGE EXTRACTION WITH PRIORITY
+        # Priority 1: Images from notification posts themselves (most relevant)
+        # Priority 2: Images from notification parent chains (context for notifications)
+        # Priority 3: Images from broader thread (general context)
+        batch_images = []
+        batch_image_urls = set()
+        max_images = 8
+
+        # Priority 1: Extract images directly from notification posts
+        notification_uris = {notif.get('uri') for notif in batch_notifications}
+        for notif_uri, notif_thread in notification_threads:
+            if len(batch_images) >= max_images:
+                break
+            # Get the notification post itself (the thread's main post)
+            if hasattr(notif_thread, 'thread') and hasattr(notif_thread.thread, 'post'):
+                post = notif_thread.thread.post
+                if hasattr(post, 'embed') and post.embed:
+                    post_images = bsky_utils.extract_images_from_embed(post.embed)
+                    author_handle = getattr(post.author, 'handle', 'unknown') if hasattr(post, 'author') else 'unknown'
+                    for img in post_images:
+                        img_url = img.get('fullsize')
+                        if img_url and img_url not in batch_image_urls and len(batch_images) < max_images:
+                            img['author_handle'] = author_handle
+                            img['priority'] = 'notification_post'
+                            batch_images.append(img)
+                            batch_image_urls.add(img_url)
+
+        if batch_images:
+            logger.debug(f"   Priority 1: {len(batch_images)} images from notification posts")
+
+        # Priority 2: Extract images from notification parent chains
+        priority_2_count = 0
+        for notif_uri, notif_thread in notification_threads:
+            if len(batch_images) >= max_images:
+                break
+            # Extract images from the parent chain (excluding the notification post itself)
+            if hasattr(notif_thread, 'thread') and hasattr(notif_thread.thread, 'parent'):
+                parent = notif_thread.thread.parent
+                while parent and len(batch_images) < max_images:
+                    if hasattr(parent, 'post') and parent.post:
+                        post = parent.post
+                        if hasattr(post, 'embed') and post.embed:
+                            post_images = bsky_utils.extract_images_from_embed(post.embed)
+                            author_handle = getattr(post.author, 'handle', 'unknown') if hasattr(post, 'author') else 'unknown'
+                            for img in post_images:
+                                img_url = img.get('fullsize')
+                                if img_url and img_url not in batch_image_urls and len(batch_images) < max_images:
+                                    img['author_handle'] = author_handle
+                                    img['priority'] = 'notification_parent'
+                                    batch_images.append(img)
+                                    batch_image_urls.add(img_url)
+                                    priority_2_count += 1
+                    # Move to next parent
+                    parent = getattr(parent, 'parent', None)
+
+        if priority_2_count > 0:
+            logger.debug(f"   Priority 2: {priority_2_count} images from notification parent chains")
+
+        # Priority 3: Fill remaining slots with images from broader thread context
+        if len(batch_images) < max_images:
+            remaining_slots = max_images - len(batch_images)
+            context_images = extract_images_from_thread(thread, max_images=remaining_slots + len(batch_images))
+            priority_3_count = 0
+            for img in context_images:
+                img_url = img.get('fullsize')
+                if img_url and img_url not in batch_image_urls and len(batch_images) < max_images:
+                    img['priority'] = 'thread_context'
+                    batch_images.append(img)
+                    batch_image_urls.add(img_url)
+                    priority_3_count += 1
+
+            if priority_3_count > 0:
+                logger.debug(f"   Priority 3: {priority_3_count} images from broader thread context")
+
+        if batch_images:
+            logger.debug(f"   Total: {len(batch_images)} images for multimodal content")
 
         # Re-sort posts chronologically after merging
         posts.sort(key=lambda p: p.get('record', {}).get('createdAt', ''))
