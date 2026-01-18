@@ -636,7 +636,7 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Priority 3: Images from broader thread (general context)
         batch_images = []
         batch_image_urls = set()
-        max_images = 3
+        max_images = 4
 
         # Priority 1: Extract images directly from notification posts
         notification_uris = {notif.get('uri') for notif in batch_notifications}
@@ -1419,7 +1419,7 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
                 logger.debug(f"[{correlation_id}] No consecutive posts found in chain")
 
         # Extract images from thread before YAML conversion (for multimodal messages)
-        thread_images = extract_images_from_thread(thread, max_images=8)
+        thread_images = extract_images_from_thread(thread, max_images=4)
         if thread_images:
             logger.debug(f"[{correlation_id}] Extracted {len(thread_images)} images from thread")
 

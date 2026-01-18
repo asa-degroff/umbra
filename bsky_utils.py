@@ -310,7 +310,7 @@ def extract_images_from_embed(embed, include_thumbnails: bool = True) -> list[di
     return images
 
 
-def extract_images_from_thread(thread_data, max_images: int = 3) -> list[dict]:
+def extract_images_from_thread(thread_data, max_images: int = 4) -> list[dict]:
     """Extract all images from a thread, up to max_images.
 
     Traverses the thread structure and extracts image URLs from post embeds.
@@ -318,7 +318,7 @@ def extract_images_from_thread(thread_data, max_images: int = 3) -> list[dict]:
 
     Args:
         thread_data: The thread data from get_post_thread
-        max_images: Maximum number of images to extract (default 8)
+        max_images: Maximum number of images to extract (default 4)
 
     Returns:
         List of image dicts with 'fullsize', 'thumb', 'alt', 'author_handle' keys
