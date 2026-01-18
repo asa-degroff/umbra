@@ -89,7 +89,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 86400,  # 24-hour window
+        'window_seconds': 43200, 
         'emoji': '🍵',
         'description': 'Break',
     }
