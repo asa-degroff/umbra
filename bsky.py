@@ -2672,6 +2672,42 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
                     # Check for duplicate first
                     add_result = NOTIFICATION_DB.add_notification(notif_dict)
                     if add_result == "duplicate":
+                        # Check if this is a "stuck" notification - status='pending' but no active debounce
+                        # This can happen if a previous error reset the status but the queue file was deleted
+                        existing = NOTIFICATION_DB.get_notification(notification_uri)
+                        if existing:
+                            existing_status = existing.get('status')
+                            existing_debounce = existing.get('debounce_until')
+                            current_time = datetime.now().isoformat()
+
+                            # Notification is "stuck" if: pending, no debounce OR expired debounce
+                            is_stuck = (
+                                existing_status == 'pending' and
+                                (not existing_debounce or existing_debounce <= current_time)
+                            )
+
+                            if is_stuck:
+                                # Check if queue file exists for this notification
+                                has_queue_file = False
+                                for qfile in QUEUE_DIR.glob("*.json"):
+                                    if qfile.name == "processed_notifications.json":
+                                        continue
+                                    try:
+                                        with open(qfile, 'r') as f:
+                                            qdata = json.load(f)
+                                        if qdata.get('uri') == notification_uri:
+                                            has_queue_file = True
+                                            break
+                                    except:
+                                        pass
+
+                                if not has_queue_file:
+                                    # Stuck notification - mark as processed since it was likely
+                                    # already handled but status was incorrectly reset
+                                    logger.info(f"⚡ Fixing stuck notification (pending, no debounce, no queue file): {notification_uri}")
+                                    NOTIFICATION_DB.mark_processed(notification_uri, status='processed')
+                                    return False
+
                         logger.debug(f"⚡ Skipping duplicate {thread_type} (pre-debounce): {notification_uri}")
                         return False
                     elif add_result == "error":
@@ -2858,6 +2894,34 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
                                 if existing['debounce_until'] > datetime.now().isoformat():
                                     logger.debug(f"⚡ Skipping duplicate notification in cooldown thread: {notification_uri}")
                                     return False
+
+                            # Check for stuck notifications (pending, no debounce, no queue file)
+                            if existing:
+                                existing_status = existing.get('status')
+                                existing_debounce = existing.get('debounce_until')
+                                current_time = datetime.now().isoformat()
+                                is_stuck = (
+                                    existing_status == 'pending' and
+                                    (not existing_debounce or existing_debounce <= current_time)
+                                )
+                                if is_stuck:
+                                    has_queue_file = False
+                                    for qfile in QUEUE_DIR.glob("*.json"):
+                                        if qfile.name == "processed_notifications.json":
+                                            continue
+                                        try:
+                                            with open(qfile, 'r') as f:
+                                                qdata = json.load(f)
+                                            if qdata.get('uri') == notification_uri:
+                                                has_queue_file = True
+                                                break
+                                        except:
+                                            pass
+                                    if not has_queue_file:
+                                        logger.info(f"⚡ Fixing stuck notification in cooldown (pending, no debounce, no queue file): {notification_uri}")
+                                        NOTIFICATION_DB.mark_processed(notification_uri, status='processed')
+                                        return False
+
                             logger.debug(f"⚡ Skipping duplicate high-traffic {thread_type} during cooldown: {notification_uri}")
                             return False
                         elif add_result == "error":
