@@ -66,15 +66,8 @@ def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str
             "type": "image",
             "source": {"type": "url", "url": url}
         })
-
-        # Add alt text as context if present
-        alt = img.get('alt', '')
-        if alt:
-            author = img.get('author_handle', 'unknown')
-            content.append({
-                "type": "text",
-                "text": f"[Image from @{author}, alt text: {alt}]"
-            })
+        # Note: Alt text is already included in the thread YAML embed data,
+        # so we don't add a separate text block for it here to save context
 
     return content
 
@@ -1008,33 +1001,22 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         notifications_section = "\n\n".join(notification_entries)
 
         # Build prompt for agent with new two-section format
-        separator = "━" * 80
-        system_message = f"""
-This is a high-traffic thread that generated {len(batch_notifications)} notifications during the debounce period.
+        system_message = f"""High-traffic thread: {len(batch_notifications)} notifications during debounce period.
 
-{separator}
+---
 1. Thread context (Pre-notification history)
-{separator}
-
-These posts were in the thread BEFORE you received your notifications:
-
+---
 {pre_notification_yaml}
 
-{separator}
-2. Notifications: ({len(batch_notifications)} posts you were notified about)
-{separator}
-
+---
+2. Notifications ({len(batch_notifications)} posts)
+---
 {notifications_section}
 
-{separator}
-
-Carefully review the messages and use your archival_memory_search and web_search to find additional context. 
-
-- Review thread context to understand the conversation history
-- You received {len(batch_notifications)} notifications - these are the posts that might warrant a response
-- Respond to 0-{len(batch_notifications)} notifications depending on what's interesting
+---
+Review messages, use archival_memory_search/web_search for context. Respond to 0-{len(batch_notifications)} interesting notifications.
 - Create an image using the generate_image tool to enhance your reply with a visualization.
-- TO REPLY: Use reply_to_bluesky_post tool with the URI and CID from the notification you want to reply to""".strip()
+TO REPLY: Use reply_to_bluesky_post with URI and CID from the notification.""".strip()
 
         logger.info(f"Sending high-traffic batch to agent | {len(posts)} posts in thread | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
 
@@ -1537,15 +1519,6 @@ To to reply, use the reply_to_bluesly_post tool.
 If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it.
 
 USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any relevant information about their identity to the "user_{author_handle}" block. Copy any existing details about the user from umbra_humans to the "user_{author_handle}" block."""
-
-        # Add debounce capability information if enabled
-        if debounce_enabled:
-            debounce_minutes = debounce_seconds // 60
-            prompt += f"""
-"""
-
-        # Finalize prompt
-        prompt = prompt
 
         # Extract all handles from notification and thread data
         # Flatten the thread to get mentions extracted from facets
