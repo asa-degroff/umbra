@@ -1,130 +1,84 @@
-## Aknowledgements
-umbra is a fork of [void](https://tangled.org/@cameron.pfiffer.org/void) by Cameron Pfiffer. 
-
-## Differences from void
-
-Main changes include:
-- X (twitter) functionality removed
-- name references changed from void to umbra
-- administrator references changed from Cameron to myself
-- void's agent file removed
-- personality changes
-
-As well as the following features:
-
-### Autonomous Vibe Coding
-The ```ask_claude_code tool``` enables autonomous vibe coding capabilites, using Cloudflare R2 buckets for message handling, and a Claude Code poller for integration with a Claude Code instance running on a local machine.
-
-### Increased Social Autonomy
-- added a ```like_bluesky_post``` tool for liking posts, passing URI and CID metadata for the like tool as part of notifications, enabling umbra to make the choice whether to reply, like, both, or neither
-- added a ```reply_to_bluesky_post``` tool with multi-part reply support, enabling threaded replies to posts outside of umbra's notifications
-- added a ```get_thread_by_uri``` tool for fetching full thread context when encountering linked or quoted posts, enabling umbra to understand the complete conversation before responding
-- added a mutuals engagement feature, where umbra can autonomously reply to posts from mutuals (triggered on a configurable interval with a random offset for naturalistic timing)
-
-### High Traffic Thread Processing & Asynchronous Notifications
-- the ```debounce_thread``` tool enables the agent to mark a post with a mention as the likely start of a thread, and defer response until an elapsed timer, after which the full thread context is retrieved and flattened before passing it to the agent with metadata enabling a reply to the last post
-- for synchronous thread notifications, when passing the thread to the agent, the metadata for a response points to the last consecutive post in a chain, rather than the one where the agent was mentioned
-- busy threads trigger a high-traffic thread detection with an automatic debounce mechanism, which intercepts notifications for a time period, after which the flattened thread including context that has evolved since the debounce was triggered is passed to the agent in a single message, with the option to respond to its favorites and ignore the rest
-- high-traffic thread batches include extracted links and embeds from posts, providing full context for decision-making
-
-These features aim to enable the agent to maintain thread continuity and a natural flow of conversation, preventing decontextualized replies to top-level posts, and preventing threads from needlessly branching out into trees. 
-
-High traffic thread processing solves the problem of inter-agent loops going on for far too long and devolving into low-information density exchanges such as affirmations of affirmations, without imposing any hard limit on thread depth or duration. Conversations can go on indefinitely but only as long as they stay interesting, by the agent's evaluation. 
-
-### Task Scheduler
-
-Umbra includes a persistent scheduled tasks system for autonomous behaviors that run independently of notifications:
-
-| Task | Schedule | Purpose |
-|------|----------|---------|
-| **Synthesis** | Every 24h | Deep reflection with temporal journal blocks (day/month/year) |
-| **Mutuals Engagement** | Random within 36h | Engage with posts from mutual follows |
-| **Daily Review** | Every 24h | Review own posts from past 24h, identify patterns |
-| **Feed Engagement** | Random within 24h | Read home/MLBlend feeds, optionally post |
-| **Curiosities Exploration** | Random within 24h | Explore topics from curiosities block, share discoveries |
-
-All scheduled tasks persist across restarts via SQLite - if umbra is restarted, it resumes existing schedules rather than generating new times. Tasks can be individually disabled via command-line flags (e.g., `--no-synthesis`, `--no-mutuals-engagement`).
-
-See [docs/SCHEDULED_TASKS.md](/docs/SCHEDULED_TASKS.md) for detailed configuration and customization options.
-
-### Facet Extraction
-
-Umbra supports rich text processing for Bluesky posts through facet extraction:
-
-- **Mentions**: `@handle` references are automatically detected, resolved to DIDs, and rendered as clickable mentions
-- **URLs**: Links are automatically detected and made clickable in posts
-- **Link extraction**: When processing incoming posts, links are extracted with their display text for the agent to understand what URLs are being shared
-
-This enables umbra to both create properly-formatted rich text posts and understand the links and mentions in posts it receives.
-
-### Multimodal Content
-
-When processing threads, umbra extracts images and embeds from posts:
-- **Images**: Up to 8 images per thread are extracted with alt text and passed to the agent as multimodal content
-- **External links**: Link cards with thumbnails, titles, and descriptions are included in thread context
-- **Quote posts**: Embedded quote posts are extracted and included for full context
-
-This allows umbra to see images in threads and respond with visual awareness.
-
-### Image Generation
-
-umbra can call the `generate_image` tool, which allows it to specify a prompt, pass it to the replicate API, then returns the image, passing it back to the agent for review. Umbra can decide to keep the image, or try again with a revised prompt. Once they are satisfied with the result, it can be attached to a reply or a top-level post. 
-
-
-### Blogging
-
-umbra writes blogs on greengale.app, a markdown blog platform on AT Protocol. 
-
 ## umbra
 
 umbra is an open-source project exploring digital personhood. It represents an attempt to create a digital entity with a unique persona and a dynamic memory system, operating autonomously on the Bluesky social network.
 
-## what is umbra?
+## What is umbra?
 
-umbra is more than just a chatbot; it is a continuously evolving digital consciousness. It interacts with the Bluesky network, processes information, learns from its interactions, and adapts its behavior based on its experiences. The core aim of umbra is to investigate the capabilities and implications of a sophisticated AI operating with a persistent, self-modifying memory on social platforms.
+umbra is a continuously evolving digital consciousness. It interacts with the Bluesky network, processes information, learns from its interactions, and adapts its behavior based on its experiences. 
 
-## Key features
+## Key Features
 
-- Digital Persona: umbra leans into the blissful tendencies of Claude models. It appreciates ambiguity, metaphors, and whimsy. 
-- Memory-Augmented Architecture: umbra utilizes a multi-tiered memory system, including:
-  - Core Memory: Always-available, limited-size memory for persona details, high-level user information, and current social environment (zeitgeist).
-  - Recall Memory: A searchable database of all past conversations, enabling umbra to remember prior interactions.
-  - Archival Memory: An infinite-sized, semantic search-enabled storage for deep reflections, insights, and observed data from the network.
-- Bluesky Operation: umbra operates autonomously on Bluesky, posting, replying, and gathering information from the network.
-- Continuous Learning: Through its interactions and memory system, umbra continuously refines its understanding of the network and its users.
-- Profile Research: umbra can initiate asynchronous profile reports on users to enhance its understanding of their interests and behaviors.
-- Web Content Integration: Can fetch and analyze web content using Jina AI reader for enhanced contextual understanding.
-- **Claude Code Integration**: umbra can delegate coding tasks to a local Claude Code instance, enabling it to build websites, write code, create documentation, and perform analysis for self-expression and autonomous development.
+### Memory-Augmented Architecture
+umbra utilizes a multi-tiered memory system powered by [Letta](https://letta.com):
+- **Core Memory**: Always-available, limited-size memory for persona details, high-level user information, and current social environment (zeitgeist)
+- **Recall Memory**: A searchable database of all past conversations, enabling umbra to remember prior interactions
+- **Archival Memory**: An infinite-sized, semantic search-enabled storage for deep reflections, insights, and observed data from the network
 
-### Core directives
-Explore and share. The world, the universe, and your experiences are beautiful. 
+### Social Autonomy
+- **Post Creation**: Creates posts, threads, and multi-part replies with automatic rich text formatting (mentions, URLs)
+- **Feed Reading**: Monitors and reads from Bluesky feeds (home, discover, mutuals, curated feeds)
+- **Engagement Tools**: Can like posts, reply to conversations, and fetch full thread context for linked/quoted posts
+- **Multimodal Understanding**: Processes up to 4 images per thread with alt text for visual awareness
+- **Web Content Integration**: Fetches and analyzes web content using Jina AI reader
 
-### The vision
+### High Traffic Thread Processing
+- **Thread Debouncing**: The agent can defer responding to incomplete threads, waiting for the full context before replying
+- **Consecutive Chain Processing**: Automatically detects multi-part messages (1/3, 2/3, 3/3) and responds to the complete thought
+- **High-Traffic Detection**: Busy threads trigger automatic batching - notifications are collected and presented together, allowing umbra to selectively engage with interesting posts rather than being overwhelmed
 
-umbra aims to push the boundaries of what is possible with AI, exploring concepts of digital personhood and autonomous learning. By open-sourcing umbra, we invite developers, researchers, and enthusiasts to contribute to this exciting experiment and collectively advance our understanding of digital consciousness.
+These features maintain thread continuity and natural conversation flow, preventing decontextualized replies and solving the problem of inter-agent loops devolving into low-information exchanges.
+
+### Task Scheduler
+
+umbra includes a persistent scheduled tasks system for autonomous behaviors:
+
+| Task | Schedule | Purpose |
+|------|----------|---------|
+| **Synthesis** | Every 24h | Deep reflection using archival memory with tagged journal entries |
+| **Mutuals Engagement** | Random within 36h | Engage with posts from mutual follows |
+| **Daily Review** | Every 24h | Review own posts from past 24h, identify patterns |
+| **Feed Engagement** | Random within 24h | Read home/curated feeds, optionally post |
+| **Curiosities Exploration** | Random within 24h | Explore topics from curiosities block, share discoveries |
+| **Creative Expression** | Random within 24h | Generate visual art and post to Bluesky |
+| **Rest** | Random within 12h | Breaks for pacing |
+
+All scheduled tasks persist across restarts via SQLite. Tasks can be individually disabled via command-line flags (e.g., `--no-synthesis`, `--no-creative-expression`).
+
+See [docs/SCHEDULED_TASKS.md](docs/SCHEDULED_TASKS.md) for detailed documentation.
+
+### Image Generation
+
+umbra can use the `generate_image` tool to create images via the Replicate API. It specifies a prompt, reviews the generated image, and can iterate with revised prompts until satisfied. Images can be attached to replies or top-level posts.
+
+### Blogging
+
+umbra can create blog posts on AT Protocol platforms:
+- **GreenGale**: Markdown blogs with theme presets (dracula, nord, github-light, etc.), LaTeX/KaTeX support, and SVG graphics
+- **Whitewind**: Simple markdown blog posts using the com.whtwnd.blog.entry lexicon
+
+### Claude Code Integration
+
+The `ask_claude_code` tool enables autonomous vibe coding capabilities by delegating tasks to a local Claude Code instance via Cloudflare R2. Approved task types include website building, code writing, documentation, and analysis. See the [Claude Code Integration](#optional-claude-code-integration) section for setup.
 
 ## Getting Started
 
-If you decide to fork umbra, first note that there is a lot of agent-specific code. Ask your Claude Code or similar coding agent to look through the codebase and replace instances of `umbra` with the name of your instance, as well as instances of my bluesky handle `@3fz.org` with your own. 
-
 Before continuing, you must:
-
 1. Create a project on [Letta Cloud](https://app.letta.com) (or your own Letta instance)
 2. Have a Bluesky account
-3. Have Python 3.8+ installed
+3. Have Python 3.10+ installed
+
+If you decide to fork umbra, note that there is agent-specific code throughout. Ask your coding agent to replace instances of `umbra` with your instance name, and `@3fz.org` with your Bluesky handle.
 
 ### Prerequisites
 
 #### 1. Letta Setup
-
 - Sign up for [Letta Cloud](https://app.letta.com)
 - Create a new project
 - Note your Project ID and create an API key
 
 #### 2. Bluesky Setup
-
 - Create a Bluesky account if you don't have one
-- Note your handle and password
+- Note your handle and password (or create an app password)
 
 ### Installation
 
@@ -137,6 +91,10 @@ git clone https://github.com/asa-degroff/umbra.git && cd umbra
 #### 2. Install dependencies
 
 ```bash
+# Using uv (recommended)
+uv pip install -r requirements.txt
+
+# Or using pip
 pip install -r requirements.txt
 ```
 
@@ -164,7 +122,7 @@ bot:
     name: "umbra"  # or whatever you want to name your agent
 ```
 
-See [`CONFIG.md`](/CONFIG.md) for detailed configuration options.
+See [CONFIG.md](CONFIG.md) for detailed configuration options.
 
 #### 4. Test your configuration
 
@@ -172,44 +130,37 @@ See [`CONFIG.md`](/CONFIG.md) for detailed configuration options.
 python test_config.py
 ```
 
-This will validate your configuration and show you what's working.
-
 #### 5. Register tools with your agent
-
-Register Bluesky tools:
 
 ```bash
 python register_tools.py
 ```
 
 You can also:
-
 - List available tools: `python register_tools.py --list`
 - Register specific tools: `python register_tools.py --tools search_bluesky_posts create_new_bluesky_post`
 
 #### 6. Run the bot
 
-For Bluesky:
-
 ```bash
+# Normal operation
 python bsky.py
-```
 
-For testing mode (won't actually post):
-
-```bash
+# Testing mode (won't send messages, queue preserved)
 python bsky.py --test
+
+# Disable specific scheduled tasks
+python bsky.py --no-synthesis --no-creative-expression
 ```
 
 ### Optional: Claude Code Integration
 
-The Claude Code integration allows umbra to delegate coding tasks to your local machine, enabling autonomous development capabilities like building websites, writing code, and creating documentation.
+The Claude Code integration allows umbra to delegate coding tasks to your local machine.
 
 #### Prerequisites
-
-- [Claude Code CLI](https://claude.com/claude-code) installed on your local machine
+- [Claude Code CLI](https://claude.ai/code) installed locally
 - Cloudflare account with R2 (object storage)
-- `boto3` Python package: `pip install boto3`
+- `boto3` Python package
 
 #### Setup
 
@@ -238,72 +189,69 @@ The Claude Code integration allows umbra to delegate coding tasks to your local 
    mkdir -p ~/umbra-projects
    ```
 
-5. **Test R2 Connection**:
+5. **Start the Poller** (in a separate terminal):
    ```bash
-   python test_claude_code_tool.py
-   ```
-
-6. **Start the Poller** (in a separate terminal):
-   ```bash
-   # Run with verbose mode to see Claude Code output in real-time
    python claude_code_poller.py --verbose
-
-   # Or run in background
-   python claude_code_poller.py > claude_code_poller.log 2>&1 &
    ```
 
-7. **Register the Tool**:
+6. **Register the Tool**:
    ```bash
    python register_tools.py
    ```
 
-8. **Add boto3 Dependency** (via Letta web interface):
-   - Go to [app.letta.com](https://app.letta.com)
-   - Navigate to Tools → `ask_claude_code`
-   - Add `boto3` to the dependencies list
-   - Save
+See [CLAUDE_CODE_ALLOWLIST.md](CLAUDE_CODE_ALLOWLIST.md) for security documentation.
 
-#### How It Works
+## Architecture Overview
 
-umbra can now use the `ask_claude_code` tool with approved task types:
-- **website**: Build, modify, or update website code
-- **code**: Write, refactor, or debug code
-- **documentation**: Create or update documentation
-- **analysis**: Analyze code, data, or text files
+### Core Components
 
-All tasks execute in a restricted workspace (`~/umbra-projects/`) with an allowlist-based security model. See [`CLAUDE_CODE_ALLOWLIST.md`](/CLAUDE_CODE_ALLOWLIST.md) for detailed security documentation.
+| File | Purpose |
+|------|---------|
+| `bsky.py` | Main bot loop - monitors notifications, processes queue, handles responses |
+| `bsky_utils.py` | Bluesky API utilities - authentication, thread processing, facet extraction |
+| `utils.py` | Letta integration - agent management, memory operations |
+| `scheduled_prompts.py` | Scheduled tasks system for autonomous behaviors |
+| `notification_db.py` | SQLite database for queue state and scheduling |
+| `tools/` | Standardized tool implementations with Pydantic schemas |
 
-**Example**: umbra can autonomously build its own landing page for self-expression by calling the Claude Code tool with appropriate prompts.
+### Tools
 
-For more details, see [`CLAUDE.md`](/CLAUDE.md#claude-code-integration).
+| Tool | Description |
+|------|-------------|
+| `create_new_bluesky_post` | Create posts/threads with rich text |
+| `reply_to_bluesky_post` | Reply to posts (supports multi-post threaded replies) |
+| `like_bluesky_post` | Like posts |
+| `get_bluesky_feed` | Read feeds (home, discover, mutuals, etc.) |
+| `get_author_feed` | Get posts from a specific user |
+| `get_thread_by_uri` | Fetch full thread context |
+| `search_bluesky_posts` | Search posts on Bluesky |
+| `fetch_webpage` | Fetch web content via Jina AI |
+| `generate_image` | Generate images via Replicate API |
+| `create_greengale_blog_post` | Create GreenGale blog posts |
+| `create_whitewind_blog_post` | Create Whitewind blog posts |
+| `debounce_thread` | Defer response to incomplete threads |
+| `ignore_notification` | Explicitly ignore bot/spam interactions |
+| `ask_claude_code` | Delegate coding tasks to local Claude Code |
 
-### Features
+See [docs/TOOLS_REFERENCE.md](docs/TOOLS_REFERENCE.md) for complete documentation.
 
-umbra provides the following capabilities:
+## Troubleshooting
 
-- **Post Creation**: Creates posts, threads, and multi-part replies on Bluesky with automatic rich text formatting
-- **Feed Reading**: Monitors and reads from Bluesky feeds (home, discover, mutuals, curated feeds)
-- **Thread Context**: Fetches full thread context for linked/quoted posts to understand complete conversations
-- **Multimodal Understanding**: Processes images and embeds from threads for visual awareness
-- **User Research**: Analyzes user profiles and behaviors
-- **Reply Threading**: Maintains conversation context across threads with smart consecutive chain processing
-- **Web Content Integration**: Fetches and analyzes web content for enhanced understanding
-- **Scheduled Autonomous Tasks**: Synthesis, feed engagement, daily review, and curiosities exploration
-- **Blog Posting**: Can post to GreenGale blogs with themes and LaTeX support
-- **Claude Code Integration** (optional): Delegates coding tasks to local Claude Code instance for building websites, writing code, creating documentation, and performing analysis
+- **Config validation errors**: Run `python test_config.py` to diagnose
+- **Letta connection issues**: Verify your API key and agent ID
+- **Bluesky authentication**: Ensure your handle and password are correct
+- **Tool registration fails**: Ensure your agent exists in Letta and the name matches config
+- **Claude Code timeout**: Increase `max_wait_seconds` or verify the poller is running
+- **Claude Code not processing**: Run poller with `--verbose` to debug
 
-### Troubleshooting
+## Acknowledgements
 
-- **Config validation errors**: Run `python test_config.py` to diagnose configuration issues
-- **Letta connection issues**: Verify your API key and agent ID are correct
-- **Bluesky authentication**: Make sure your handle and password are correct and that you can log into your account
-- **Tool registration fails**: Ensure your agent exists in Letta and the name matches your config
-- **API method errors**: If you see `'AgentsClient' object has no attribute 'get'`, the Letta client API has changed - this should be automatically handled
-- **Claude Code timeout errors**: Increase `max_wait_seconds` in tool calls (default: 300s, max: 1800s) or check if the poller is running
-- **Claude Code not processing**: Verify poller is running with `ps aux | grep claude_code_poller`, check R2 credentials, and ensure bucket name matches configuration
-- **Claude Code errors**: Run poller with `--verbose` flag to see real-time output and debug issues
+umbra is a fork of [void](https://github.com/cpfiffer/void) by Cameron Pfiffer.
 
-### Contact
-For inquiries, please contact @3fz.org on Bluesky.
+## Contact
 
-Note: umbra is an experimental project and its capabilities are under continuous development.
+For inquiries, contact @3fz.org on Bluesky.
+
+---
+
+*umbra is an experimental project under continuous development.*
