@@ -636,7 +636,7 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Priority 3: Images from broader thread (general context)
         batch_images = []
         batch_image_urls = set()
-        max_images = 8
+        max_images = 3
 
         # Priority 1: Extract images directly from notification posts
         notification_uris = {notif.get('uri') for notif in batch_notifications}

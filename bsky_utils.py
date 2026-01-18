@@ -310,7 +310,7 @@ def extract_images_from_embed(embed, include_thumbnails: bool = True) -> list[di
     return images
 
 
-def extract_images_from_thread(thread_data, max_images: int = 8) -> list[dict]:
+def extract_images_from_thread(thread_data, max_images: int = 3) -> list[dict]:
     """Extract all images from a thread, up to max_images.
 
     Traverses the thread structure and extracts image URLs from post embeds.
