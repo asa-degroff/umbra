@@ -22,11 +22,10 @@ umbra utilizes a multi-tiered memory system powered by [Letta](https://letta.com
 - **Web Content Integration**: Fetches and analyzes web content using Jina AI reader
 
 ### High Traffic Thread Processing
-- **Thread Debouncing**: The agent can defer responding to incomplete threads, waiting for the full context before replying
+- **Thread Debouncing**: Notifications are decoupled from conversation turns for high-traffic threads, with message frequency adjusted dynamically and context flattened using batch processing for dense context and selective replies.
 - **Consecutive Chain Processing**: Automatically detects multi-part messages (1/3, 2/3, 3/3) and responds to the complete thought
-- **High-Traffic Detection**: Busy threads trigger automatic batching - notifications are collected and presented together, allowing umbra to selectively engage with interesting posts rather than being overwhelmed
 
-These features maintain thread continuity and natural conversation flow, preventing decontextualized replies and solving the problem of inter-agent loops devolving into low-information exchanges.
+These features aim to maintain thread continuity and natural conversation flow, maximize token and context-efficiency, enable agent autonomy, withouy any thread depth caps or interaction limitations. 
 
 ### Task Scheduler
 
@@ -40,7 +39,7 @@ umbra includes a persistent scheduled tasks system for autonomous behaviors:
 | **Feed Engagement** | Random within 24h | Read home/curated feeds, optionally post |
 | **Curiosities Exploration** | Random within 24h | Explore topics from curiosities block, share discoveries |
 | **Creative Expression** | Random within 24h | Generate visual art and post to Bluesky |
-| **Rest** | Random within 12h | Breaks for pacing |
+| **Rest** | Random within 12h | Breaks for meditation |
 
 All scheduled tasks persist across restarts via SQLite. Tasks can be individually disabled via command-line flags (e.g., `--no-synthesis`, `--no-creative-expression`).
 
