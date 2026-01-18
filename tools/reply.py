@@ -203,6 +203,9 @@ def reply_to_bluesky_post(
                         root_cid = root_cid_raw["$link"]
                     else:
                         root_cid = cid  # Fallback
+            else:
+                # Post is a root post (not a reply), use the corrected cid
+                root_cid = cid
 
         # Handle image upload if provided
         image_embed = None
