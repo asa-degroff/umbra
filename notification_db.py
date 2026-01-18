@@ -949,7 +949,8 @@ class NotificationDB:
         threshold = config.get('notification_threshold', 10)
         logger.debug(f"Debounce calculation: thread_count={thread_count}, threshold={threshold}")
 
-        # Linear scaling: more activity = longer debounce
+        # Quadratic scaling: more activity = longer debounce
+        # Uses x² for slower increase at lower end, faster increase toward maximum
         # If at threshold, use min_seconds
         # If 10x threshold or more, use max_seconds
         if thread_count <= threshold:
@@ -961,11 +962,12 @@ class NotificationDB:
             logger.debug(f"Using maximum debounce: {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
         else:
-            # Linear interpolation between min and max
+            # Quadratic interpolation between min and max
             # Scale from threshold to 10x threshold (range = 9 * threshold)
             ratio = (thread_count - threshold) / (threshold * 9)
-            result_seconds = int(min_seconds + (max_seconds - min_seconds) * ratio)
-            logger.debug(f"Using interpolated debounce (ratio={ratio:.2f}): {result_seconds}s ({result_seconds/60:.1f}min)")
+            scaled_ratio = ratio ** 2
+            result_seconds = int(min_seconds + (max_seconds - min_seconds) * scaled_ratio)
+            logger.debug(f"Using quadratic debounce (ratio={ratio:.2f}, scaled={scaled_ratio:.2f}): {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
 
     # ============================================================
