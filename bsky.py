@@ -3301,27 +3301,32 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
 
                 # Handle file based on processing result
                 if success:
-                    # Mark as processed to avoid reprocessing (do this even in testing mode)
-                    # Use original_notification_uri to ensure the original notification is marked,
-                    # not a potentially modified URI from consecutive post detection
-                    if NOTIFICATION_DB:
-                        NOTIFICATION_DB.mark_processed(original_notification_uri, status='processed')
+                    # High-traffic batch processing handles its own cleanup (marks processed,
+                    # deletes queue files, clears debounces) so skip those steps here
+                    if is_debounced and is_high_traffic:
+                        logger.debug(f"Skipping cleanup - high-traffic batch already handled: {filepath.name}")
                     else:
-                        processed_uris = load_processed_notifications()
-                        processed_uris.add(original_notification_uri)
-                        save_processed_notifications(processed_uris)
+                        # Mark as processed to avoid reprocessing (do this even in testing mode)
+                        # Use original_notification_uri to ensure the original notification is marked,
+                        # not a potentially modified URI from consecutive post detection
+                        if NOTIFICATION_DB:
+                            NOTIFICATION_DB.mark_processed(original_notification_uri, status='processed')
+                        else:
+                            processed_uris = load_processed_notifications()
+                            processed_uris.add(original_notification_uri)
+                            save_processed_notifications(processed_uris)
 
-                    # Delete file in normal mode, keep in testing mode
-                    if testing_mode:
-                        logger.info(f"TESTING MODE: Keeping queue file: {filepath.name}")
-                    else:
-                        filepath.unlink()
-                        logger.info(f"Successfully processed and removed: {filepath.name}")
+                        # Delete file in normal mode, keep in testing mode
+                        if testing_mode:
+                            logger.info(f"TESTING MODE: Keeping queue file: {filepath.name}")
+                        else:
+                            filepath.unlink()
+                            logger.info(f"Successfully processed and removed: {filepath.name}")
 
-                        # Clear debounce flags now that processing is complete
-                        if NOTIFICATION_DB and is_debounced:
-                            NOTIFICATION_DB.clear_debounce(original_notification_uri)
-                            logger.debug(f"Cleared debounce flags for: {original_notification_uri}")
+                            # Clear debounce flags now that processing is complete
+                            if NOTIFICATION_DB and is_debounced:
+                                NOTIFICATION_DB.clear_debounce(original_notification_uri)
+                                logger.debug(f"Cleared debounce flags for: {original_notification_uri}")
                     
                 elif success is None:  # Special case for moving to error directory
                     error_path = QUEUE_ERROR_DIR / filepath.name
