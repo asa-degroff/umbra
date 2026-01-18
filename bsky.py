@@ -80,14 +80,23 @@ def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str
 
 
 def extract_handles_from_data(data):
-    """Recursively extract all unique handles from nested data structure."""
+    """Recursively extract all unique handles from nested data structure.
+
+    Extracts both author handles (from 'handle' keys) and mentioned handles
+    (from 'mentions' keys which contain lists of handle strings).
+    """
     handles = set()
-    
+
     def _extract_recursive(obj):
         if isinstance(obj, dict):
-            # Check if this dict has a 'handle' key
+            # Check if this dict has a 'handle' key (author handle)
             if 'handle' in obj:
                 handles.add(obj['handle'])
+            # Check if this dict has a 'mentions' key (list of mentioned handles)
+            if 'mentions' in obj and isinstance(obj['mentions'], list):
+                for mention in obj['mentions']:
+                    if isinstance(mention, str):
+                        handles.add(mention)
             # Recursively check all values
             for value in obj.values():
                 _extract_recursive(value)
@@ -95,7 +104,7 @@ def extract_handles_from_data(data):
             # Recursively check all list items
             for item in obj:
                 _extract_recursive(item)
-    
+
     _extract_recursive(data)
     return list(handles)
 
@@ -367,14 +376,22 @@ You may now respond to this thread with full context of all posts.{reply_instruc
             return True
 
         try:
-            # Attach user memory block
+            # Extract handles from thread (authors + mentions from parent chain)
+            flattened_thread = bsky_utils.flatten_thread_structure(thread)
+            all_handles = set()
+            all_handles.add(author_handle)
+            all_handles.update(extract_handles_from_data(flattened_thread))
+
+            # Attach user memory blocks
             attached_handles = []
-            try:
-                attach_result = attach_user_blocks([author_handle], umbra_agent)
-                attached_handles = [author_handle]
-                logger.debug(f"Attach result: {attach_result}")
-            except Exception as e:
-                logger.warning(f"Failed to attach user blocks: {e}")
+            if all_handles:
+                try:
+                    logger.debug(f"Attaching user blocks for {len(all_handles)} handles: {all_handles}")
+                    attach_result = attach_user_blocks(list(all_handles), umbra_agent)
+                    attached_handles = list(all_handles)
+                    logger.debug(f"Attach result: {attach_result}")
+                except Exception as e:
+                    logger.warning(f"Failed to attach user blocks: {e}")
 
             # Call the agent with the complete thread context
             message_response = CLIENT.agents.messages.create(
@@ -574,6 +591,10 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         # Track notification threads for image extraction (will be populated below)
         notification_threads = []  # List of (notif_uri, notif_thread) tuples
 
+        # Track handles from notification branches for user block attachment
+        # This includes authors and @mentions from notification posts + their parent chains
+        notification_branch_handles = set()
+
         # For each notification, fetch its parent chain to ensure we have full context
         # This handles cases where depth limit prevents reaching notification's ancestors
         for notif in batch_notifications:
@@ -596,6 +617,10 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
                     # Extract posts from notification's thread (includes parents)
                     notif_flattened = bsky_utils.flatten_thread_structure(notif_thread)
                     notif_posts = notif_flattened.get('posts', [])
+
+                    # Extract handles from this notification's branch (authors + mentions)
+                    branch_handles = extract_handles_from_data(notif_flattened)
+                    notification_branch_handles.update(branch_handles)
 
                     # Add any posts not already in our posts list
                     for p in notif_posts:
@@ -1013,18 +1038,16 @@ Carefully review the messages and use your archival_memory_search and web_search
             return True
 
         try:
-            # Attach user memory blocks for all participants in the thread
-            all_handles = set()
-            for notif in batch_notifications:
-                handle = notif.get('author_handle')
-                if handle:
-                    all_handles.add(handle)
-
+            # Attach user memory blocks for participants in notification branches
+            # notification_branch_handles was collected earlier during thread fetching
+            # and includes: authors of notification posts, authors of parent chain posts,
+            # and any @mentions within those posts
             attached_handles = []
-            if all_handles:
+            if notification_branch_handles:
+                logger.debug(f"Attaching user blocks for {len(notification_branch_handles)} handles from notification branches: {notification_branch_handles}")
                 try:
-                    attach_result = attach_user_blocks(list(all_handles), umbra_agent)
-                    attached_handles = list(all_handles)
+                    attach_result = attach_user_blocks(list(notification_branch_handles), umbra_agent)
+                    attached_handles = list(notification_branch_handles)
                     logger.debug(f"Attach result: {attach_result}")
                 except Exception as e:
                     logger.warning(f"Failed to attach user blocks: {e}")
@@ -1515,9 +1538,11 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
         prompt = prompt
 
         # Extract all handles from notification and thread data
+        # Flatten the thread to get mentions extracted from facets
+        flattened_thread = bsky_utils.flatten_thread_structure(thread)
         all_handles = set()
         all_handles.update(extract_handles_from_data(notification_data))
-        all_handles.update(extract_handles_from_data(thread.model_dump()))
+        all_handles.update(extract_handles_from_data(flattened_thread))
         unique_handles = list(all_handles)
         
         logger.debug(f"Found {len(unique_handles)} unique handles in thread: {unique_handles}")
