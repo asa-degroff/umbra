@@ -146,6 +146,36 @@ def extract_links_from_facets(record_text: str, facets: list) -> list:
     return links
 
 
+def extract_mentions_from_facets(record_text: str, facets: list) -> list:
+    """
+    Extract mentioned handles from facets.
+
+    Args:
+        record_text: The post text (needed to extract mention text using byte offsets)
+        facets: List of facet objects from post record
+
+    Returns:
+        List of handle strings (without @ prefix)
+    """
+    mentions = []
+    text_bytes = record_text.encode('utf-8')
+
+    for facet in facets:
+        for feature in facet.features:
+            if hasattr(feature, 'did'):  # Mention facet
+                byte_start = facet.index.byte_start
+                byte_end = facet.index.byte_end
+                try:
+                    mention_text = text_bytes[byte_start:byte_end].decode('utf-8')
+                    # Strip @ prefix if present
+                    handle = mention_text.lstrip('@')
+                    if handle:
+                        mentions.append(handle)
+                except (UnicodeDecodeError, IndexError):
+                    pass  # Skip malformed mentions
+    return mentions
+
+
 def extract_images_from_embed(embed, include_thumbnails: bool = True) -> list[dict]:
     """Extract image URLs and alt text from a post embed (View type).
 
@@ -650,14 +680,15 @@ def flatten_thread_structure(thread_data):
                     'createdAt': getattr(record, 'created_at', 'unknown')
                 }
 
-                # Extract links from facets if present
+                # Extract links and mentions from facets if present
                 if hasattr(record, 'facets') and record.facets:
-                    links = extract_links_from_facets(
-                        getattr(record, 'text', ''),
-                        record.facets
-                    )
+                    text = getattr(record, 'text', '')
+                    links = extract_links_from_facets(text, record.facets)
                     if links:
                         record_dict['links'] = links
+                    mentions = extract_mentions_from_facets(text, record.facets)
+                    if mentions:
+                        record_dict['mentions'] = mentions
 
                 post_dict['record'] = record_dict
 
