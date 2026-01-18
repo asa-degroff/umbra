@@ -169,6 +169,19 @@ class NotificationDB:
             ON scheduled_tasks(next_run_at, enabled)
         """)
 
+        # Create last_attempted table to track the most recent notification sent to Letta
+        # This allows for retry functionality when Letta errors occur
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS last_attempted (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                uri TEXT NOT NULL,
+                notification_data TEXT NOT NULL,
+                queue_filepath TEXT,
+                attempted_at TEXT NOT NULL,
+                processing_type TEXT
+            )
+        """)
+
         self.conn.commit()
     
     def add_notification(self, notif_dict: Dict) -> str:
@@ -288,7 +301,7 @@ class NotificationDB:
         row = cursor.fetchone()
 
         if row:
-            return row['status'] in ['processed', 'ignored', 'no_reply', 'in_progress']
+            return row['status'] in ['processed', 'ignored', 'no_reply', 'in_progress', 'error']
         return False
 
     def has_notification_for_root(self, root_uri: str) -> Optional[Dict]:
@@ -305,7 +318,7 @@ class NotificationDB:
             SELECT uri, reason, status, indexed_at
             FROM notifications
             WHERE (root_uri = ? OR uri = ?)
-            AND status IN ('pending', 'processed', 'ignored', 'no_reply')
+            AND status IN ('pending', 'processed', 'ignored', 'no_reply', 'error')
             ORDER BY
                 CASE reason
                     WHEN 'mention' THEN 1
@@ -337,7 +350,7 @@ class NotificationDB:
             SELECT uri, reason, status, indexed_at
             FROM notifications
             WHERE (parent_uri = ? OR uri = ?)
-            AND status IN ('pending', 'processed', 'ignored', 'no_reply')
+            AND status IN ('pending', 'processed', 'ignored', 'no_reply', 'error')
             ORDER BY
                 CASE reason
                     WHEN 'mention' THEN 1
@@ -463,7 +476,26 @@ class NotificationDB:
         except Exception as e:
             logger.error(f"Error getting retry count: {e}")
             return 0
-    
+
+    def reset_to_pending(self, uri: str) -> bool:
+        """Reset a notification's status back to pending for retry.
+
+        This is called when a retryable error occurs to allow the notification
+        to be processed again on the next cycle.
+        """
+        try:
+            self.conn.execute("""
+                UPDATE notifications
+                SET status = 'pending'
+                WHERE uri = ?
+            """, (uri,))
+            self.conn.commit()
+            logger.debug(f"Reset notification to pending: {uri}")
+            return True
+        except Exception as e:
+            logger.error(f"Error resetting notification to pending: {e}")
+            return False
+
     def get_unprocessed(self, limit: int = 100) -> List[Dict]:
         """Get unprocessed notifications."""
         cursor = self.conn.execute("""
@@ -478,9 +510,9 @@ class NotificationDB:
     def get_latest_processed_time(self) -> Optional[str]:
         """Get the timestamp of the most recently processed notification."""
         cursor = self.conn.execute("""
-            SELECT MAX(indexed_at) as latest 
-            FROM notifications 
-            WHERE status IN ('processed', 'ignored', 'no_reply')
+            SELECT MAX(indexed_at) as latest
+            FROM notifications
+            WHERE status IN ('processed', 'ignored', 'no_reply', 'error')
         """)
         row = cursor.fetchone()
         return row['latest'] if row and row['latest'] else None
@@ -565,7 +597,7 @@ class NotificationDB:
         """Get set of processed URIs for compatibility with existing code."""
         cursor = self.conn.execute("""
             SELECT uri FROM notifications
-            WHERE status IN ('processed', 'ignored', 'no_reply', 'in_progress')
+            WHERE status IN ('processed', 'ignored', 'no_reply', 'in_progress', 'error')
             ORDER BY processed_at DESC
             LIMIT ?
         """, (limit,))
@@ -1563,6 +1595,80 @@ class NotificationDB:
         except Exception as e:
             logger.error(f"Error marking followers as batched: {e}")
             return 0
+
+    def save_last_attempted(self, uri: str, notification_data: Dict, queue_filepath: Optional[str] = None, processing_type: str = "mention") -> bool:
+        """
+        Save the last notification that was sent to Letta for processing.
+
+        This allows for retry functionality when Letta errors occur.
+
+        Args:
+            uri: The notification URI
+            notification_data: The full notification data dict
+            queue_filepath: Optional path to the queue file
+            processing_type: Type of processing (mention, high_traffic_batch, debounced)
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            now = datetime.now().isoformat()
+            data_json = json.dumps(notification_data)
+
+            # Use INSERT OR REPLACE to always have exactly one row
+            self.conn.execute("""
+                INSERT OR REPLACE INTO last_attempted (id, uri, notification_data, queue_filepath, attempted_at, processing_type)
+                VALUES (1, ?, ?, ?, ?, ?)
+            """, (uri, data_json, queue_filepath, now, processing_type))
+
+            self.conn.commit()
+            logger.debug(f"Saved last attempted notification: {uri} ({processing_type})")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving last attempted notification: {e}")
+            return False
+
+    def get_last_attempted(self) -> Optional[Dict]:
+        """
+        Get the last notification that was sent to Letta for processing.
+
+        Returns:
+            Dict with keys: uri, notification_data, queue_filepath, attempted_at, processing_type
+            Or None if no last attempted notification exists
+        """
+        try:
+            cursor = self.conn.execute("""
+                SELECT uri, notification_data, queue_filepath, attempted_at, processing_type
+                FROM last_attempted
+                WHERE id = 1
+            """)
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                'uri': row['uri'],
+                'notification_data': json.loads(row['notification_data']),
+                'queue_filepath': row['queue_filepath'],
+                'attempted_at': row['attempted_at'],
+                'processing_type': row['processing_type']
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting last attempted notification: {e}")
+            return None
+
+    def clear_last_attempted(self) -> bool:
+        """Clear the last attempted notification record."""
+        try:
+            self.conn.execute("DELETE FROM last_attempted WHERE id = 1")
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing last attempted notification: {e}")
+            return False
 
     def close(self):
         """Close database connection."""

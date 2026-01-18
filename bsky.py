@@ -393,6 +393,11 @@ You may now respond to this thread with full context of all posts.{reply_instruc
                 except Exception as e:
                     logger.warning(f"Failed to attach user blocks: {e}")
 
+            # Save last attempted notification for retry functionality
+            if NOTIFICATION_DB:
+                queue_path_str = str(queue_filepath) if queue_filepath else None
+                NOTIFICATION_DB.save_last_attempted(uri, notification_data, queue_path_str, "debounced")
+
             # Call the agent with the complete thread context
             message_response = CLIENT.agents.messages.create(
                 agent_id=umbra_agent.id,
@@ -1057,6 +1062,11 @@ Carefully review the messages and use your archival_memory_search and web_search
             if batch_images:
                 logger.info(f"Sending high-traffic batch with {len(batch_images)} image(s)")
 
+            # Save last attempted notification for retry functionality
+            if NOTIFICATION_DB:
+                queue_path_str = str(queue_filepath) if queue_filepath else None
+                NOTIFICATION_DB.save_last_attempted(root_uri, notification_data, queue_path_str, "high_traffic_batch")
+
             # Call the agent with the batch context using streaming
             message_stream = CLIENT.agents.messages.create_stream(
                 agent_id=umbra_agent.id,
@@ -1581,6 +1591,11 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
             content = build_multimodal_content(prompt, thread_images)
             if thread_images:
                 logger.info(f"[{correlation_id}] Sending multimodal message with {len(thread_images)} image(s)")
+
+            # Save last attempted notification for retry functionality
+            if NOTIFICATION_DB:
+                queue_path_str = str(queue_filepath) if queue_filepath else None
+                NOTIFICATION_DB.save_last_attempted(uri, notification_data, queue_path_str, "mention")
 
             # Use streaming to avoid 524 timeout errors
             message_stream = CLIENT.agents.messages.create_stream(
@@ -2615,7 +2630,7 @@ def save_notification_to_queue(notification, is_priority=None, threads_to_predeb
             if row:
                 db_status = row['status']
                 logger.debug(f"🔍 Notification DB status check: uri={notification_uri}, status={db_status}")
-                if db_status in ['processed', 'ignored', 'no_reply', 'in_progress']:
+                if db_status in ['processed', 'ignored', 'no_reply', 'in_progress', 'error']:
                     logger.debug(f"Notification already processed (DB status={db_status}): {notification_uri}")
                     return False
             else:
@@ -3172,7 +3187,7 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                 # This handles legacy duplicate queue files that were created before deduplication was fixed
                 if NOTIFICATION_DB:
                     existing_notif = NOTIFICATION_DB.get_notification(notif_data['uri'])
-                    if existing_notif and existing_notif.get('status') in ['processed', 'in_progress']:
+                    if existing_notif and existing_notif.get('status') in ['processed', 'in_progress', 'error', 'ignored', 'no_reply']:
                         logger.info(f"🗑️ Deleting duplicate queue file (notification already {existing_notif.get('status')}): {filepath.name}")
                         filepath.unlink()
                         continue  # Skip to next queue file
@@ -3384,6 +3399,8 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                             filepath.rename(error_path)
                             NOTIFICATION_DB.mark_processed(original_notification_uri, status='error', error=f'Max retries exceeded ({retry_count})')
                         else:
+                            # Reset status to pending so it can be retried
+                            NOTIFICATION_DB.reset_to_pending(original_notification_uri)
                             logger.warning(f"⚠️  Failed to process {filepath.name}, keeping in queue for retry (attempt {retry_count}/{MAX_RETRY_COUNT})")
                     else:
                         logger.warning(f"⚠️  Failed to process {filepath.name}, keeping in queue for retry")
@@ -3407,6 +3424,8 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                             filepath.rename(error_path)
                             NOTIFICATION_DB.mark_processed(uri_for_retry, status='error', error=str(e))
                         else:
+                            # Reset status to pending so it can be retried
+                            NOTIFICATION_DB.reset_to_pending(uri_for_retry)
                             logger.warning(f"Keeping in queue for retry (attempt {retry_count}/{MAX_RETRY_COUNT})")
                 except:
                     # If we can't even read the file, keep it for manual inspection
@@ -3701,6 +3720,7 @@ def main():
     parser.add_argument('--no-feed-engagement', action='store_true', help='Disable feed engagement')
     parser.add_argument('--no-curiosities', action='store_true', help='Disable curiosities exploration')
     parser.add_argument('--no-creative-expression', action='store_true', help='Disable creative expression')
+    parser.add_argument('--retry-last', action='store_true', help='Retry the last attempted notification and exit')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -3900,6 +3920,53 @@ def main():
         TASK_ENABLED_OVERRIDES['curiosities_exploration'] = False
     if args.no_creative_expression:
         TASK_ENABLED_OVERRIDES['creative_expression'] = False
+
+    # Handle --retry-last flag
+    if args.retry_last:
+        logger.info("🔄 Retry mode: Attempting to re-process last attempted notification...")
+
+        last_attempted = NOTIFICATION_DB.get_last_attempted()
+        if not last_attempted:
+            logger.error("No last attempted notification found in database")
+            return
+
+        uri = last_attempted['uri']
+        notification_data = last_attempted['notification_data']
+        queue_filepath = last_attempted.get('queue_filepath')
+        processing_type = last_attempted.get('processing_type', 'mention')
+        attempted_at = last_attempted.get('attempted_at', 'unknown')
+
+        logger.info(f"   URI: {uri}")
+        logger.info(f"   Type: {processing_type}")
+        logger.info(f"   Originally attempted: {attempted_at}")
+
+        # Connect to Bluesky if not already connected
+        if not atproto_client:
+            atproto_client = bsky_utils.default_login()
+            logger.info("Connected to Bluesky for retry")
+
+        # Re-process based on type
+        queue_path = Path(queue_filepath) if queue_filepath else None
+        result = None
+
+        try:
+            if processing_type == "high_traffic_batch":
+                logger.info("🔄 Retrying as high-traffic batch...")
+                result = process_high_traffic_batch(umbra_agent, atproto_client, notification_data, queue_path, TESTING_MODE)
+            elif processing_type == "debounced":
+                logger.info("🔄 Retrying as debounced thread...")
+                result = process_debounced_thread(umbra_agent, atproto_client, notification_data, queue_path, TESTING_MODE)
+            else:
+                logger.info("🔄 Retrying as single mention...")
+                result = process_mention(umbra_agent, atproto_client, notification_data, queue_path, TESTING_MODE)
+
+            logger.info(f"✓ Retry completed with result: {result}")
+        except Exception as e:
+            logger.error(f"✗ Retry failed with error: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return  # Exit after retry
 
     # Synthesis-only mode
     if SYNTHESIS_ONLY:

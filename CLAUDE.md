@@ -51,7 +51,25 @@ ac && python bsky.py --no-creative-expression # Disable creative expression
 
 # Run with only synthesis and curiosities enabled (disable others)
 ac && python bsky.py --no-mutuals-engagement --no-daily-review --no-feed-engagement
+
+# Retry the last attempted notification (useful when Letta errors occur)
+ac && python bsky.py --retry-last
 ```
+
+#### Retrying Failed Notifications
+
+When a notification fails to process due to Letta errors, you can retry it using:
+
+```bash
+ac && python bsky.py --retry-last
+```
+
+This will:
+1. Retrieve the last notification that was sent to Letta
+2. Re-process it using the same processing path (mention, high-traffic batch, or debounced)
+3. Exit after the retry completes
+
+The last attempted notification is tracked automatically before each agent call, so you can retry immediately after an error occurs.
 
 **Note:** All scheduled tasks are now persistent across restarts. If umbra is restarted, it will resume existing schedules from the database rather than generating new random times.
 
