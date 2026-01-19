@@ -107,6 +107,11 @@ threading:
     reply_debounce_min: 120  # Minimum debounce for replies (2 hours)
     reply_debounce_max: 360  # Maximum debounce for very active threads (6 hours)
 
+    # Maximum prompt size for batch messages (chars). Prevents context window overflow.
+    # Default 15000 chars ≈ 3750 tokens, leaving room for memory blocks within Letta's 32K default.
+    # Increase if you've raised your agent's context_window_limit in Letta.
+    max_prompt_chars: 15000
+
 # Response delay to avoid spam detection
 response_delay:
   enabled: true

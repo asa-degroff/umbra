@@ -1000,7 +1000,50 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
 
         notifications_section = "\n\n".join(notification_entries)
 
+        # Get max prompt chars from config (default 15000 chars ≈ 3750 tokens)
+        # This leaves room for system prompt, memory blocks, and message history within Letta's context window
+        max_prompt_chars = config.get('threading', {}).get('high_traffic_detection', {}).get('max_prompt_chars', 15000)
+
         # Build prompt for agent with new two-section format
+        # First build without thread context to measure notifications size
+        notifications_overhead = len(f"""High-traffic thread: {len(batch_notifications)} notifications during debounce period.
+
+---
+1. Thread context (Pre-notification history)
+---
+
+
+---
+2. Notifications ({len(batch_notifications)} posts)
+---
+{notifications_section}
+
+---
+Review messages, use archival_memory_search/web_search for context. Respond to 0-{len(batch_notifications)} interesting notifications.
+- Create an image using the generate_image tool to enhance your reply with a visualization.
+TO REPLY: Use reply_to_bluesky_post with URI and CID from the notification.""")
+
+        # Calculate available space for thread context
+        available_for_context = max_prompt_chars - notifications_overhead
+
+        # Truncate thread context if needed, preserving notifications (the actionable content)
+        if len(pre_notification_yaml) > available_for_context and available_for_context > 500:
+            original_len = len(pre_notification_yaml)
+            # Keep a truncation notice at the end
+            truncation_notice = f"\n\n[Thread context truncated from {original_len} to {available_for_context} chars to fit context window]"
+            truncate_at = available_for_context - len(truncation_notice)
+            # Try to truncate at a line boundary
+            truncate_pos = pre_notification_yaml.rfind('\n', 0, truncate_at)
+            if truncate_pos > truncate_at // 2:  # Only use line boundary if it's not too far back
+                pre_notification_yaml = pre_notification_yaml[:truncate_pos] + truncation_notice
+            else:
+                pre_notification_yaml = pre_notification_yaml[:truncate_at] + truncation_notice
+            logger.warning(f"⚡ Truncated thread context from {original_len} to {len(pre_notification_yaml)} chars to fit within {max_prompt_chars} char limit")
+        elif available_for_context <= 500:
+            # Notifications alone are too large, just include a minimal context note
+            logger.warning(f"⚡ Notifications section too large ({notifications_overhead} chars), using minimal thread context")
+            pre_notification_yaml = "(Thread context omitted - see notifications below for full context)"
+
         system_message = f"""High-traffic thread: {len(batch_notifications)} notifications during debounce period.
 
 ---
