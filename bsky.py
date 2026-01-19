@@ -1409,6 +1409,25 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
             'mention_preview': mention_text[:100] if mention_text else ''
         })
 
+        # Extract root_uri for image deduplication tracking
+        # This determines which thread the notification belongs to
+        if isinstance(notification_data, dict):
+            record = notification_data.get('record', {})
+            reply_info = record.get('reply', {}) if isinstance(record, dict) else {}
+            root_info = reply_info.get('root', {}) if isinstance(reply_info, dict) else {}
+            thread_root_uri = root_info.get('uri') if isinstance(root_info, dict) else None
+        else:
+            # Legacy object access
+            thread_root_uri = None
+            if hasattr(notification_data, 'record') and hasattr(notification_data.record, 'reply'):
+                reply = notification_data.record.reply
+                if reply and hasattr(reply, 'root') and reply.root:
+                    thread_root_uri = getattr(reply.root, 'uri', None)
+
+        # If no root_uri in reply info, use the notification URI as root
+        if not thread_root_uri:
+            thread_root_uri = uri
+
         # Retrieve the entire thread associated with the mention
         try:
             thread = atproto_client.app.bsky.feed.get_post_thread({
@@ -1483,6 +1502,17 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
         thread_images = extract_images_from_thread(thread, max_images=4)
         if thread_images:
             logger.debug(f"[{correlation_id}] Extracted {len(thread_images)} images from thread")
+
+        # Filter out images already sent in previous processing for this thread
+        if NOTIFICATION_DB and thread_images:
+            previously_sent = NOTIFICATION_DB.get_sent_images(thread_root_uri)
+            if previously_sent:
+                original_count = len(thread_images)
+                thread_images = [img for img in thread_images
+                                if img.get('fullsize') not in previously_sent]
+                filtered_count = original_count - len(thread_images)
+                if filtered_count > 0:
+                    logger.info(f"[{correlation_id}] Filtered {filtered_count} duplicate image(s) already sent in previous processing")
 
         # Get thread context as YAML string
         logger.debug("Converting thread to YAML string")
@@ -2469,6 +2499,12 @@ USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any re
                 'correlation_id': correlation_id,
                 'author_handle': author_handle
             })
+            # Record sent images for future deduplication
+            if NOTIFICATION_DB and thread_images:
+                sent_urls = [img.get('fullsize') for img in thread_images if img.get('fullsize')]
+                if sent_urls:
+                    NOTIFICATION_DB.add_sent_images(thread_root_uri, sent_urls)
+                    logger.debug(f"[{correlation_id}] Recorded {len(sent_urls)} sent images for thread {thread_root_uri}")
             return True  # Treat as successful reply
         else:
             logger.warning(f"[{correlation_id}] No reply generated for mention from @{author_handle}, moving to no_reply folder", extra={
