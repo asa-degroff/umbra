@@ -27,6 +27,12 @@ cloudflare_r2:
   secret_access_key: "your-r2-secret-key"
   bucket_name: "umbra-claude-code"  # Your R2 bucket name
 
+# Image Generation Configuration (for AI image generation via Replicate)
+image_generation:
+  replicate_api_token: "your-replicate-api-token"  # Get token from https://replicate.com/account/api-tokens
+  default_model: "leonardoai/lucid-origin"  # Leonardo AI Lucid Origin model
+  default_aspect_ratio: "1:1"  # Default aspect ratio (1:1, 16:9, 9:16, 4:3, 3:4)
+
 # Claude Code Integration Configuration
 claude_code:
   # Workspace directory for Claude Code executions
@@ -83,6 +89,29 @@ threading:
 
   # Message limits
   max_post_characters: 300
+
+  # Thread debouncing (wait for multi-post threads to complete before responding)
+  debounce_enabled: true  # Set to true to enable thread debouncing
+  debounce_seconds: 600    # Default wait time (10 minutes) after last thread activity
+  max_debounce_seconds: 1200  # Never wait more than this (20 minutes)
+
+  # High-traffic thread detection (automatic debouncing for busy threads)
+  high_traffic_detection:
+    enabled: true  # Set to true to enable automatic high-traffic debouncing
+    notification_threshold: 10  # Number of notifications to trigger detection
+    time_window_minutes: 60  # Time window for counting notifications
+
+    # Priority queue: different debounce times for mentions vs replies
+    mention_debounce_min: 30  # Minimum debounce for direct mentions (minutes)
+    mention_debounce_max: 60  # Maximum debounce for very active threads (minutes)
+    reply_debounce_min: 120  # Minimum debounce for replies (2 hours)
+    reply_debounce_max: 360  # Maximum debounce for very active threads (6 hours)
+
+# Response delay to avoid spam detection
+response_delay:
+  enabled: true
+  min_seconds: 10
+  max_seconds: 40
 
 # Queue Configuration
 queue:

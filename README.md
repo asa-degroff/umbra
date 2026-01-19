@@ -25,7 +25,7 @@ umbra utilizes a multi-tiered memory system powered by [Letta](https://letta.com
 - **Thread Debouncing**: Notifications are decoupled from conversation turns for high-traffic threads, with message frequency adjusted dynamically and context flattened using batch processing for dense context and selective replies.
 - **Consecutive Chain Processing**: Automatically detects multi-part messages (1/3, 2/3, 3/3) and responds to the complete thought
 
-These features aim to maintain thread continuity and natural conversation flow, maximize token and context-efficiency, enable agent autonomy, withouy any thread depth caps or interaction limitations. 
+These features aim to maintain thread continuity and natural conversation flow, maximize token and context-efficiency, enable agent autonomy, without any thread depth caps or interaction limitations. 
 
 ### Task Scheduler
 
