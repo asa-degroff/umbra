@@ -707,6 +707,17 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         if batch_images:
             logger.debug(f"   Total: {len(batch_images)} images for multimodal content")
 
+        # Filter out images already sent in previous batches for this thread
+        if NOTIFICATION_DB and batch_images:
+            previously_sent = NOTIFICATION_DB.get_sent_images(root_uri)
+            if previously_sent:
+                original_count = len(batch_images)
+                batch_images = [img for img in batch_images
+                               if img.get('fullsize') not in previously_sent]
+                filtered_count = original_count - len(batch_images)
+                if filtered_count > 0:
+                    logger.info(f"⚡ Filtered {filtered_count} duplicate image(s) already sent in previous batches")
+
         # Re-sort posts chronologically after merging
         posts.sort(key=lambda p: p.get('record', {}).get('createdAt', ''))
 
@@ -1312,6 +1323,13 @@ Image URL: {image_url}
                     logger.info(f"📝 Updated batch history (newest post: {newest_indexed_at})")
 
             logger.info(f"✓ High-traffic batch processed successfully")
+
+            # Record sent images for future deduplication
+            if NOTIFICATION_DB and batch_images:
+                sent_urls = [img.get('fullsize') for img in batch_images if img.get('fullsize')]
+                if sent_urls:
+                    NOTIFICATION_DB.add_sent_images(root_uri, sent_urls)
+                    logger.debug(f"Recorded {len(sent_urls)} sent images for thread {root_uri}")
 
             # Delete ALL queue files for this batch (not just the triggering one)
             # Queue files contain URI hashes, so we need to find them by content

@@ -149,6 +149,18 @@ class NotificationDB:
             )
         """)
 
+        # Create thread sent images table for cross-batch image deduplication
+        # This tracks which images have been sent to the agent for each thread
+        # so subsequent batches don't resend the same images
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS thread_sent_images (
+                root_uri TEXT NOT NULL,
+                image_url TEXT NOT NULL,
+                sent_at TEXT NOT NULL,
+                PRIMARY KEY (root_uri, image_url)
+            )
+        """)
+
         # Create scheduled_tasks table for persistent scheduling across restarts
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -1126,6 +1138,9 @@ class NotificationDB:
         """
         Full reset - remove thread from state table.
 
+        Also clears sent images for this thread so images can be sent fresh
+        in future batches after the thread state is fully reset.
+
         Args:
             root_uri: The root URI of the thread
         """
@@ -1133,8 +1148,12 @@ class NotificationDB:
             self.conn.execute("""
                 DELETE FROM thread_state WHERE root_uri = ?
             """, (root_uri,))
+            # Also clear sent images for fresh start
+            self.conn.execute("""
+                DELETE FROM thread_sent_images WHERE root_uri = ?
+            """, (root_uri,))
             self.conn.commit()
-            logger.debug(f"Cleared thread state for {root_uri}")
+            logger.debug(f"Cleared thread state and sent images for {root_uri}")
         except Exception as e:
             logger.error(f"Error clearing thread state: {e}")
 
@@ -1248,6 +1267,70 @@ class NotificationDB:
             logger.debug(f"Updated batch history for {root_uri}: processed_at={processed_at}, newest_post={newest_post_indexed_at}")
         except Exception as e:
             logger.error(f"Error updating thread batch history: {e}")
+
+    # ============================================================
+    # Thread Sent Images (cross-batch image deduplication)
+    # ============================================================
+
+    def get_sent_images(self, root_uri: str) -> set:
+        """
+        Get set of image URLs already sent for this thread.
+
+        Args:
+            root_uri: The root URI of the thread
+
+        Returns:
+            Set of image URLs that have been sent to the agent
+        """
+        try:
+            cursor = self.conn.execute(
+                "SELECT image_url FROM thread_sent_images WHERE root_uri = ?",
+                (root_uri,)
+            )
+            return {row[0] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.error(f"Error getting sent images: {e}")
+            return set()
+
+    def add_sent_images(self, root_uri: str, image_urls: list):
+        """
+        Record images sent to agent for this thread.
+
+        Args:
+            root_uri: The root URI of the thread
+            image_urls: List of image URLs that were sent
+        """
+        if not image_urls:
+            return
+        try:
+            now = datetime.now().isoformat()
+            for url in image_urls:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO thread_sent_images
+                       (root_uri, image_url, sent_at) VALUES (?, ?, ?)""",
+                    (root_uri, url, now)
+                )
+            self.conn.commit()
+            logger.debug(f"Recorded {len(image_urls)} sent images for thread {root_uri}")
+        except Exception as e:
+            logger.error(f"Error adding sent images: {e}")
+
+    def clear_sent_images(self, root_uri: str):
+        """
+        Clear sent images when thread state is reset.
+
+        Args:
+            root_uri: The root URI of the thread
+        """
+        try:
+            self.conn.execute(
+                "DELETE FROM thread_sent_images WHERE root_uri = ?",
+                (root_uri,)
+            )
+            self.conn.commit()
+            logger.debug(f"Cleared sent images for thread {root_uri}")
+        except Exception as e:
+            logger.error(f"Error clearing sent images: {e}")
 
     # ============================================================
     # Scheduled Tasks Management (persistent scheduling across restarts)
