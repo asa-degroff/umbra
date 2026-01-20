@@ -1576,6 +1576,87 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
         debounce_enabled = threading_config.get('debounce_enabled', False)
         debounce_seconds = threading_config.get('debounce_seconds', 600)
 
+        # Flatten thread to extract links and embed data for the mention post
+        flattened_thread = bsky_utils.flatten_thread_structure(thread)
+
+        # Extract links and embed data from the mention post for the prompt
+        # Find the mention post in flattened thread (uri may have been updated to last consecutive post)
+        mention_post = next((p for p in flattened_thread.get('posts', []) if p.get('uri') == uri), None)
+        mention_attachments_section = ""
+        if mention_post:
+            attachment_lines = []
+
+            # Extract links from facets
+            mention_links = mention_post.get('record', {}).get('links', [])
+            if mention_links:
+                link_strs = []
+                for link in mention_links:
+                    link_text = link.get('text', '')
+                    link_url = link.get('url', '')
+                    if link_text and link_url:
+                        link_strs.append(f"[{link_text}]({link_url})")
+                    elif link_url:
+                        link_strs.append(link_url)
+                if link_strs:
+                    attachment_lines.append(f"Links: {', '.join(link_strs)}")
+
+            # Extract embed data
+            mention_embed = mention_post.get('embed')
+            if mention_embed:
+                embed_type = mention_embed.get('type', '')
+                if embed_type == 'images':
+                    images = mention_embed.get('images', [])
+                    if images:
+                        img_count = len(images)
+                        alt_texts = [img.get('alt', '') for img in images if img.get('alt')]
+                        if alt_texts:
+                            attachment_lines.append(f"Images ({img_count}): {'; '.join(alt_texts)}")
+                        else:
+                            attachment_lines.append(f"Images: {img_count} image(s)")
+                elif embed_type == 'external_link':
+                    link = mention_embed.get('link', {})
+                    title = link.get('title', '')
+                    url = link.get('url', '')
+                    desc = link.get('description', '')
+                    if title and url:
+                        if desc:
+                            attachment_lines.append(f"Link card: {title} - {url}\n  {desc[:150]}{'...' if len(desc) > 150 else ''}")
+                        else:
+                            attachment_lines.append(f"Link card: {title} - {url}")
+                    elif url:
+                        attachment_lines.append(f"Link card: {url}")
+                elif embed_type == 'quote_post':
+                    quote = mention_embed.get('quote', {})
+                    quote_author = quote.get('author', {}).get('handle', 'unknown')
+                    quote_text = quote.get('text', '')[:100]
+                    quote_uri = quote.get('uri', '')
+                    if quote_text:
+                        attachment_lines.append(f"Quote: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"")
+                        if quote_uri:
+                            attachment_lines.append(f"  (Use get_thread_by_uri with uri=\"{quote_uri}\" for full context)")
+                elif embed_type == 'quote_with_media':
+                    quote = mention_embed.get('quote', {})
+                    quote_author = quote.get('author', {}).get('handle', 'unknown')
+                    quote_text = quote.get('text', '')[:100]
+                    quote_uri = quote.get('uri', '')
+                    media = mention_embed.get('media', {})
+                    media_type = media.get('type', '')
+                    media_desc = f" + {media_type}" if media_type else ""
+                    if quote_text:
+                        attachment_lines.append(f"Quote{media_desc}: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"")
+                        if quote_uri:
+                            attachment_lines.append(f"  (Use get_thread_by_uri with uri=\"{quote_uri}\" for full context)")
+                elif embed_type == 'video':
+                    alt = mention_embed.get('alt', '')
+                    if alt:
+                        attachment_lines.append(f"Video: {alt}")
+                    else:
+                        attachment_lines.append("Video attached")
+
+            if attachment_lines:
+                mention_attachments_section = "\n".join(f"- {line}" for line in attachment_lines)
+                logger.debug(f"[{correlation_id}] Extracted attachments for mention: {attachment_lines}")
+
         # Build base prompt with different wording based on whether we're using last consecutive post
         if is_using_last_consecutive:
             post_description = "LAST POST IN CONSECUTIVE CHAIN (the post you're responding to)"
@@ -1584,6 +1665,14 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
             post_description = "MOST RECENT POST (the mention you're responding to)"
             context_note = "The YAML above shows the complete conversation thread. The most recent post is the one mentioned above that you should respond to, but use the full thread context to understand the conversation flow."
 
+        # Build attachments section for prompt (only if we have attachments)
+        attachments_prompt_section = ""
+        if mention_attachments_section:
+            attachments_prompt_section = f"""
+
+ATTACHMENTS:
+{mention_attachments_section}"""
+
         prompt = f"""You received a mention on Bluesky from @{author_handle} ({author_name or author_handle}).
 
 {post_description}:
@@ -1591,7 +1680,7 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
 
 POST METADATA:
 - URI: {uri}
-- CID: {post_cid}
+- CID: {post_cid}{attachments_prompt_section}
 
 FULL THREAD CONTEXT:
 ```yaml
@@ -1612,13 +1701,12 @@ If you want to like this post, use the like_bluesky_post tool with the URI and C
 USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any relevant information about their identity to the "user_{author_handle}" block. Copy any existing details about the user from umbra_humans to the "user_{author_handle}" block."""
 
         # Extract all handles from notification and thread data
-        # Flatten the thread to get mentions extracted from facets
-        flattened_thread = bsky_utils.flatten_thread_structure(thread)
+        # Use the already-flattened thread from earlier
         all_handles = set()
         all_handles.update(extract_handles_from_data(notification_data))
         all_handles.update(extract_handles_from_data(flattened_thread))
         unique_handles = list(all_handles)
-        
+
         logger.debug(f"Found {len(unique_handles)} unique handles in thread: {unique_handles}")
 
         # Attach user blocks before agent call
