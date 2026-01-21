@@ -758,256 +758,341 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
             pre_notification_yaml = "(No context posts - notifications start the thread)"
 
         # Build NOTIFICATIONS section with full text and metadata
-        notification_entries = []
-        for idx, notif in enumerate(batch_notifications, 1):
-            # Find matching post to get full text and complete metadata
-            matching_post = next((p for p in notification_posts_data if p.get('uri') == notif['uri']), None)
+        # First, identify consecutive chains (same author replying consecutively to each other)
+        # This helps umbra understand that certain notifications are a continuous thread
+        uri_to_notif = {notif['uri']: notif for notif in batch_notifications}
 
-            if matching_post:
-                # Extract full metadata
-                uri = matching_post.get('uri', 'unknown')
-                cid = matching_post.get('cid', 'unknown')
+        # Find which notifications are children of other notifications (same author)
+        # A chain is: notification B has parent_uri = notification A's uri, and same author
+        child_of = {}  # uri -> parent uri (only if parent is in batch and same author)
+        for notif in batch_notifications:
+            parent_uri = notif.get('parent_uri')
+            if parent_uri and parent_uri in uri_to_notif:
+                parent_notif = uri_to_notif[parent_uri]
+                # Check if same author
+                if notif.get('author_handle') == parent_notif.get('author_handle'):
+                    child_of[notif['uri']] = parent_uri
 
-                # Diagnostic: compare CID from fresh fetch with database metadata
-                # This helps diagnose CID corruption issues
-                db_metadata_str = notif.get('metadata')
-                if db_metadata_str:
-                    try:
-                        db_metadata = json.loads(db_metadata_str)
-                        db_cid = db_metadata.get('cid')
-                        if db_cid and cid != 'unknown' and db_cid != cid:
-                            logger.warning(f"⚠️ CID mismatch detected for {uri}:")
-                            logger.warning(f"   Fresh API CID: {cid}")
-                            logger.warning(f"   Database CID:  {db_cid}")
-                            logger.warning(f"   Using fresh API CID (authoritative)")
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+        # Build chains by finding chain roots (notifications not children of other batch notifications by same author)
+        # and following children down
+        chain_roots = []
+        in_chain = set()  # URIs that are part of a chain (not roots)
 
-                # Get author info
-                author = matching_post.get('author', {})
-                author_handle = author.get('handle', 'unknown') if isinstance(author, dict) else 'unknown'
-
-                # Get FULL text (not truncated)
-                record = matching_post.get('record', {})
-                full_text = record.get('text', '') if isinstance(record, dict) else ''
-
-                # Get timestamps
-                indexed_at = notif.get('indexed_at', 'unknown')  # When umbra received notification
-                created_at = record.get('createdAt', 'unknown') if isinstance(record, dict) else 'unknown'  # When post was created
-
-                reason = notif.get('reason', 'unknown')
-
-                # Find preceding posts by same author (for multi-part replies)
-                # Look for consecutive parent posts by the same author
-                preceding_parts = []
-                current_uri = uri
-                visited_uris = {current_uri}  # Prevent infinite loops
-
-                # Traverse up through parents to find consecutive posts by same author
+        for notif in batch_notifications:
+            uri = notif['uri']
+            if uri not in child_of:
+                # This is a potential chain root (not a child of another same-author batch notification)
+                # Check if it has children
+                chain = [uri]
+                current = uri
                 while True:
-                    # Find the current post in our posts list
-                    current_post = next((p for p in posts if p.get('uri') == current_uri), None)
-                    if not current_post:
+                    # Find child of current
+                    child = next((u for u, parent in child_of.items() if parent == current), None)
+                    if child:
+                        chain.append(child)
+                        in_chain.add(child)
+                        current = child
+                    else:
                         break
+                chain_roots.append(chain)
 
-                    # Get parent URI from record.reply.parent
-                    current_record = current_post.get('record', {})
-                    reply_info = current_record.get('reply', {}) if isinstance(current_record, dict) else {}
-                    parent_info = reply_info.get('parent', {}) if isinstance(reply_info, dict) else {}
-                    parent_uri = parent_info.get('uri') if isinstance(parent_info, dict) else None
+        # Now chain_roots contains lists of URIs, each list is a consecutive chain
+        # Single-item chains are standalone notifications
+        # Multi-item chains are consecutive reply threads
 
-                    if not parent_uri or parent_uri in visited_uris:
-                        break
+        notification_entries = []
+        notification_idx = 1
 
-                    visited_uris.add(parent_uri)
+        for chain in chain_roots:
+            is_consecutive_chain = len(chain) > 1
+            chain_author = uri_to_notif[chain[0]].get('author_handle', 'unknown')
 
-                    # Find parent post
-                    parent_post = next((p for p in posts if p.get('uri') == parent_uri), None)
-                    if not parent_post:
-                        break
+            if is_consecutive_chain:
+                logger.info(f"⛓️ Found consecutive reply chain: {len(chain)} posts from @{chain_author}")
+                # Add a header for the consecutive chain
+                chain_header = f"=== CONSECUTIVE REPLY CHAIN ({len(chain)} posts from @{chain_author}) ===\n"
+                chain_header += "The following notifications are a continuous thread from the same author.\n"
 
-                    # Check if parent is by same author
-                    parent_author = parent_post.get('author', {})
-                    parent_handle = parent_author.get('handle', '') if isinstance(parent_author, dict) else ''
+            chain_entries = []
+            for chain_idx, notif_uri in enumerate(chain):
+                notif = uri_to_notif[notif_uri]
+                # Find matching post to get full text and complete metadata
+                matching_post = next((p for p in notification_posts_data if p.get('uri') == notif_uri), None)
 
-                    if parent_handle != author_handle:
-                        # Different author, stop here
-                        break
+                if matching_post:
+                    # Extract full metadata
+                    uri = matching_post.get('uri', 'unknown')
+                    cid = matching_post.get('cid', 'unknown')
 
-                    # Add parent to preceding parts
-                    parent_record = parent_post.get('record', {})
-                    parent_text = parent_record.get('text', '') if isinstance(parent_record, dict) else ''
-                    parent_created = parent_record.get('createdAt', 'unknown') if isinstance(parent_record, dict) else 'unknown'
-                    parent_links = parent_record.get('links', []) if isinstance(parent_record, dict) else []
-                    parent_embed = parent_post.get('embed')
-                    preceding_parts.append({
-                        'text': parent_text,
-                        'createdAt': parent_created,
-                        'links': parent_links,
-                        'embed': parent_embed
-                    })
+                    # Diagnostic: compare CID from fresh fetch with database metadata
+                    # This helps diagnose CID corruption issues
+                    db_metadata_str = notif.get('metadata')
+                    if db_metadata_str:
+                        try:
+                            db_metadata = json.loads(db_metadata_str)
+                            db_cid = db_metadata.get('cid')
+                            if db_cid and cid != 'unknown' and db_cid != cid:
+                                logger.warning(f"⚠️ CID mismatch detected for {uri}:")
+                                logger.warning(f"   Fresh API CID: {cid}")
+                                logger.warning(f"   Database CID:  {db_cid}")
+                                logger.warning(f"   Using fresh API CID (authoritative)")
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
-                    # Continue up the chain
-                    current_uri = parent_uri
+                    # Get author info
+                    author = matching_post.get('author', {})
+                    author_handle = author.get('handle', 'unknown') if isinstance(author, dict) else 'unknown'
 
-                # Reverse to get chronological order (oldest first)
-                preceding_parts.reverse()
+                    # Get FULL text (not truncated)
+                    record = matching_post.get('record', {})
+                    full_text = record.get('text', '') if isinstance(record, dict) else ''
 
-                # Helper to format links and embeds for display
-                def format_attachments(links, embed):
-                    """Format links and embed data for display in notification entries."""
-                    attachment_lines = []
+                    # Get timestamps
+                    indexed_at = notif.get('indexed_at', 'unknown')  # When umbra received notification
+                    created_at = record.get('createdAt', 'unknown') if isinstance(record, dict) else 'unknown'  # When post was created
 
-                    # Format links from facets
-                    if links:
-                        link_strs = []
-                        for link in links:
-                            link_text = link.get('text', '')
-                            link_url = link.get('url', '')
-                            if link_text and link_url:
-                                link_strs.append(f"[{link_text}]({link_url})")
-                            elif link_url:
-                                link_strs.append(link_url)
-                        if link_strs:
-                            attachment_lines.append(f"Links: {', '.join(link_strs)}")
+                    reason = notif.get('reason', 'unknown')
 
-                    # Format embed data
-                    if embed:
-                        embed_type = embed.get('type', '')
-                        if embed_type == 'images':
-                            images = embed.get('images', [])
-                            if images:
-                                img_count = len(images)
-                                alt_texts = [img.get('alt', '') for img in images if img.get('alt')]
-                                if alt_texts:
-                                    attachment_lines.append(f"Images ({img_count}): {'; '.join(alt_texts)}")
+                    # For notifications NOT in a consecutive chain, find preceding parts
+                    # (For chain notifications, preceding parts are shown as separate chain entries)
+                    preceding_parts = []
+                    if not is_consecutive_chain:
+                        current_uri = uri
+                        visited_uris = {current_uri}  # Prevent infinite loops
+
+                        # Traverse up through parents to find consecutive posts by same author
+                        while True:
+                            # Find the current post in our posts list
+                            current_post = next((p for p in posts if p.get('uri') == current_uri), None)
+                            if not current_post:
+                                break
+
+                            # Get parent URI from record.reply.parent
+                            current_record = current_post.get('record', {})
+                            reply_info = current_record.get('reply', {}) if isinstance(current_record, dict) else {}
+                            parent_info = reply_info.get('parent', {}) if isinstance(reply_info, dict) else {}
+                            parent_uri = parent_info.get('uri') if isinstance(parent_info, dict) else None
+
+                            if not parent_uri or parent_uri in visited_uris:
+                                break
+
+                            visited_uris.add(parent_uri)
+
+                            # Find parent post
+                            parent_post = next((p for p in posts if p.get('uri') == parent_uri), None)
+                            if not parent_post:
+                                break
+
+                            # Check if parent is by same author
+                            parent_author = parent_post.get('author', {})
+                            parent_handle = parent_author.get('handle', '') if isinstance(parent_author, dict) else ''
+
+                            if parent_handle != author_handle:
+                                # Different author, stop here
+                                break
+
+                            # Add parent to preceding parts
+                            parent_record = parent_post.get('record', {})
+                            parent_text = parent_record.get('text', '') if isinstance(parent_record, dict) else ''
+                            parent_created = parent_record.get('createdAt', 'unknown') if isinstance(parent_record, dict) else 'unknown'
+                            parent_links = parent_record.get('links', []) if isinstance(parent_record, dict) else []
+                            parent_embed = parent_post.get('embed')
+                            preceding_parts.append({
+                                'text': parent_text,
+                                'createdAt': parent_created,
+                                'links': parent_links,
+                                'embed': parent_embed
+                            })
+
+                            # Continue up the chain
+                            current_uri = parent_uri
+
+                        # Reverse to get chronological order (oldest first)
+                        preceding_parts.reverse()
+
+                    # Helper to format links and embeds for display
+                    def format_attachments(links, embed):
+                        """Format links and embed data for display in notification entries."""
+                        attachment_lines = []
+
+                        # Format links from facets
+                        if links:
+                            link_strs = []
+                            for link in links:
+                                link_text = link.get('text', '')
+                                link_url = link.get('url', '')
+                                if link_text and link_url:
+                                    link_strs.append(f"[{link_text}]({link_url})")
+                                elif link_url:
+                                    link_strs.append(link_url)
+                            if link_strs:
+                                attachment_lines.append(f"Links: {', '.join(link_strs)}")
+
+                        # Format embed data
+                        if embed:
+                            embed_type = embed.get('type', '')
+                            if embed_type == 'images':
+                                images = embed.get('images', [])
+                                if images:
+                                    img_count = len(images)
+                                    alt_texts = [img.get('alt', '') for img in images if img.get('alt')]
+                                    if alt_texts:
+                                        attachment_lines.append(f"Images ({img_count}): {'; '.join(alt_texts)}")
+                                    else:
+                                        attachment_lines.append(f"Images: {img_count} image(s)")
+                            elif embed_type == 'external_link':
+                                link = embed.get('link', {})
+                                title = link.get('title', '')
+                                url = link.get('url', '')
+                                desc = link.get('description', '')
+                                if title and url:
+                                    if desc:
+                                        attachment_lines.append(f"Link card: {title} - {url}\n    {desc[:150]}{'...' if len(desc) > 150 else ''}")
+                                    else:
+                                        attachment_lines.append(f"Link card: {title} - {url}")
+                                elif url:
+                                    attachment_lines.append(f"Link card: {url}")
+                            elif embed_type == 'quote_post':
+                                quote = embed.get('quote', {})
+                                quote_author = quote.get('author', {}).get('handle', 'unknown')
+                                quote_text = quote.get('text', '')[:100]
+                                quote_uri = quote.get('uri', '')
+
+                                # Build thread context hint
+                                thread_hint = ""
+                                thread_ctx = quote.get('thread_context', {})
+                                if thread_ctx:
+                                    hints = []
+                                    if thread_ctx.get('has_parents'):
+                                        hints.append("has parent posts")
+                                    if thread_ctx.get('reply_count'):
+                                        hints.append(f"{thread_ctx['reply_count']} replies")
+                                    if hints:
+                                        thread_hint = f" [Thread: {', '.join(hints)}]"
+
+                                if quote_text:
+                                    line = f"Quote: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"{thread_hint}"
+                                    if thread_hint and quote_uri:
+                                        line += f"\n      (Use get_thread_by_uri with uri=\"{quote_uri}\" for full context)"
+                                    attachment_lines.append(line)
+                            elif embed_type == 'quote_with_media':
+                                quote = embed.get('quote', {})
+                                quote_author = quote.get('author', {}).get('handle', 'unknown')
+                                quote_text = quote.get('text', '')[:100]
+                                quote_uri = quote.get('uri', '')
+                                media = embed.get('media', {})
+                                media_type = media.get('type', '')
+                                media_desc = f" + {media_type}" if media_type else ""
+
+                                # Build thread context hint
+                                thread_hint = ""
+                                thread_ctx = quote.get('thread_context', {})
+                                if thread_ctx:
+                                    hints = []
+                                    if thread_ctx.get('has_parents'):
+                                        hints.append("has parent posts")
+                                    if thread_ctx.get('reply_count'):
+                                        hints.append(f"{thread_ctx['reply_count']} replies")
+                                    if hints:
+                                        thread_hint = f" [Thread: {', '.join(hints)}]"
+
+                                if quote_text:
+                                    line = f"Quote{media_desc}: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"{thread_hint}"
+                                    if thread_hint and quote_uri:
+                                        line += f"\n      (Use get_thread_by_uri with uri=\"{quote_uri}\" for full context)"
+                                    attachment_lines.append(line)
+                            elif embed_type == 'video':
+                                alt = embed.get('alt', '')
+                                if alt:
+                                    attachment_lines.append(f"Video: {alt}")
                                 else:
-                                    attachment_lines.append(f"Images: {img_count} image(s)")
-                        elif embed_type == 'external_link':
-                            link = embed.get('link', {})
-                            title = link.get('title', '')
-                            url = link.get('url', '')
-                            desc = link.get('description', '')
-                            if title and url:
-                                if desc:
-                                    attachment_lines.append(f"Link card: {title} - {url}\n    {desc[:150]}{'...' if len(desc) > 150 else ''}")
-                                else:
-                                    attachment_lines.append(f"Link card: {title} - {url}")
-                            elif url:
-                                attachment_lines.append(f"Link card: {url}")
-                        elif embed_type == 'quote_post':
-                            quote = embed.get('quote', {})
-                            quote_author = quote.get('author', {}).get('handle', 'unknown')
-                            quote_text = quote.get('text', '')[:100]
-                            quote_uri = quote.get('uri', '')
+                                    attachment_lines.append("Video attached")
 
-                            # Build thread context hint
-                            thread_hint = ""
-                            thread_ctx = quote.get('thread_context', {})
-                            if thread_ctx:
-                                hints = []
-                                if thread_ctx.get('has_parents'):
-                                    hints.append("has parent posts")
-                                if thread_ctx.get('reply_count'):
-                                    hints.append(f"{thread_ctx['reply_count']} replies")
-                                if hints:
-                                    thread_hint = f" [Thread: {', '.join(hints)}]"
+                        return attachment_lines
 
-                            if quote_text:
-                                line = f"Quote: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"{thread_hint}"
-                                if thread_hint and quote_uri:
-                                    line += f"\n      (Use get_thread_by_uri with uri=\"{quote_uri}\" for full context)"
-                                attachment_lines.append(line)
-                        elif embed_type == 'quote_with_media':
-                            quote = embed.get('quote', {})
-                            quote_author = quote.get('author', {}).get('handle', 'unknown')
-                            quote_text = quote.get('text', '')[:100]
-                            quote_uri = quote.get('uri', '')
-                            media = embed.get('media', {})
-                            media_type = media.get('type', '')
-                            media_desc = f" + {media_type}" if media_type else ""
+                    # Build entry with preceding parts context if present (only for standalone notifications)
+                    preceding_context = ""
+                    if preceding_parts:
+                        preceding_lines = []
+                        for part_idx, part in enumerate(preceding_parts, 1):
+                            part_line = f"  [Part {part_idx} by same author]: \"{part['text']}\" (Posted: {part['createdAt']})"
+                            # Add attachments for this part
+                            part_attachments = format_attachments(part.get('links', []), part.get('embed'))
+                            if part_attachments:
+                                part_line += "\n    " + "\n    ".join(part_attachments)
+                            preceding_lines.append(part_line)
+                        preceding_context = "\n" + "\n".join(preceding_lines) + "\n"
 
-                            # Build thread context hint
-                            thread_hint = ""
-                            thread_ctx = quote.get('thread_context', {})
-                            if thread_ctx:
-                                hints = []
-                                if thread_ctx.get('has_parents'):
-                                    hints.append("has parent posts")
-                                if thread_ctx.get('reply_count'):
-                                    hints.append(f"{thread_ctx['reply_count']} replies")
-                                if hints:
-                                    thread_hint = f" [Thread: {', '.join(hints)}]"
+                    # Extract links and embed for the main notification post
+                    notif_links = record.get('links', []) if isinstance(record, dict) else []
+                    notif_embed = matching_post.get('embed')
+                    attachments_lines = format_attachments(notif_links, notif_embed)
+                    attachments_section = ""
+                    if attachments_lines:
+                        attachments_section = "\n  " + "\n  ".join(attachments_lines)
 
-                            if quote_text:
-                                line = f"Quote{media_desc}: @{quote_author}: \"{quote_text}{'...' if len(quote.get('text', '')) > 100 else ''}\"{thread_hint}"
-                                if thread_hint and quote_uri:
-                                    line += f"\n      (Use get_thread_by_uri with uri=\"{quote_uri}\" for full context)"
-                                attachment_lines.append(line)
-                        elif embed_type == 'video':
-                            alt = embed.get('alt', '')
-                            if alt:
-                                attachment_lines.append(f"Video: {alt}")
-                            else:
-                                attachment_lines.append("Video attached")
-
-                    return attachment_lines
-
-                # Build entry with preceding parts context if present
-                preceding_context = ""
-                if preceding_parts:
-                    preceding_lines = []
-                    for part_idx, part in enumerate(preceding_parts, 1):
-                        part_line = f"  [Part {part_idx} by same author]: \"{part['text']}\" (Posted: {part['createdAt']})"
-                        # Add attachments for this part
-                        part_attachments = format_attachments(part.get('links', []), part.get('embed'))
-                        if part_attachments:
-                            part_line += "\n    " + "\n    ".join(part_attachments)
-                        preceding_lines.append(part_line)
-                    preceding_context = "\n" + "\n".join(preceding_lines) + "\n"
-
-                # Extract links and embed for the main notification post
-                notif_links = record.get('links', []) if isinstance(record, dict) else []
-                notif_embed = matching_post.get('embed')
-                attachments_lines = format_attachments(notif_links, notif_embed)
-                attachments_section = ""
-                if attachments_lines:
-                    attachments_section = "\n  " + "\n  ".join(attachments_lines)
-
-                # Build entry
-                entry = f"""[Notification {idx}] @{author_handle} ({reason}) - Received: {indexed_at}{preceding_context}
+                    # Build entry - use chain position labels for consecutive chains
+                    if is_consecutive_chain:
+                        position_label = f"[Chain Post {chain_idx + 1}/{len(chain)}]"
+                        entry = f"""{position_label} @{author_handle} ({reason}) - Received: {indexed_at}
+  Post: "{full_text}"{attachments_section}
+  URI: {uri}
+  CID: {cid}
+  Posted: {created_at}"""
+                    else:
+                        entry = f"""[Notification {notification_idx}] @{author_handle} ({reason}) - Received: {indexed_at}{preceding_context}
   Post: "{full_text}"{attachments_section}
   URI: {uri}
   CID: {cid}
   Posted: {created_at}"""
 
-                notification_entries.append(entry)
-            else:
-                # Fallback if post not found in thread
-                logger.debug(f"Post not found in thread for notification {uri}, using database fallback")
-                author_handle = notif.get('author_handle', 'unknown')
-                text = notif.get('text', '(text unavailable)')
-                uri = notif.get('uri', 'unknown')
-                indexed_at = notif.get('indexed_at', 'unknown')
-                reason = notif.get('reason', 'unknown')
+                    chain_entries.append(entry)
+                else:
+                    # Fallback if post not found in thread
+                    logger.debug(f"Post not found in thread for notification {notif_uri}, using database fallback")
+                    author_handle = notif.get('author_handle', 'unknown')
+                    text = notif.get('text', '(text unavailable)')
+                    uri = notif.get('uri', 'unknown')
+                    indexed_at = notif.get('indexed_at', 'unknown')
+                    reason = notif.get('reason', 'unknown')
 
-                # Extract CID from metadata JSON if available
-                cid = 'unknown'
-                metadata_str = notif.get('metadata')
-                if metadata_str:
-                    try:
-                        metadata = json.loads(metadata_str)
-                        cid = metadata.get('cid', 'unknown')
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+                    # Extract CID from metadata JSON if available
+                    cid = 'unknown'
+                    metadata_str = notif.get('metadata')
+                    if metadata_str:
+                        try:
+                            metadata = json.loads(metadata_str)
+                            cid = metadata.get('cid', 'unknown')
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
-                entry = f"""[Notification {idx}] @{author_handle} ({reason}) - Received: {indexed_at}
+                    if is_consecutive_chain:
+                        position_label = f"[Chain Post {chain_idx + 1}/{len(chain)}]"
+                        entry = f"""{position_label} @{author_handle} ({reason}) - Received: {indexed_at}
+  Post: "{text}"
+  URI: {uri}
+  CID: {cid}
+  Posted: {indexed_at}"""
+                    else:
+                        entry = f"""[Notification {notification_idx}] @{author_handle} ({reason}) - Received: {indexed_at}
   Post: "{text}"
   URI: {uri}
   CID: {cid}
   Posted: {indexed_at}"""
 
-                notification_entries.append(entry)
+                    chain_entries.append(entry)
+
+            # Add chain entries to notification_entries
+            if is_consecutive_chain and chain_entries:
+                # Wrap chain entries with header and combine
+                chain_block = chain_header + "\n".join(chain_entries) + "\n=== END CHAIN ==="
+                notification_entries.append(chain_block)
+                notification_idx += 1  # Count the whole chain as one notification for numbering
+            else:
+                # Standalone notification
+                for entry in chain_entries:
+                    notification_entries.append(entry)
+                    notification_idx += 1
 
         notifications_section = "\n\n".join(notification_entries)
 
