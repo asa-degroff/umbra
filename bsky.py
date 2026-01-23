@@ -1,6 +1,6 @@
 # Rich imports removed - using simple text formatting
 from letta_client import Letta
-from bsky_utils import thread_to_yaml_string, extract_images_from_thread
+from bsky_utils import thread_to_yaml_string, extract_images_from_thread, extract_images_from_embed
 import os
 import logging
 import json
@@ -58,7 +58,7 @@ def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str
     content = [{"type": "text", "text": text_prompt}]
 
     for img in images:
-        url = img.get('fullsize')
+        url = img.get('fullsize') or img.get('thumb')
         if not url:
             continue
 
@@ -1584,9 +1584,30 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
                 logger.debug(f"[{correlation_id}] No consecutive posts found in chain")
 
         # Extract images from thread before YAML conversion (for multimodal messages)
-        thread_images = extract_images_from_thread(thread, max_images=4)
+        # Prioritize the notification post's own images so they aren't displaced by parent images
+        thread_images = []
+        notification_post_node = getattr(thread, 'thread', None)
+        if notification_post_node and hasattr(notification_post_node, 'post') and notification_post_node.post:
+            notif_embed = getattr(notification_post_node.post, 'embed', None)
+            if notif_embed:
+                notif_images = extract_images_from_embed(notif_embed)
+                author_handle = getattr(notification_post_node.post.author, 'handle', 'unknown') if hasattr(notification_post_node.post, 'author') else 'unknown'
+                for img in notif_images[:4]:
+                    img['author_handle'] = author_handle
+                    thread_images.append(img)
+
+        # Fill remaining slots with other thread images (parents, replies)
+        if len(thread_images) < 4:
+            all_thread_images = extract_images_from_thread(thread, max_images=4)
+            notif_urls = {img.get('fullsize') for img in thread_images}
+            for img in all_thread_images:
+                if len(thread_images) >= 4:
+                    break
+                if img.get('fullsize') not in notif_urls:
+                    thread_images.append(img)
+
         if thread_images:
-            logger.debug(f"[{correlation_id}] Extracted {len(thread_images)} images from thread")
+            logger.debug(f"[{correlation_id}] Extracted {len(thread_images)} images from thread (notification post prioritized)")
 
         # Filter out images already sent in previous processing for this thread
         if NOTIFICATION_DB and thread_images:
