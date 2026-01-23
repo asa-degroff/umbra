@@ -4033,6 +4033,8 @@ def main():
     parser.add_argument('--no-curiosities', action='store_true', help='Disable curiosities exploration')
     parser.add_argument('--no-creative-expression', action='store_true', help='Disable creative expression')
     parser.add_argument('--retry-last', action='store_true', help='Retry the last attempted notification and exit')
+    parser.add_argument('--run-task', type=str, metavar='TASK_NAME',
+                        help='Immediately run a scheduled task and exit (e.g., daily_review, synthesis, feed_engagement)')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -4279,6 +4281,51 @@ def main():
             traceback.print_exc()
 
         return  # Exit after retry
+
+    # Handle --run-task flag
+    if args.run_task:
+        task_name = args.run_task
+        valid_tasks = list(TASK_CONFIGS.keys())
+        if task_name not in valid_tasks:
+            logger.error(f"Unknown task: '{task_name}'. Valid tasks: {', '.join(valid_tasks)}")
+            return
+
+        config = TASK_CONFIGS[task_name]
+        emoji = config.get('emoji', '⏰')
+        desc = config.get('description', task_name)
+        logger.info(f"{emoji} Running scheduled task immediately: {desc}")
+
+        # Connect to Bluesky if not already connected
+        if not atproto_client:
+            atproto_client = bsky_utils.default_login()
+            logger.info("Connected to Bluesky for task execution")
+
+        try:
+            if task_name == 'synthesis':
+                send_synthesis_message(CLIENT, umbra_agent.id, atproto_client)
+            elif task_name == 'mutuals_engagement':
+                send_mutuals_engagement_message(CLIENT, umbra_agent.id)
+            elif task_name == 'daily_review':
+                send_daily_review_message(CLIENT, umbra_agent.id, atproto_client, NOTIFICATION_DB)
+            elif task_name == 'feed_engagement':
+                send_feed_engagement_message(CLIENT, umbra_agent.id)
+            elif task_name == 'curiosities_exploration':
+                send_curiosities_exploration_message(CLIENT, umbra_agent.id)
+            elif task_name == 'creative_expression':
+                send_creative_expression_message(CLIENT, umbra_agent.id)
+            elif task_name == 'rest':
+                send_rest_message(CLIENT, umbra_agent.id)
+            else:
+                logger.error(f"No handler for task: {task_name}")
+                return
+
+            logger.info(f"{emoji} Task '{desc}' completed successfully")
+        except Exception as e:
+            logger.error(f"{emoji} Task '{desc}' failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return  # Exit after task execution
 
     # Synthesis-only mode
     if SYNTHESIS_ONLY:
