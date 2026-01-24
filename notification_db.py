@@ -975,8 +975,8 @@ class NotificationDB:
             return result_seconds
         else:
             # Quadratic interpolation between min and max
-            # Scale from threshold to 10x threshold (range = 9 * threshold)
-            ratio = (thread_count - threshold) / (threshold * 9)
+            # Scale from threshold to 20x threshold (range = 19 * threshold)
+            ratio = (thread_count - threshold) / (threshold * 19)
             scaled_ratio = ratio ** 2
             result_seconds = int(min_seconds + (max_seconds - min_seconds) * scaled_ratio)
             logger.debug(f"Using quadratic debounce (ratio={ratio:.2f}, scaled={scaled_ratio:.2f}): {result_seconds}s ({result_seconds/60:.1f}min)")
