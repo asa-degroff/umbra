@@ -138,7 +138,10 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
             f"To attach this image to your reply, use reply_to_bluesky_post with:\n"
             f"- image_url: {image_url}\n"
             f"- image_alt: {prompt}\n\n"
-            f"Or use create_new_bluesky_post with the same image_url and image_alt parameters."
+            f"Or use create_new_bluesky_post with the same image_url and image_alt parameters.\n\n"
+            f"For GreenGale blog posts, use upload_blog_image with this image_url to get\n"
+            f"a markdown reference and blob metadata, then pass the blob metadata to\n"
+            f"create_greengale_blog_post's blobs parameter."
         )
 
         return signal + instructions

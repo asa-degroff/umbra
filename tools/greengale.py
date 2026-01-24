@@ -1,5 +1,5 @@
 """GreenGale blog post creation tool."""
-from typing import Optional, Literal
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 
 
@@ -51,6 +51,10 @@ class GreenGalePostArgs(BaseModel):
         default=False,
         description="Enable KaTeX math rendering for LaTeX equations (e.g. $E=mc^2$ or $$\\int_0^\\infty$$)"
     )
+    blobs: Optional[List[dict]] = Field(
+        default=None,
+        description="List of blob metadata objects from upload_blog_image tool. Each object should have name, blobref, and optionally alt fields."
+    )
 
 
 def create_greengale_blog_post(
@@ -59,7 +63,8 @@ def create_greengale_blog_post(
     subtitle: Optional[str] = None,
     visibility: Optional[str] = "public",
     theme: Optional[dict] = None,
-    latex: Optional[bool] = False
+    latex: Optional[bool] = False,
+    blobs: Optional[list] = None
 ) -> str:
     """
     Create a new blog post on GreenGale.
@@ -80,6 +85,7 @@ def create_greengale_blog_post(
         visibility: Post visibility - 'public', 'url' (unlisted), or 'author' (private)
         theme: Theme configuration dict with either 'preset' key or custom 'background'/'text'/'accent' colors
         latex: Enable KaTeX math rendering for LaTeX equations
+        blobs: List of blob metadata objects from upload_blog_image tool (each with name, blobref, and optionally alt)
 
     Returns:
         Success message with the blog post URL
@@ -213,6 +219,10 @@ def create_greengale_blog_post(
         # Add LaTeX flag if enabled
         if latex:
             blog_record["latex"] = True
+
+        # Add blobs if provided
+        if blobs:
+            blog_record["blobs"] = blobs
 
         # Create the record
         headers = {"Authorization": f"Bearer {access_token}"}

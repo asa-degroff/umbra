@@ -26,6 +26,7 @@ from tools.claude_code import ask_claude_code, AskClaudeCodeArgs
 from tools.debounce_thread import debounce_thread, DebounceThreadArgs
 from tools.get_thread import get_thread_by_uri, GetThreadByUriArgs
 from tools.generate_image import generate_image, GenerateImageArgs
+from tools.upload_blog_image import upload_blog_image, UploadBlogImageArgs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -104,6 +105,12 @@ TOOL_CONFIGS = [
         "tags": ["greengale", "blog", "post", "markdown", "latex", "themes"]
     },
     {
+        "func": upload_blog_image,
+        "args_schema": UploadBlogImageArgs,
+        "description": "Upload an image to the PDS for use in GreenGale blog posts. Returns markdown reference and blob metadata.",
+        "tags": ["greengale", "blog", "image", "upload"]
+    },
+    {
         "func": fetch_webpage,
         "args_schema": WebpageArgs,
         "description": "Fetch a webpage and convert it to markdown/text format using Jina AI reader",
@@ -121,12 +128,12 @@ TOOL_CONFIGS = [
         "description": "Send coding tasks to local Claude Code instance (website building, code writing, documentation, analysis)",
         "tags": ["claude-code", "development", "website", "code", "local"]
     },
-    {
-        "func": debounce_thread,
-        "args_schema": DebounceThreadArgs,
-        "description": "Defer processing of a notification to allow multi-post threads to complete before responding",
-        "tags": ["threading", "debounce", "defer", "notification"]
-    },
+    # {
+    #     "func": debounce_thread,
+    #     "args_schema": DebounceThreadArgs,
+    #     "description": "Defer processing of a notification to allow multi-post threads to complete before responding",
+    #     "tags": ["threading", "debounce", "defer", "notification"]
+    # },
     {
         "func": generate_image,
         "args_schema": GenerateImageArgs,
