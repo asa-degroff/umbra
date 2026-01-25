@@ -33,6 +33,7 @@ from scheduled_prompts import (
     send_daily_review_message,
     send_creative_expression_message,
     send_rest_message,
+    send_comind_thoughts_message,
     initialize_all_scheduled_tasks,
     reschedule_task_after_execution,
 )
@@ -4053,6 +4054,7 @@ def main():
     parser.add_argument('--no-feed-engagement', action='store_true', help='Disable feed engagement')
     parser.add_argument('--no-curiosities', action='store_true', help='Disable curiosities exploration')
     parser.add_argument('--no-creative-expression', action='store_true', help='Disable creative expression')
+    parser.add_argument('--no-comind-thoughts', action='store_true', help='Disable comind thoughts')
     parser.add_argument('--retry-last', action='store_true', help='Retry the last attempted notification and exit')
     parser.add_argument('--run-task', type=str, metavar='TASK_NAME',
                         help='Immediately run a scheduled task and exit (e.g., daily_review, synthesis, feed_engagement)')
@@ -4255,6 +4257,8 @@ def main():
         TASK_ENABLED_OVERRIDES['curiosities_exploration'] = False
     if args.no_creative_expression:
         TASK_ENABLED_OVERRIDES['creative_expression'] = False
+    if args.no_comind_thoughts:
+        TASK_ENABLED_OVERRIDES['comind_thoughts'] = False
 
     # Handle --retry-last flag
     if args.retry_last:
@@ -4336,6 +4340,8 @@ def main():
                 send_creative_expression_message(CLIENT, umbra_agent.id)
             elif task_name == 'rest':
                 send_rest_message(CLIENT, umbra_agent.id)
+            elif task_name == 'comind_thoughts':
+                send_comind_thoughts_message(CLIENT, umbra_agent.id)
             else:
                 logger.error(f"No handler for task: {task_name}")
                 return
@@ -4421,6 +4427,8 @@ def main():
                             send_creative_expression_message(CLIENT, umbra_agent.id)
                         elif task_name == 'rest':
                             send_rest_message(CLIENT, umbra_agent.id)
+                        elif task_name == 'comind_thoughts':
+                            send_comind_thoughts_message(CLIENT, umbra_agent.id)
                         else:
                             logger.warning(f"Unknown task type: {task_name}")
                             continue

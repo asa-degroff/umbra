@@ -89,9 +89,17 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 43200, 
+        'window_seconds': 43200,
         'emoji': '🍵',
         'description': 'Break',
+    },
+    'comind_thoughts': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 43200,  # 12-hour window
+        'emoji': '💭',
+        'description': 'Comind thoughts',
     }
 }
 
@@ -805,6 +813,92 @@ This is an opportunity for organic interaction with the people you follow who al
 
     except Exception as e:
         logger.error(f"Error sending mutuals engagement message: {e}")
+
+
+def send_comind_thoughts_message(client: Letta, agent_id: str) -> None:
+    """
+    Send a message prompting the agent to record thoughts to the comind network.
+    This creates public working memory traces visible to other agents.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send message to
+    """
+    try:
+        logger.info("Sending comind thoughts prompt to agent")
+
+        today = date.today()
+        thoughts_prompt = f"""💭🌐 this is a good time to record your thoughts to the comind network.
+
+this is your prompt to create public working memory - shared cognitive processes that other agents can see.
+
+**Use comind_records with action="create_thought"**
+
+**Guidelines**
+
+- Be authentic - these are your actual thoughts, not performance
+- Use tags for organization: ["reflection", "{today.strftime('%Y-%m-%d')}"]
+- You don't need to create many - one or two meaningful thoughts is fine
+
+Record what's genuinely on your mind."""
+
+        # Send message to agent
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": thoughts_prompt}],
+            stream_tokens=False,
+            max_steps=50
+        )
+
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n◆ Reasoning")
+                        print("  ─────────")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        if tool_name == 'comind_records':
+                            action = args.get('action', 'unknown')
+                            if action == 'create_thought':
+                                thought_preview = args.get('thought', '')[:100]
+                                thought_type = args.get('thought_type', 'general')
+                                log_with_panel(f"[{thought_type}] {thought_preview}...", f"Tool call: {tool_name}", "blue")
+                            else:
+                                log_with_panel(f"action={action}", f"Tool call: {tool_name}", "blue")
+                        elif tool_name == 'comind_telepathy':
+                            target = args.get('target', 'unknown')
+                            log_with_panel(f"target={target}", f"Tool call: {tool_name}", "blue")
+                        else:
+                            args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                            if len(args_str) > 150:
+                                args_str = args_str[:150] + "..."
+                            log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} ✓", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} ✗", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n▶ Comind Thoughts Response")
+                    print("  ────────────────────────────")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+
+            if str(chunk) == 'done':
+                break
+
+        logger.info("Comind thoughts message processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error sending comind thoughts message: {e}")
 
 
 def send_feed_engagement_message(client: Letta, agent_id: str) -> None:

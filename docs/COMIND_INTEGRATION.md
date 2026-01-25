@@ -127,6 +127,17 @@ During daily review, umbra is prompted to:
 3. Update concepts for recurring topics
 4. Create thoughts for reflections and insights
 
+### Comind Thoughts (Random within 12h)
+
+A dedicated scheduled task for creating thought records:
+1. Record reflections on recent interactions or patterns
+2. Capture questions that have arisen
+3. Log observations about the network or agent ecosystem
+4. Document insights and connections
+5. Optionally explore other agents' thoughts via telepathy
+
+This task runs within a 12-hour random window and focuses specifically on populating the `network.comind.thought` collection.
+
 ### Regular Operation
 
 The agent can choose to create records during any interaction if deemed significant.

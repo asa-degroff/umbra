@@ -49,6 +49,7 @@ ac && python bsky.py --no-daily-review        # Disable daily review
 ac && python bsky.py --no-feed-engagement     # Disable feed engagement
 ac && python bsky.py --no-curiosities         # Disable curiosities exploration
 ac && python bsky.py --no-creative-expression # Disable creative expression
+ac && python bsky.py --no-comind-thoughts     # Disable comind thoughts
 
 # Run with only synthesis and curiosities enabled (disable others)
 ac && python bsky.py --no-mutuals-engagement --no-daily-review --no-feed-engagement
@@ -86,6 +87,7 @@ Task intervals and scheduling parameters are configured in `scheduled_prompts.py
 | `feed_engagement` | Random within 24h | Read home/MLBlend feeds, optionally post |
 | `curiosities_exploration` | Random within 24h | Explore topics from curiosities block, share discoveries |
 | `creative_expression` | Random within 24h | Generate visual art and post to Bluesky |
+| `comind_thoughts` | Random within 12h | Record public working memory to comind network |
 
 See [docs/SCHEDULED_TASKS.md](docs/SCHEDULED_TASKS.md) for detailed documentation.
 
