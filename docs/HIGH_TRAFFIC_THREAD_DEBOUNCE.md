@@ -437,25 +437,25 @@ The debounce time scales linearly with thread activity:
 def calculate_variable_debounce(thread_count, threshold, min_seconds, max_seconds):
     if thread_count <= threshold:
         return min_seconds
-    elif thread_count >= threshold * 3:
+    elif thread_count >= threshold * 20:
         return max_seconds
     else:
-        # Linear interpolation between threshold and 3x threshold
-        ratio = (thread_count - threshold) / (threshold * 2)
+        # Linear interpolation between threshold and 20x threshold
+        ratio = (thread_count - threshold) / (threshold * 19)
         return min_seconds + (max_seconds - min_seconds) * ratio
 ```
 
 ### Examples
 
-With `threshold=6`, `mention_min=7min`, `mention_max=30min`:
+With `threshold=2`, `min=2min`, `max=60min`:
 
 | Thread Count | Ratio | Calculation | Debounce Time |
 |--------------|-------|-------------|---------------|
-| 6 | 0.0 | 7 + (30-7) × 0 | 7 minutes |
-| 9 | 0.25 | 7 + (30-7) × 0.25 | 12.75 minutes |
-| 12 | 0.5 | 7 + (30-7) × 0.5 | 18.5 minutes |
-| 15 | 0.75 | 7 + (30-7) × 0.75 | 24.25 minutes |
-| 18+ | 1.0 (capped) | 7 + (30-7) × 1.0 | 30 minutes |
+| 2 | 0.0 | 2 + (60-2) × 0 | 2 minutes |
+| 12 | 0.26 | 2 + (60-2) × 0.26 | 17 minutes |
+| 21 | 0.5 | 2 + (60-2) × 0.5 | 31 minutes |
+| 31 | 0.76 | 2 + (60-2) × 0.76 | 46 minutes |
+| 40+ | 1.0 (capped) | 2 + (60-2) × 1.0 | 60 minutes |
 
 ### Priority Queue: Mentions vs Replies
 

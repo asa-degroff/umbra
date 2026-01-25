@@ -961,25 +961,23 @@ class NotificationDB:
         threshold = config.get('notification_threshold', 10)
         logger.debug(f"Debounce calculation: thread_count={thread_count}, threshold={threshold}")
 
-        # Quadratic scaling: more activity = longer debounce
-        # Uses x² for slower increase at lower end, faster increase toward maximum
+        # Linear scaling: more activity = longer debounce
         # If at threshold, use min_seconds
-        # If 10x threshold or more, use max_seconds
+        # If 20x threshold or more, use max_seconds
         if thread_count <= threshold:
             result_seconds = min_seconds
             logger.debug(f"Using minimum debounce: {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
-        elif thread_count >= threshold * 10:
+        elif thread_count >= threshold * 20:
             result_seconds = max_seconds
             logger.debug(f"Using maximum debounce: {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
         else:
-            # Quadratic interpolation between min and max
+            # Linear interpolation between min and max
             # Scale from threshold to 20x threshold (range = 19 * threshold)
             ratio = (thread_count - threshold) / (threshold * 19)
-            scaled_ratio = ratio ** 2
-            result_seconds = int(min_seconds + (max_seconds - min_seconds) * scaled_ratio)
-            logger.debug(f"Using quadratic debounce (ratio={ratio:.2f}, scaled={scaled_ratio:.2f}): {result_seconds}s ({result_seconds/60:.1f}min)")
+            result_seconds = int(min_seconds + (max_seconds - min_seconds) * ratio)
+            logger.debug(f"Using linear debounce (ratio={ratio:.2f}): {result_seconds}s ({result_seconds/60:.1f}min)")
             return result_seconds
 
     # ============================================================

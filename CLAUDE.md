@@ -262,13 +262,9 @@ threading:
 
 The system uses variable debounce times based on thread activity:
 
-- **At threshold (10 notifications)**: Minimum debounce time
-  - Mentions: 30 minutes
-  - Replies: 2 hours
-- **2x threshold (20+ notifications)**: Maximum debounce time
-  - Mentions: 60 minutes
-  - Replies: 6 hours
-- **Between threshold and 2x**: Linear interpolation
+- **At threshold (2 notifications)**: Minimum debounce time (2 minutes)
+- **20x threshold (40+ notifications)**: Maximum debounce time (60 minutes)
+- **Between threshold and 20x**: Linear interpolation
 
 This ensures umbra remains responsive to moderately active threads while giving very busy threads more time to evolve.
 
