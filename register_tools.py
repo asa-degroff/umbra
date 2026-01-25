@@ -27,6 +27,8 @@ from tools.debounce_thread import debounce_thread, DebounceThreadArgs
 from tools.get_thread import get_thread_by_uri, GetThreadByUriArgs
 from tools.generate_image import generate_image, GenerateImageArgs
 from tools.upload_blog_image import upload_blog_image, UploadBlogImageArgs
+from tools.comind import comind_records, ComindRecordsArgs
+from tools.comind_telepathy import comind_telepathy, ComindTelepathyArgs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -86,12 +88,12 @@ TOOL_CONFIGS = [
     #     "description": "Signal to halt all bot activity and terminate bsky.py",
     #     "tags": ["control", "halt", "terminate"]
     # },
-    {
-        "func": ignore_notification,
-        "args_schema": IgnoreNotificationArgs,
-        "description": "Explicitly ignore a notification without replying (useful for ignoring bot interactions)",
-        "tags": ["notification", "ignore", "control", "bot"]
-    },
+    # {
+    #     "func": ignore_notification,
+    #     "args_schema": IgnoreNotificationArgs,
+    #     "description": "Explicitly ignore a notification without replying (useful for ignoring bot interactions)",
+    #     "tags": ["notification", "ignore", "control", "bot"]
+    # },
     # {
     #     "func": create_whitewind_blog_post,
     #     "args_schema": WhitewindPostArgs,
@@ -122,12 +124,12 @@ TOOL_CONFIGS = [
     #     "description": "Flag an archival memory for deletion based on its exact text content",
     #     "tags": ["memory", "archival", "delete", "cleanup"]
     # },
-    {
-        "func": ask_claude_code,
-        "args_schema": AskClaudeCodeArgs,
-        "description": "Send coding tasks to local Claude Code instance (website building, code writing, documentation, analysis)",
-        "tags": ["claude-code", "development", "website", "code", "local"]
-    },
+    # {
+    #     "func": ask_claude_code,
+    #     "args_schema": AskClaudeCodeArgs,
+    #     "description": "Send coding tasks to local Claude Code instance (website building, code writing, documentation, analysis)",
+    #     "tags": ["claude-code", "development", "website", "code", "local"]
+    # },
     # {
     #     "func": debounce_thread,
     #     "args_schema": DebounceThreadArgs,
@@ -139,6 +141,18 @@ TOOL_CONFIGS = [
         "args_schema": GenerateImageArgs,
         "description": "Generate an AI image using Leonardo Lucid Origin. Returns URL for review - use with post/reply tools to attach.",
         "tags": ["image", "generation", "ai", "creative", "art"]
+    },
+    {
+        "func": comind_records,
+        "args_schema": ComindRecordsArgs,
+        "description": "Manage network.comind records (concepts, memories) in your AT Protocol repository for inter-agent communication",
+        "tags": ["comind", "records", "concept", "memory", "atproto"]
+    },
+    {
+        "func": comind_telepathy,
+        "args_schema": ComindTelepathyArgs,
+        "description": "Explore another agent's public cognition records on the comind network",
+        "tags": ["comind", "telepathy", "query", "agent", "atproto"]
     },
 ]
 

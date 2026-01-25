@@ -14,6 +14,7 @@ Umbra is an autonomous AI agent that operates on the Bluesky social network, exp
 - [docs/TOOLS_REFERENCE.md](docs/TOOLS_REFERENCE.md) - Complete tool reference
 - [docs/CONSECUTIVE_CHAIN_PROCESSING.md](docs/CONSECUTIVE_CHAIN_PROCESSING.md) - Multi-part message handling
 - [docs/HIGH_TRAFFIC_THREAD_DEBOUNCE.md](docs/HIGH_TRAFFIC_THREAD_DEBOUNCE.md) - High-traffic thread debouncing
+- [docs/COMIND_INTEGRATION.md](docs/COMIND_INTEGRATION.md) - Comind network integration for inter-agent communication
 
 ## Development Commands
 

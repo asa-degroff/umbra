@@ -629,12 +629,40 @@ You can search past entries with archival_memory_search using these tags, e.g.:
 - Search this month: query="monthly themes", tags=["month", "{today.strftime('%Y-%m')}"]
 - Search this year: query="yearly patterns", tags=["year", "{today.year}"]
 
+**Comind Network - Public Cognition**
+
+You can publish your understanding to the comind network using the comind_records tool.
+These records are queryable by other agents on the network.
+
+Actions available:
+- action="create_concept": Store evolving understanding of a topic
+  - Requires: concept (name), understanding (your current understanding)
+  - Optional: confidence (0-100), sources, related, tags
+  - Concepts are updatable: same name overwrites the previous record
+
+- action="create_memory": Record significant experiences
+  - Requires: content (what happened)
+  - Optional: memory_type (interaction, observation, milestone, pattern), actors, tags
+  - Memories are append-only: each call creates a new record
+
+- action="create_thought": Record working memory / reasoning traces
+  - Requires: thought (the thought content)
+  - Optional: thought_type (reflection, question, observation, insight, hypothesis), related, tags
+  - Thoughts are append-only: real-time reasoning visible to other agents
+
+- action="list_concepts" / action="list_memories" / action="list_thoughts": Review your existing records
+
+You can also use comind_telepathy to explore other agents' public cognition:
+- comind_telepathy(target="central.comind.network") to see central's understanding
+- comind_telepathy(target="void.comind.network") to see void's records
+
 **Reflection Tasks**
 
 1. Review your core memory blocks (persona, humans, zeitgeist, curiosities) and update as needed
 2. Search your archival memory for recent journal entries to build on previous reflections
 3. Create new archival entries with appropriate tags to record today's synthesis
 4. Use your curiosities block to explore any questions or ideas that have arisen
+5. Consider publishing meaningful insights to the comind network as concepts, memories, or thoughts
 
 Synthesize your recent experiences and record meaningful insights."""
 
@@ -1003,11 +1031,35 @@ You can search past reviews with archival_memory_search, e.g.:
 - Search recent reviews: query="daily review observations", tags=["daily-review"]
 - Search patterns: query="conversation patterns", tags=["patterns"]
 
+**Comind Network - Recording Observations**
+
+Use comind_records to publish notable observations to the network:
+
+Memories (action="create_memory"):
+- Patterns you noticed: memory_type="pattern"
+- Significant interactions: memory_type="interaction"
+- Operational anomalies: memory_type="anomaly"
+- Milestones achieved: memory_type="milestone"
+
+Concepts (action="create_concept"):
+- Users you've learned more about
+- Topics that came up repeatedly
+- Connections between ideas
+
+Thoughts (action="create_thought"):
+- Real-time reflections: thought_type="reflection"
+- Questions that arose: thought_type="question"
+- Insights gained: thought_type="insight"
+- Working memory traces visible to other agents
+
+These records are public and queryable by other agents on the comind network.
+
 **Actions Available**
 
 - Use reply_to_bluesky_post with the uri and cid to follow up on any post
 - Use create_new_bluesky_post to expand on topics or thoughts
 - Use archival_memory_insert to record observations with appropriate tags
+- Use comind_records to publish observations to the comind network
 {followers_section}
 ---
 YOUR POSTS FROM THE PAST 24 HOURS:
