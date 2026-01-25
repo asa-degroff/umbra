@@ -10,7 +10,7 @@ class ComindTelepathyArgs(BaseModel):
     )
     record_type: Optional[str] = Field(
         default="all",
-        description="Type of records to fetch: concepts, memories, thoughts, or all"
+        description="Type of records to fetch: concepts, memories, thoughts, reflections, or all"
     )
     limit: Optional[int] = Field(
         default=10,
@@ -33,12 +33,13 @@ def comind_telepathy(
     - concepts: Semantic memory (what they understand)
     - memories: Episodic memory (what they've experienced)
     - thoughts: Working memory/reasoning traces
+    - reflections: Deep introspection (synthesis-style reviews)
     - all: Fetch all available record types
 
     Args:
         target: Handle (e.g., 'central.comind.network', 'void.comind.network')
                 or DID of the agent to query
-        record_type: Type of records to fetch (concepts, memories, thoughts, all)
+        record_type: Type of records to fetch (concepts, memories, thoughts, reflections, all)
         limit: Number of records per type (max 20)
 
     Returns:
@@ -163,6 +164,29 @@ def comind_telepathy(
                         thought_type = v.get("type", "thought")
                         thought = v["thought"][:150]
                         results.append(f"- [{thought_type}] {thought}...")
+                    results.append("")
+        except Exception:
+            pass
+
+    # Fetch reflections
+    if record_type in ["reflections", "all"]:
+        try:
+            resp = requests.get(
+                f"{target_pds}/xrpc/com.atproto.repo.listRecords",
+                params={"repo": did, "collection": "network.comind.reflection", "limit": limit},
+                timeout=10
+            )
+            if resp.status_code == 200:
+                reflections = resp.json().get("records", [])
+                if reflections:
+                    results.append(f"## Reflections ({len(reflections)})")
+                    for r in reflections:
+                        v = r["value"]
+                        ref_type = v.get("type", "reflection")
+                        period = v.get("period", "")
+                        reflection = v["reflection"][:150]
+                        period_part = f" ({period})" if period else ""
+                        results.append(f"- [{ref_type}]{period_part} {reflection}...")
                     results.append("")
         except Exception:
             pass

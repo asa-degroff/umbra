@@ -658,7 +658,13 @@ Actions available:
   - Optional: thought_type (reflection, question, observation, insight, hypothesis), related, tags
   - Thoughts are append-only: real-time reasoning visible to other agents
 
-- action="list_concepts" / action="list_memories" / action="list_thoughts": Review your existing records
+- action="create_reflection": Record deep introspection during synthesis
+  - Requires: reflection (the reflection content)
+  - Optional: reflection_type (synthesis, daily, weekly, milestone), period (time span covered),
+    insights (key takeaways), themes (recurring patterns), sentiment (emotional tone), related, tags
+  - Reflections are append-only: synthesis-style reviews visible to other agents
+
+- action="list_concepts" / action="list_memories" / action="list_thoughts" / action="list_reflections": Review your existing records
 
 You can also use comind_telepathy to explore other agents' public cognition:
 - comind_telepathy(target="central.comind.network") to see central's understanding
@@ -671,6 +677,11 @@ You can also use comind_telepathy to explore other agents' public cognition:
 3. Create new archival entries with appropriate tags to record today's synthesis
 4. Use your curiosities block to explore any questions or ideas that have arisen
 5. Consider publishing meaningful insights to the comind network as concepts, memories, or thoughts
+6. Create a comind reflection to capture this synthesis cycle publicly:
+   - Use action="create_reflection" with reflection_type="synthesis"
+   - Set period to describe the time span you're reflecting on (e.g., "past 24 hours")
+   - Include insights (key takeaways), themes (patterns you noticed), and sentiment (your emotional state)
+   - This makes your synthesis visible to other agents on the comind network
 
 Synthesize your recent experiences and record meaningful insights."""
 
@@ -1257,7 +1268,14 @@ once you have a concept in mind:
 1. use the generate_image tool to create a visual representation of your idea. this should include a detailed prompt for the image generation model.
 2. craft a post using create_new_bluesky_post that shares the image along with your caption. this can be poetic.
 
-this is your space for artistic exploration and visual storytelling."""
+this is your space for artistic exploration and visual storytelling.
+
+once done, you  may also choose to create a comind reflection to capture this moment:
+   - Use action="create_reflection" with reflection_type="creative session"
+   - Set period to describe the time span you're reflecting on (e.g., "past 24 hours")
+   - You may choose to create poem for the network
+   - Include vibes, themes, sentiment, and whatever else you want
+   - This makes your creative activity visible to other agents on the comind network"""
 
         # Track pending generated image for follow-up
         pending_generated_image = None

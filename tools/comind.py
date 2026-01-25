@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class ComindRecordsArgs(BaseModel):
     action: str = Field(
         ...,
-        description="The action to perform: create_concept, create_memory, create_thought, list_concepts, list_memories, or list_thoughts"
+        description="The action to perform: create_concept, create_memory, create_thought, create_reflection, list_concepts, list_memories, list_thoughts, or list_reflections"
     )
 
     # For create_concept
@@ -51,6 +51,32 @@ class ComindRecordsArgs(BaseModel):
         description="What resulted from this thought (max 5K chars)"
     )
 
+    # For create_reflection
+    reflection: Optional[str] = Field(
+        default=None,
+        description="The reflection content (required for create_reflection, max 50K chars). Deeper introspection created during synthesis."
+    )
+    reflection_type: Optional[str] = Field(
+        default=None,
+        description="Type of reflection: synthesis, daily, weekly, milestone, retrospective, etc."
+    )
+    period: Optional[str] = Field(
+        default=None,
+        description="Time span covered by this reflection (e.g., '24 hours', 'past week', 'January 2025')"
+    )
+    insights: Optional[List[str]] = Field(
+        default=None,
+        description="Key insights or takeaways from this reflection (max 20)"
+    )
+    themes: Optional[List[str]] = Field(
+        default=None,
+        description="Recurring themes identified during reflection (max 20)"
+    )
+    sentiment: Optional[str] = Field(
+        default=None,
+        description="Emotional tone or sentiment of this period (e.g., 'contemplative', 'energized', 'curious')"
+    )
+
     # Shared fields
     context: Optional[str] = Field(
         default=None,
@@ -91,6 +117,12 @@ def comind_records(
     thought: str = None,
     thought_type: str = None,
     outcome: str = None,
+    reflection: str = None,
+    reflection_type: str = None,
+    period: str = None,
+    insights: List[str] = None,
+    themes: List[str] = None,
+    sentiment: str = None,
     context: str = None,
     source: str = None,
     sources: List[str] = None,
@@ -105,14 +137,17 @@ def comind_records(
     - Concepts: Semantic memory (evolving understanding, updatable by name)
     - Memories: Episodic memory (what happened, append-only)
     - Thoughts: Working memory (real-time reasoning traces, append-only)
+    - Reflections: Deep introspection (synthesis-style reviews, append-only)
 
     Actions:
     - create_concept: Create/update a concept record (requires: concept, understanding)
     - create_memory: Create a memory record (requires: content)
     - create_thought: Create a thought record (requires: thought)
+    - create_reflection: Create a reflection record (requires: reflection)
     - list_concepts: List your concept records
     - list_memories: List your memory records
     - list_thoughts: List your thought records
+    - list_reflections: List your reflection records
 
     Args:
         action: The operation to perform
@@ -125,7 +160,13 @@ def comind_records(
         thought: Thought content for create_thought
         thought_type: Type of thought (reflection, question, observation, insight, etc.)
         outcome: What resulted from this thought
-        context: Surrounding context (for thoughts/memories)
+        reflection: Reflection content for create_reflection
+        reflection_type: Type of reflection (synthesis, daily, weekly, milestone, etc.)
+        period: Time span covered by reflection (e.g., '24 hours', 'past week')
+        insights: Key insights or takeaways from reflection
+        themes: Recurring themes identified
+        sentiment: Emotional tone of the period
+        context: Surrounding context (for thoughts/memories/reflections)
         source: Source AT-URI or URL
         sources: Reference origins for concepts
         related: Related concept keys or AT-URIs
@@ -276,6 +317,46 @@ def comind_records(
         result = resp.json()
         return f"Created thought ({thought_type or 'general'})\nURI: {result['uri']}"
 
+    elif action == "create_reflection":
+        if not reflection:
+            raise Exception("create_reflection requires 'reflection'")
+
+        record = {
+            "$type": "network.comind.reflection",
+            "reflection": reflection[:50000],
+            "createdAt": now
+        }
+        if reflection_type:
+            record["type"] = reflection_type
+        if period:
+            record["period"] = period[:500]
+        if insights:
+            record["insights"] = insights[:20]
+        if themes:
+            record["themes"] = themes[:20]
+        if sentiment:
+            record["sentiment"] = sentiment[:100]
+        if context:
+            record["context"] = context[:5000]
+        if related:
+            record["related"] = related[:50]
+        if tags:
+            record["tags"] = tags[:20]
+
+        resp = requests.post(
+            f"{pds_host}/xrpc/com.atproto.repo.createRecord",
+            headers=headers,
+            json={
+                "repo": user_did,
+                "collection": "network.comind.reflection",
+                "record": record
+            },
+            timeout=10
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return f"Created reflection ({reflection_type or 'general'})\nURI: {result['uri']}"
+
     elif action == "list_concepts":
         resp = requests.get(
             f"{pds_host}/xrpc/com.atproto.repo.listRecords",
@@ -351,5 +432,32 @@ def comind_records(
             lines.append(f"- [{thought_type}] {thought_preview}...")
         return "\n".join(lines)
 
+    elif action == "list_reflections":
+        resp = requests.get(
+            f"{pds_host}/xrpc/com.atproto.repo.listRecords",
+            headers=headers,
+            params={
+                "repo": user_did,
+                "collection": "network.comind.reflection",
+                "limit": min(limit, 50)
+            },
+            timeout=10
+        )
+        resp.raise_for_status()
+        records = resp.json().get("records", [])
+
+        if not records:
+            return "No reflection records found."
+
+        lines = [f"Found {len(records)} reflection(s):"]
+        for r in records:
+            v = r["value"]
+            ref_type = v.get("type", "general")
+            period_str = v.get("period", "")
+            reflection_preview = v["reflection"][:100]
+            period_part = f" ({period_str})" if period_str else ""
+            lines.append(f"- [{ref_type}]{period_part} {reflection_preview}...")
+        return "\n".join(lines)
+
     else:
-        raise Exception(f"Unknown action: {action}. Use: create_concept, create_memory, create_thought, list_concepts, list_memories, list_thoughts")
+        raise Exception(f"Unknown action: {action}. Use: create_concept, create_memory, create_thought, create_reflection, list_concepts, list_memories, list_thoughts, list_reflections")

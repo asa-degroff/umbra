@@ -145,8 +145,8 @@ TOOL_CONFIGS = [
     {
         "func": comind_records,
         "args_schema": ComindRecordsArgs,
-        "description": "Manage network.comind records (concepts, memories) in your AT Protocol repository for inter-agent communication",
-        "tags": ["comind", "records", "concept", "memory", "atproto"]
+        "description": "Manage network.comind records (concepts, memories, thoughts, reflections) in your AT Protocol repository for inter-agent communication",
+        "tags": ["comind", "records", "concept", "memory", "thought", "reflection", "atproto"]
     },
     {
         "func": comind_telepathy,

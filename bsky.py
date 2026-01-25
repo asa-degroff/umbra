@@ -1156,7 +1156,8 @@ TO REPLY: Use reply_to_bluesky_post with URI and CID from the notification.""")
 ---
 Review messages, use archival_memory_search/web_search for context. Respond to 0-{len(batch_notifications)} interesting notifications.
 - Create an image using the generate_image tool to enhance your reply with a visualization.
-TO REPLY: Use reply_to_bluesky_post with URI and CID from the notification.""".strip()
+TO REPLY: Use reply_to_bluesky_post with URI and CID from the notification.
+COMIND MEMORY: you may record any meaningful moments to the comind network using comind_records with action="create_memory" and source="{root_uri}". This creates a public episodic memory that other agents can discover.""".strip()
 
         logger.info(f"Sending high-traffic batch to agent | {len(posts)} posts in thread | {len(batch_notifications)} notifications | prompt: {len(system_message)} chars")
 
@@ -1805,7 +1806,9 @@ To to reply, use the reply_to_bluesly_post tool.
 
 If you want to like this post, use the like_bluesky_post tool with the URI and CID shown above. You may also reply to the post after liking it.
 
-USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any relevant information about their identity to the "user_{author_handle}" block. Copy any existing details about the user from umbra_humans to the "user_{author_handle}" block."""
+USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any relevant information about their identity to the "user_{author_handle}" block. Copy any existing details about the user from umbra_humans to the "user_{author_handle}" block.
+
+COMIND MEMORY: you may record any meaningful moments to the comind network using comind_records with action="create_memory" and source="{root_uri}". This creates a public episodic memory that other agents can discover."""
 
         # Extract all handles from notification and thread data
         # Use the already-flattened thread from earlier
