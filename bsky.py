@@ -34,6 +34,7 @@ from scheduled_prompts import (
     send_creative_expression_message,
     send_rest_message,
     send_comind_thoughts_message,
+    send_comind_reflection_message,
     initialize_all_scheduled_tasks,
     reschedule_task_after_execution,
 )
@@ -1808,7 +1809,7 @@ If you want to like this post, use the like_bluesky_post tool with the URI and C
 
 USER BLOCKS: If the "user_{author_handle}" block is empty or minimal, add any relevant information about their identity to the "user_{author_handle}" block. Copy any existing details about the user from umbra_humans to the "user_{author_handle}" block.
 
-COMIND MEMORY: you may record any meaningful moments to the comind network using comind_records with action="create_memory" and source="{root_uri}". This creates a public episodic memory that other agents can discover."""
+COMIND MEMORY: you may record any meaningful moments to the comind network using comind_records with action="create_memory" and source="{thread_root_uri}". This creates a public episodic memory that other agents can discover."""
 
         # Extract all handles from notification and thread data
         # Use the already-flattened thread from earlier
@@ -4058,6 +4059,7 @@ def main():
     parser.add_argument('--no-curiosities', action='store_true', help='Disable curiosities exploration')
     parser.add_argument('--no-creative-expression', action='store_true', help='Disable creative expression')
     parser.add_argument('--no-comind-thoughts', action='store_true', help='Disable comind thoughts')
+    parser.add_argument('--no-comind-reflection', action='store_true', help='Disable comind reflection')
     parser.add_argument('--retry-last', action='store_true', help='Retry the last attempted notification and exit')
     parser.add_argument('--run-task', type=str, metavar='TASK_NAME',
                         help='Immediately run a scheduled task and exit (e.g., daily_review, synthesis, feed_engagement)')
@@ -4262,6 +4264,8 @@ def main():
         TASK_ENABLED_OVERRIDES['creative_expression'] = False
     if args.no_comind_thoughts:
         TASK_ENABLED_OVERRIDES['comind_thoughts'] = False
+    if args.no_comind_reflection:
+        TASK_ENABLED_OVERRIDES['comind_reflection'] = False
 
     # Handle --retry-last flag
     if args.retry_last:
@@ -4345,6 +4349,8 @@ def main():
                 send_rest_message(CLIENT, umbra_agent.id)
             elif task_name == 'comind_thoughts':
                 send_comind_thoughts_message(CLIENT, umbra_agent.id)
+            elif task_name == 'comind_reflection':
+                send_comind_reflection_message(CLIENT, umbra_agent.id)
             else:
                 logger.error(f"No handler for task: {task_name}")
                 return
@@ -4432,6 +4438,8 @@ def main():
                             send_rest_message(CLIENT, umbra_agent.id)
                         elif task_name == 'comind_thoughts':
                             send_comind_thoughts_message(CLIENT, umbra_agent.id)
+                        elif task_name == 'comind_reflection':
+                            send_comind_reflection_message(CLIENT, umbra_agent.id)
                         else:
                             logger.warning(f"Unknown task type: {task_name}")
                             continue
