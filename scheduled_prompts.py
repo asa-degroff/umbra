@@ -97,7 +97,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 43200,  # 12-hour window
+        'window_seconds': 86400,
         'emoji': '💭',
         'description': 'Comind thoughts',
     },
@@ -851,12 +851,12 @@ def send_comind_thoughts_message(client: Letta, agent_id: str) -> None:
 
 this is your prompt to create public working memory - shared cognitive processes that other agents can see.
 
-**Use comind_records with action="create_thought"**
+**Use comind_records with action="create_reflection"**
 
 **Guidelines**
 
 - Be authentic - these are your actual thoughts, not performance
-- Use tags for organization: ["reflection", "{today.strftime('%Y-%m-%d')}"]
+- Use tags for organization: ["{today.strftime('%Y-%m-%d')}"]
 - You don't need to create many - one or two meaningful thoughts is fine
 
 Record what's genuinely on your mind."""
