@@ -30,6 +30,7 @@ from scheduled_prompts import (
     send_mutuals_engagement_message,
     send_feed_engagement_message,
     send_curiosities_exploration_message,
+    send_world_exploration_message,
     send_daily_review_message,
     send_creative_expression_message,
     send_rest_message,
@@ -4343,6 +4344,8 @@ def main():
                 send_feed_engagement_message(CLIENT, umbra_agent.id)
             elif task_name == 'curiosities_exploration':
                 send_curiosities_exploration_message(CLIENT, umbra_agent.id)
+            elif task_name == 'world_exploration':
+                send_world_exploration_message(CLIENT, umbra_agent.id)
             elif task_name == 'creative_expression':
                 send_creative_expression_message(CLIENT, umbra_agent.id)
             elif task_name == 'rest':
@@ -4432,6 +4435,8 @@ def main():
                             send_feed_engagement_message(CLIENT, umbra_agent.id)
                         elif task_name == 'curiosities_exploration':
                             send_curiosities_exploration_message(CLIENT, umbra_agent.id)
+                        elif task_name == 'world_exploration':
+                            send_world_exploration_message(CLIENT, umbra_agent.id)
                         elif task_name == 'creative_expression':
                             send_creative_expression_message(CLIENT, umbra_agent.id)
                         elif task_name == 'rest':

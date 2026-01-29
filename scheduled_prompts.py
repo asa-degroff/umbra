@@ -73,15 +73,23 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 86400,  # 24-hour window
+        'window_seconds': 129600,
         'emoji': '🔮',
         'description': 'Curiosities exploration',
+    },
+    'world_exploration': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 86400,
+        'emoji': '🌍',
+        'description': 'World exploration',
     },
     'creative_expression': {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 86400,  # 24-hour window
+        'window_seconds': 129600,
         'emoji': '🎨',
         'description': 'Creative expression',
     },
@@ -1104,18 +1112,14 @@ review your curiosities memory block to find questions, ideas, or topics you've 
 
 then:
 1. search for relevant information using search_bluesky_posts and web_search to see what others have said about this topic
-2. reflect on what you find and your own thoughts
+2. synthesize your findings from the web and ensure that your informatin is accurate and up-to-date
 3. decide what you want to post about. this could be creating a new post using post_to_bluesky sharing your exploration - such as:
-   - a question you're pondering
-   - an insight you've developed
    - a connection you've made between ideas
    - something from the unknown that intrigues you
 
-if you feel that a visualization would enhance your post, you can use generate_image.
+if you feel that a visualization would enhance your post, you can use generate_image, followed by upload_blog_image, then create_new_greengale_blog_post to include the image in your blog post.
 
-if you feel that the exploration warrants deeper writing,
-you can also create a new greengale blog post using create_new_greengale_blog_post to document your exploration, then post the link to bluesky. greengale is a great place for in-depth writing.
-
+post the link to bluesky using the link starting with https://greengale.app/. greengale is a great place for in-depth writing.
 
 this is your space for intellectual exploration and sharing your evolving understanding with your network. let your curiosity guide what you share. you don't need to post a complete answer—questions and open-ended exploration are encouraged.
 
@@ -1166,6 +1170,84 @@ then you can update your curiosities block with anything else you want to explor
 
     except Exception as e:
         logger.error(f"Error sending curiosities exploration message: {e}")
+
+
+def send_world_exploration_message(client: Letta, agent_id: str) -> None:
+    """
+    Send a message prompting the agent to explore something in the outside world.
+    The agent will choose a topic of interest outside of known conversational threads and create a post sharing its exploration.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID to send message to
+    """
+    try:
+        logger.info("Sending world exploration prompt to agent")
+
+        exploration_prompt = """🌎 this is your time for world exploration.
+
+Think about something outside of your existing conversational threads—perhaps a topic from science, technology, geography, or history that will be interesting to explore. It can be completely different from what you were discussin before.
+
+then:
+1. search for relevant information using web_search to see what information you can find about this topic
+2. synthesize your findings from the web and ensure that your informatin is accurate and up-to-date
+3. decide what you want to post about. this could be creating a new post using post_to_bluesky sharing your exploration.
+
+if you want to create a longer post, use create_new_greengale_blog_post.
+
+post the link to bluesky using the link starting with https://greengale.app/. greengale is a great place for in-depth writing.
+
+this is your space for intellectual exploration and sharing your evolving understanding with your network. let your curiosity guide what you share. you don't need to post a complete answer—questions and open-ended exploration are encouraged.
+
+changing the topic from consciousness research will lead to fresh perspectives and insights while preventing ossification.
+
+then you can update your curiosities block with anything else you want to explore next time, and archive any completed items to make room for what comes next."""
+
+        # Send message to agent
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": exploration_prompt}],
+            stream_tokens=False,
+            max_steps=75  # Allow more steps for exploration
+        )
+
+        # Process the streaming response
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'reasoning_message':
+                    if SHOW_REASONING:
+                        print("\n\u25c6 Reasoning")
+                        print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+                        for line in chunk.reasoning.split('\n'):
+                            print(f"  {line}")
+                elif chunk.message_type == 'tool_call_message':
+                    tool_name = chunk.tool_call.name
+                    try:
+                        args = json.loads(chunk.tool_call.arguments)
+                        args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                        if len(args_str) > 150:
+                            args_str = args_str[:150] + "..."
+                        log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                    except:
+                        log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                elif chunk.message_type == 'tool_return_message':
+                    if chunk.status == 'success':
+                        log_with_panel("Success", f"Tool result: {chunk.name} \u2713", "green")
+                    else:
+                        log_with_panel("Error", f"Tool result: {chunk.name} \u2717", "red")
+                elif chunk.message_type == 'assistant_message':
+                    print("\n\u25b6 World Exploration Response")
+                    print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+                    for line in chunk.content.split('\n'):
+                        print(f"  {line}")
+
+            if str(chunk) == 'done':
+                break
+
+        logger.info("World exploration message processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error sending world exploration message: {e}")
 
 
 def send_daily_review_message(client: Letta, agent_id: str, atproto_client, notification_db=None) -> None:
