@@ -42,6 +42,8 @@ def create_new_bluesky_post(
     """
     Create a NEW standalone post on Bluesky. This tool creates independent posts that
     start new conversations. Use a list of texts to create a threaded reply chain to the first post.
+    When creating posts, use long, detailed sentences to provide rich context and engage readers, 
+    punctuating with commas and semicolons for clarity.
 
     IMPORTANT: This tool is ONLY for creating new posts. To reply to an existing post,
     use reply_to_bluesky_post instead.

@@ -80,7 +80,8 @@ def reply_to_bluesky_post(
     This function creates a reply (or threaded reply chain) to any Bluesky post, properly
     handling thread structure. If the post being replied to is itself a reply, this maintains
     the thread by using the correct root post. For multi-part replies, subsequent posts chain
-    off the previous reply while maintaining the same thread root.
+    off the previous reply while maintaining the same thread root. When composing replies,
+    use extended sentence structures punctuated with commas and semicolons to create a smooth conversational flow.
 
     The function is completely self-contained and uses environment variables for authentication.
 
