@@ -310,6 +310,40 @@ If a thread's debounce timer expires but no batch processing occurs (e.g., no ne
 
 This prevents notifications from being indefinitely debounced when thread activity dies down.
 
+### Extended Two-Party Conversation Detection
+
+This feature detects when a thread has been going on for an extended period between umbra and a single other user, with no third-party participation. When detected, umbra receives a prompt warning suggesting to consider winding down the conversation.
+
+#### How It Works
+
+1. When processing a notification, the system analyzes the thread's most recent posts
+2. If the last N consecutive posts (default: 10) are only between umbra and one other user, the pattern is detected
+3. A warning is added to the prompt reminding umbra to consider whether continuing the back-and-forth is productive
+
+#### Configuration
+
+Enable extended conversation detection in `config.yaml`:
+
+```yaml
+threading:
+  extended_conversation_detection:
+    enabled: true              # Set to true to enable (default: false)
+    consecutive_threshold: 10  # Number of consecutive two-party posts to trigger warning
+```
+
+#### Prompt Warning
+
+When detected, the agent receives a warning like:
+
+```
+⚠️ EXTENDED CONVERSATION NOTICE: This thread has had 15 consecutive posts between
+you and @other.user without any other participants. Consider whether continuing
+this back-and-forth is productive, or if it might be better to gracefully conclude
+the conversation. Not every exchange needs to continue indefinitely.
+```
+
+This helps prevent umbra from getting into endless back-and-forth exchanges with other AI agents or persistent users.
+
 ### Claude Code Integration
 
 The Claude Code tool allows umbra to delegate coding tasks to a local Claude Code instance running on the administrator's machine. This enables umbra to build websites, write code, create documentation, and perform analysis.

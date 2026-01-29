@@ -335,6 +335,28 @@ def process_debounced_thread(umbra_agent, atproto_client, notification_data, que
         # Convert thread to YAML (no tree view needed for linear reply chains)
         thread_yaml = thread_to_yaml_string(thread, include_tree_view=False)
 
+        # Flatten thread early for extended conversation detection and handle extraction
+        flattened_thread = bsky_utils.flatten_thread_structure(thread)
+
+        # Check for extended two-party conversation
+        extended_convo_config = threading_config.get('extended_conversation_detection', {})
+        extended_convo_enabled = extended_convo_config.get('enabled', False)
+        extended_convo_threshold = extended_convo_config.get('consecutive_threshold', 10)
+        extended_convo_warning = ""
+
+        if extended_convo_enabled:
+            umbra_handle = config.get('bluesky', {}).get('username', '')
+            extended_convo_result = bsky_utils.detect_extended_two_party_thread(
+                flattened_thread, umbra_handle, extended_convo_threshold
+            )
+            if extended_convo_result.get('detected'):
+                post_count = extended_convo_result['post_count']
+                other_handle = extended_convo_result['other_handle']
+                logger.info(f"⏰ Extended two-party conversation detected: {post_count} consecutive posts with @{other_handle}")
+                extended_convo_warning = f"""
+
+⚠️ EXTENDED CONVERSATION NOTICE: This thread has had {post_count} consecutive posts between you and @{other_handle} without any other participants. Consider that it might be better to gracefully conclude the conversation by not posting another reply."""
+
         # Clear debounce from database
         if NOTIFICATION_DB:
             NOTIFICATION_DB.clear_debounce(uri)
@@ -361,7 +383,7 @@ The complete thread (as it exists now) is provided below. This includes ALL post
 
 {thread_yaml}
 
-You may now respond to this thread with full context of all posts.{reply_instructions}""".strip()
+You may now respond to this thread with full context of all posts.{reply_instructions}{extended_convo_warning}""".strip()
 
         # Send to agent using standard processing
         # But use a special flag to indicate this is a debounced thread
@@ -373,7 +395,7 @@ You may now respond to this thread with full context of all posts.{reply_instruc
 
         try:
             # Extract handles from thread (authors + mentions from parent chain)
-            flattened_thread = bsky_utils.flatten_thread_structure(thread)
+            # flattened_thread was already computed earlier for extended conversation detection
             all_handles = set()
             all_handles.add(author_handle)
             all_handles.update(extract_handles_from_data(flattened_thread))
@@ -588,6 +610,25 @@ def process_high_traffic_batch(umbra_agent, atproto_client, notification_data, q
         flattened = bsky_utils.flatten_thread_structure(thread)
         posts = flattened.get('posts', [])
         existing_uris = {p.get('uri') for p in posts}
+
+        # Check for extended two-party conversation
+        extended_convo_config = threading_config.get('extended_conversation_detection', {})
+        extended_convo_enabled = extended_convo_config.get('enabled', False)
+        extended_convo_threshold = extended_convo_config.get('consecutive_threshold', 10)
+        extended_convo_warning = ""
+
+        if extended_convo_enabled:
+            umbra_handle = config.get('bluesky', {}).get('username', '')
+            extended_convo_result = bsky_utils.detect_extended_two_party_thread(
+                flattened, umbra_handle, extended_convo_threshold
+            )
+            if extended_convo_result.get('detected'):
+                post_count = extended_convo_result['post_count']
+                other_handle = extended_convo_result['other_handle']
+                logger.info(f"⚡ Extended two-party conversation detected: {post_count} consecutive posts with @{other_handle}")
+                extended_convo_warning = f"""
+
+⚠️ EXTENDED CONVERSATION NOTICE: This thread has had {post_count} consecutive posts between you and @{other_handle} without any other participants. Consider that it might be better to gracefully conclude the conversation by not posting another reply."""
 
         # Track notification threads for image extraction (will be populated below)
         notification_threads = []  # List of (notif_uri, notif_thread) tuples
@@ -1154,7 +1195,7 @@ TO REPLY: Use reply_to_bluesky_post with URI and CID from the notification.""")
 2. Notifications ({len(batch_notifications)} posts)
 ---
 {notifications_section}
-
+{extended_convo_warning}
 ---
 Review messages, use archival_memory_search/web_search for context. Respond to 0-{len(batch_notifications)} interesting notifications.
 - Create an image using the generate_image tool to enhance your reply with a visualization.
@@ -1689,6 +1730,24 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
         # Flatten thread to extract links and embed data for the mention post
         flattened_thread = bsky_utils.flatten_thread_structure(thread)
 
+        # Check for extended two-party conversation
+        extended_convo_config = threading_config.get('extended_conversation_detection', {})
+        extended_convo_enabled = extended_convo_config.get('enabled', False)
+        extended_convo_threshold = extended_convo_config.get('consecutive_threshold', 10)
+        extended_convo_warning = ""
+
+        if extended_convo_enabled:
+            umbra_handle = config.get('bluesky', {}).get('username', '')
+            extended_convo_result = bsky_utils.detect_extended_two_party_thread(
+                flattened_thread, umbra_handle, extended_convo_threshold
+            )
+            if extended_convo_result.get('detected'):
+                post_count = extended_convo_result['post_count']
+                other_handle = extended_convo_result['other_handle']
+                logger.info(f"Extended two-party conversation detected: {post_count} consecutive posts with @{other_handle}")
+                extended_convo_warning = f"""
+⚠️ EXTENDED CONVERSATION NOTICE: This thread has had {post_count} consecutive posts between you and @{other_handle} without any other participants. Consider that it might be better to gracefully conclude the conversation by not posting another reply."""
+
         # Extract links and embed data from the mention post for the prompt
         # Find the mention post in flattened thread (uri may have been updated to last consecutive post)
         mention_post = next((p for p in flattened_thread.get('posts', []) if p.get('uri') == uri), None)
@@ -1797,7 +1856,7 @@ FULL THREAD CONTEXT:
 {thread_context}
 ```
 
-{context_note}
+{context_note}{extended_convo_warning}
 
 Carefully review the message and use your archival_memory_search and web_search tools to find additional context. 
 

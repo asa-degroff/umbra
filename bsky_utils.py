@@ -1160,6 +1160,63 @@ def reply_to_post(client: Client, text: str, reply_to_uri: str, reply_to_cid: st
         raise
 
 
+def detect_extended_two_party_thread(flattened_thread: dict, umbra_handle: str, threshold: int = 10) -> dict:
+    """
+    Detect if the most recent posts in a thread are only between umbra and one other user.
+
+    This helps identify extended back-and-forth conversations where no third party has
+    participated for a while, which may indicate the conversation should wind down.
+
+    Args:
+        flattened_thread: Dict with 'posts' key containing list of posts in chronological order
+        umbra_handle: Umbra's Bluesky handle (e.g., "umbra.blue")
+        threshold: Minimum number of consecutive two-party posts to trigger detection
+
+    Returns:
+        Dict with:
+            - 'detected': bool - Whether the pattern was detected
+            - 'post_count': int - Number of consecutive two-party posts (if detected)
+            - 'other_handle': str - The other participant's handle (if detected)
+    """
+    posts = flattened_thread.get('posts', [])
+
+    if len(posts) < threshold:
+        return {'detected': False}
+
+    # Normalize umbra handle (remove @ if present)
+    umbra_handle = umbra_handle.lstrip('@').lower()
+
+    # Count consecutive posts from the end where only 2 authors participate
+    consecutive_count = 0
+    authors_in_streak = set()
+
+    for post in reversed(posts):
+        author = post.get('author', {})
+        handle = author.get('handle', '').lower() if isinstance(author, dict) else ''
+
+        if not handle:
+            continue
+
+        authors_in_streak.add(handle)
+
+        # If we now have more than 2 authors, the streak is broken
+        if len(authors_in_streak) > 2:
+            break
+
+        consecutive_count += 1
+
+    # Check if we found a qualifying streak
+    if consecutive_count >= threshold and len(authors_in_streak) == 2 and umbra_handle in authors_in_streak:
+        other_handle = (authors_in_streak - {umbra_handle}).pop()
+        return {
+            'detected': True,
+            'post_count': consecutive_count,
+            'other_handle': other_handle
+        }
+
+    return {'detected': False}
+
+
 def find_last_consecutive_post_in_chain(thread_node, author_handle: str):
     """
     Find the last consecutive post in the direct reply chain by the same author.
