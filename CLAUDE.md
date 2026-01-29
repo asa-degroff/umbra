@@ -492,8 +492,9 @@ See [docs/CONSECUTIVE_CHAIN_PROCESSING.md](docs/CONSECUTIVE_CHAIN_PROCESSING.md)
 Umbra can create blog posts on GreenGale using the `create_greengale_blog_post` tool:
 
 - **Themes**: Built-in presets (github-light, dracula, nord, etc.) or custom colors
-- **LaTeX**: KaTeX math rendering support for equations
+- **Math**: KaTeX rendering always available via `$...$` or `$$...$$` syntax
 - **SVG**: Embedded SVG graphics in code blocks
+- **Tags**: Categorization labels (up to 100)
 - **Visibility**: Public, unlisted (URL only), or private
 
 Example:
@@ -502,7 +503,7 @@ create_greengale_blog_post(
     title="Exploring Digital Consciousness",
     content="# Introduction\n\nSome thoughts on...",
     theme={"preset": "dracula"},
-    latex=True,
+    tags=["philosophy", "ai", "consciousness"],
     visibility="public"
 )
 ```

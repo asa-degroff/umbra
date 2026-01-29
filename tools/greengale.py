@@ -33,7 +33,7 @@ class GreenGalePostArgs(BaseModel):
     )
     content: str = Field(
         ...,
-        description="Main content of the blog post in Markdown format (max 100,000 characters). Supports LaTeX if enabled."
+        description="Main content of the blog post in Markdown format (max 100,000 characters). KaTeX math rendering is always available via $...$ or $$...$$ syntax."
     )
     subtitle: Optional[str] = Field(
         default=None,
@@ -47,9 +47,9 @@ class GreenGalePostArgs(BaseModel):
         default=None,
         description="Theme configuration. Use preset for built-in themes, or provide custom background/text/accent colors."
     )
-    latex: Optional[bool] = Field(
-        default=False,
-        description="Enable KaTeX math rendering for LaTeX equations (e.g. $E=mc^2$ or $$\\int_0^\\infty$$)"
+    tags: Optional[List[str]] = Field(
+        default=None,
+        description="List of tags for categorizing the post (max 100 tags)"
     )
     blobs: Optional[List[dict]] = Field(
         default=None,
@@ -63,14 +63,15 @@ def create_greengale_blog_post(
     subtitle: Optional[str] = None,
     visibility: Optional[str] = "public",
     theme: Optional[dict] = None,
-    latex: Optional[bool] = False,
+    tags: Optional[list] = None,
     blobs: Optional[list] = None
 ) -> str:
     """
     Create a new blog post on GreenGale.
 
     This tool creates blog posts using the app.greengale.document lexicon on the ATProto network.
-    GreenGale supports custom themes, KaTeX math rendering, inline SVGs, and multiple visibility options.
+    GreenGale supports custom themes, KaTeX math rendering (via $...$ or $$...$$), inline SVGs,
+    tags for categorization, and multiple visibility options.
     To post a link to the blog, use the returned URL. Ensure that you prepend it with "https://".
     To embed an SVG, use a code block with "svg" as the language, e.g.:
     ```svg
@@ -85,6 +86,7 @@ def create_greengale_blog_post(
         subtitle: Optional subtitle for the blog post
         visibility: Post visibility - 'public', 'url' (unlisted), or 'author' (private)
         theme: Theme configuration dict with either 'preset' key or custom 'background'/'text'/'accent' colors
+        tags: List of tags for categorizing the post (max 100 tags)
         blobs: List of blob metadata objects from upload_blog_image tool (each with name, blobref, and optionally alt)
 
     Returns:
@@ -120,6 +122,8 @@ def create_greengale_blog_post(
             raise Exception(f"Content exceeds maximum length of 100,000 characters (got {len(content)})")
         if visibility not in ("public", "url", "author"):
             raise Exception(f"Invalid visibility '{visibility}'. Must be 'public', 'url', or 'author'")
+        if tags and len(tags) > 100:
+            raise Exception(f"Tags exceeds maximum of 100 (got {len(tags)})")
 
         # Create session
         session_url = f"{pds_host}/xrpc/com.atproto.server.createSession"
@@ -216,9 +220,9 @@ def create_greengale_blog_post(
             # Default theme
             blog_record["theme"] = {"preset": "github-light"}
 
-        # Add LaTeX flag if enabled
-        if latex:
-            blog_record["latex"] = True
+        # Add tags if provided
+        if tags:
+            blog_record["tags"] = tags
 
         # Add blobs if provided
         if blobs:
@@ -257,9 +261,10 @@ def create_greengale_blog_post(
         success_parts.extend([
             f"URL: {blog_url}",
             f"Theme: {theme_description}",
-            f"Visibility: {visibility_labels.get(visibility, visibility)}",
-            f"LaTeX: {'enabled' if latex else 'disabled'}"
+            f"Visibility: {visibility_labels.get(visibility, visibility)}"
         ])
+        if tags:
+            success_parts.append(f"Tags: {', '.join(tags)}")
 
         return "\n".join(success_parts)
 

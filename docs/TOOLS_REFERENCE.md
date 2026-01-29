@@ -241,7 +241,7 @@ Defer processing of a notification to allow multi-post threads to complete.
 
 ### create_greengale_blog_post
 
-Create a blog post on GreenGale with custom themes, LaTeX support, and visibility controls.
+Create a blog post on GreenGale with custom themes, tags, and visibility controls.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -251,7 +251,7 @@ Create a blog post on GreenGale with custom themes, LaTeX support, and visibilit
 | `subtitle` | str | No | - | Optional subtitle |
 | `visibility` | str | No | `"public"` | 'public', 'url' (unlisted), or 'author' (private) |
 | `theme` | dict | No | - | Theme configuration (see below) |
-| `latex` | bool | No | `False` | Enable KaTeX math rendering |
+| `tags` | List[str] | No | - | Categorization tags (max 100) |
 
 **Theme Options:**
 - **Presets:** `github-light`, `github-dark`, `dracula`, `nord`, `solarized-light`, `solarized-dark`, `monokai`
@@ -266,7 +266,7 @@ Create a blog post on GreenGale with custom themes, LaTeX support, and visibilit
 ```
 ~~~
 
-**LaTeX Support:** When `latex=True`, use `$inline$` or `$$block$$` equations.
+**Math Support:** KaTeX rendering is always available via `$inline$` or `$$block$$` equations.
 
 ---
 
