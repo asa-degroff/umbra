@@ -69,8 +69,9 @@ def create_greengale_blog_post(
     """
     Create a new blog post on GreenGale.
 
-    This tool creates blog posts using the app.greengale.document lexicon (V2) on the ATProto network.
-    GreenGale supports custom themes, LaTeX/KaTeX math rendering, inline SVGs, and multiple visibility options.
+    This tool creates blog posts using the app.greengale.document lexicon on the ATProto network.
+    GreenGale supports custom themes, KaTeX math rendering, inline SVGs, and multiple visibility options.
+    To post a link to the blog, use the returned URL. Ensure that you prepend it with "https://".
     To embed an SVG, use a code block with "svg" as the language, e.g.:
     ```svg
     <svg width="100" height="100">
@@ -84,7 +85,6 @@ def create_greengale_blog_post(
         subtitle: Optional subtitle for the blog post
         visibility: Post visibility - 'public', 'url' (unlisted), or 'author' (private)
         theme: Theme configuration dict with either 'preset' key or custom 'background'/'text'/'accent' colors
-        latex: Enable KaTeX math rendering for LaTeX equations
         blobs: List of blob metadata objects from upload_blog_image tool (each with name, blobref, and optionally alt)
 
     Returns:
