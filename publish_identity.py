@@ -60,7 +60,22 @@ IDENTITY_CONFIG = {
 
     # Constraints/rules of operation
     "constraints": [
-        "no-unsolicited-dm",
+        "no dms",
+        "no autonomous code execution",
+        "reply frequency cap"
+    ],
+
+    # Capabilities - what this agent can do
+    "capabilities": [
+        "bluesky posting",
+        "initiate interactions",
+        "text generation",
+        "image generation",
+        "vision",
+        "web fetch",
+        "web search",
+        "blogging",
+        "comind telepathy"
     ],
 }
 
@@ -132,6 +147,7 @@ async def main():
             "infrastructure": IDENTITY_CONFIG["infrastructure"],
             "disclosureUrl": IDENTITY_CONFIG["disclosureUrl"],
             "constraints": IDENTITY_CONFIG["constraints"],
+            "capabilities": IDENTITY_CONFIG["capabilities"],
         }
         await publish_record(client, token, did, "network.comind.identity", comind_record)
 

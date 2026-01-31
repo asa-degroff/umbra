@@ -49,7 +49,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 129600,  # 36-hour window
+        'window_seconds': 172800,  # 36-hour window
         'emoji': '🤝',
         'description': 'Mutuals engagement',
     },
@@ -73,7 +73,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 129600,
+        'window_seconds': 172800,
         'emoji': '🔮',
         'description': 'Curiosities exploration',
     },
@@ -97,7 +97,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 43200,
+        'window_seconds': 86400,
         'emoji': '🍵',
         'description': 'Break',
     },
@@ -105,7 +105,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 86400,
+        'window_seconds': 129600,
         'emoji': '💭',
         'description': 'Comind thoughts',
     },
@@ -113,7 +113,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 86400,  # 24-hour window
+        'window_seconds': 129600,
         'emoji': '🪞',
         'description': 'Comind reflection',
     }

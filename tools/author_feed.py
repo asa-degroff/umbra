@@ -22,6 +22,18 @@ def get_author_feed(actor: str, limit: int = 10) -> str:
     import yaml
     import requests
 
+    # Inline sanitization for sandboxed execution
+    def _sanitize(text: str) -> str:
+        if not text:
+            return text
+        blocked = os.getenv("BLOCKED_STRINGS", "")
+        if not blocked:
+            return text
+        for b in blocked.split('\n'):
+            if b and b in text:
+                text = text.replace(b, "[content filtered]")
+        return text
+
     try:
         # Validate limit
         limit = min(max(limit, 1), 100)
@@ -103,7 +115,7 @@ def get_author_feed(actor: str, limit: int = 10) -> str:
                     "handle": author.get("handle", ""),
                     "display_name": author.get("displayName", ""),
                 },
-                "text": record.get("text", ""),
+                "text": _sanitize(record.get("text", "")),
                 "created_at": record.get("createdAt", ""),
                 "uri": post.get("uri", ""),
                 "cid": post.get("cid", ""),

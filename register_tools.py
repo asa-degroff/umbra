@@ -8,6 +8,7 @@ from letta_client import Letta
 from rich.console import Console
 from rich.table import Table
 from config_loader import get_letta_config, get_bluesky_config, get_r2_config, get_image_generation_config, get_config
+from sanitization import load_blocked_strings
 
 # Import standalone functions and their schemas
 from tools.search import search_bluesky_posts, SearchArgs
@@ -233,6 +234,16 @@ def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool 
                     console.print(f"  REPLICATE_API_TOKEN: {env_vars['REPLICATE_API_TOKEN'][:8]}...")
                 else:
                     console.print(f"  [dim]Replicate API token not configured (image generation will not work)[/dim]")
+
+                # Load blocked strings for text sanitization
+                blocked_strings = load_blocked_strings()
+                if blocked_strings:
+                    # Encode as newline-separated string (base64 would be safer but more complex)
+                    # Use a delimiter that's unlikely to appear in the strings
+                    env_vars['BLOCKED_STRINGS'] = '\n'.join(blocked_strings)
+                    console.print(f"  BLOCKED_STRINGS: {len(blocked_strings)} string(s) loaded")
+                else:
+                    console.print(f"  [dim]No blocked strings configured[/dim]")
 
                 console.print()
 

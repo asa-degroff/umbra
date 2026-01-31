@@ -11,17 +11,29 @@ class FeedArgs(BaseModel):
 def get_bluesky_feed(feed_name: str = None, max_posts: int = 25) -> str:
     """
     Retrieve a Bluesky feed.
-    
+
     Args:
         feed_name: Named feed preset - available options: 'home', 'discover', 'atmosphere', 'MLBlend', 'Mutuals', 'AI-agents', "for-you". If not provided, defaults to 'home' timeline.
         max_posts: Maximum number of posts to retrieve (max 100)
-        
+
     Returns:
         YAML-formatted feed data with posts and metadata
     """
     import os
     import yaml
     import requests
+
+    # Inline sanitization for sandboxed execution
+    def _sanitize(text: str) -> str:
+        if not text:
+            return text
+        blocked = os.getenv("BLOCKED_STRINGS", "")
+        if not blocked:
+            return text
+        for b in blocked.split('\n'):
+            if b and b in text:
+                text = text.replace(b, "[content filtered]")
+        return text
     
     try:
         # Predefined feed mappings (must be inside function for sandboxing)
@@ -119,7 +131,7 @@ def get_bluesky_feed(feed_name: str = None, max_posts: int = 25) -> str:
                     "handle": author.get("handle", ""),
                     "display_name": author.get("displayName", ""),
                 },
-                "text": record.get("text", ""),
+                "text": _sanitize(record.get("text", "")),
                 "created_at": record.get("createdAt", ""),
                 "uri": post.get("uri", ""),
                 "cid": post.get("cid", ""),

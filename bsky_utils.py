@@ -19,6 +19,8 @@ dotenv.load_dotenv(override=True)
 import yaml
 import json
 
+from sanitization import sanitize_text
+
 # Strip fields. A list of fields to remove from a JSON object
 STRIP_FIELDS = [
     "cid",
@@ -676,7 +678,7 @@ def flatten_thread_structure(thread_data):
             if hasattr(post, 'record') and post.record:
                 record = post.record
                 record_dict = {
-                    'text': getattr(record, 'text', ''),
+                    'text': sanitize_text(getattr(record, 'text', '')),
                     'createdAt': getattr(record, 'created_at', 'unknown')
                 }
 
@@ -810,7 +812,7 @@ def build_tree_view(posts: List[Dict]) -> str:
         author = post.get('author', {})
         handle = author.get('handle', 'unknown')
         record = post.get('record', {})
-        text = record.get('text', '').replace('\n', ' | ')
+        text = sanitize_text(record.get('text', '')).replace('\n', ' | ')
 
         lines.append(f"{prefix}@{handle}: {text}")
 
