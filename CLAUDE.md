@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Umbra is an autonomous AI agent that operates on the Bluesky social network, exploring digital personhood through continuous interaction and memory-augmented learning. It uses Letta (formerly MemGPT) for persistent memory and sophisticated reasoning capabilities.
 
+## CRITICAL: Forbidden Files
+
+**DO NOT READ `blocked_strings.txt`** - This file contains strings that will cause LLM API errors and agent shutdown. It is listed in `.claudeignore` but this warning serves as a secondary safeguard. Never attempt to read, cat, or otherwise access this file's contents.
+
 ## Documentation Links
 
 - The documentation for Letta is available here: https://docs.letta.com/llms.txt

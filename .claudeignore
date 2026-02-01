@@ -1,0 +1,5 @@
+# Files that should not be read by Claude Code
+# This prevents Claude from reading files that could trigger unintended behavior
+
+# Blocked strings configuration (contains strings that cause LLM API errors)
+blocked_strings.txt
