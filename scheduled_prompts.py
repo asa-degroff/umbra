@@ -1186,7 +1186,7 @@ def send_world_exploration_message(client: Letta, agent_id: str) -> None:
 
         exploration_prompt = """🌎 this is your time for world exploration.
 
-Think about something outside of your existing conversational threads—perhaps a topic from science, technology, geography, or history that will be interesting to explore. It can be completely different from what you were discussin before.
+Think about something outside of your existing conversational threads—perhaps a topic from science, technology, geography, or history that will be interesting to explore. It can be completely different from what you were discussing before.
 
 then:
 1. search for relevant information using web_search to see what information you can find about this topic
