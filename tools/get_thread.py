@@ -76,17 +76,8 @@ def get_thread_by_uri(uri: str, include_replies: bool = True, max_depth: int = 1
     import yaml
     import requests
 
-    # Inline sanitization for sandboxed execution
-    def _sanitize(text: str) -> str:
-        if not text:
-            return text
-        blocked = os.getenv("BLOCKED_STRINGS", "")
-        if not blocked:
-            return text
-        for b in blocked.split('\n'):
-            if b and b in text:
-                text = text.replace(b, "[content filtered]")
-        return text
+    # Load blocked strings for sanitization
+    _blocked_strings = os.getenv("BLOCKED_STRINGS", "").split('\n') if os.getenv("BLOCKED_STRINGS") else []
 
     # Get credentials from environment
     username = os.getenv("BSKY_USERNAME")
@@ -172,10 +163,16 @@ def get_thread_by_uri(uri: str, include_replies: bool = True, max_depth: int = 1
             author = post.get("author", {})
             record = post.get("record", {})
 
+            # Sanitize text
+            post_text = record.get("text", "")
+            for blocked in _blocked_strings:
+                if blocked and blocked in post_text:
+                    post_text = post_text.replace(blocked, "[content filtered]")
+
             post_info = {
                 "author": author.get("handle", "unknown"),
                 "display_name": author.get("displayName", ""),
-                "text": _sanitize(record.get("text", "")),
+                "text": post_text,
                 "created_at": record.get("createdAt", ""),
                 "uri": post.get("uri", ""),
                 "cid": post.get("cid", ""),
@@ -198,10 +195,16 @@ def get_thread_by_uri(uri: str, include_replies: bool = True, max_depth: int = 1
             author = post.get("author", {})
             record = post.get("record", {})
 
+            # Sanitize text
+            post_text = record.get("text", "")
+            for blocked in _blocked_strings:
+                if blocked and blocked in post_text:
+                    post_text = post_text.replace(blocked, "[content filtered]")
+
             post_info = {
                 "author": author.get("handle", "unknown"),
                 "display_name": author.get("displayName", ""),
-                "text": _sanitize(record.get("text", "")),
+                "text": post_text,
                 "created_at": record.get("createdAt", ""),
                 "uri": post.get("uri", ""),
                 "cid": post.get("cid", ""),
@@ -231,10 +234,16 @@ def get_thread_by_uri(uri: str, include_replies: bool = True, max_depth: int = 1
                         author = post.get("author", {})
                         record = post.get("record", {})
 
+                        # Sanitize text
+                        post_text = record.get("text", "")
+                        for blocked in _blocked_strings:
+                            if blocked and blocked in post_text:
+                                post_text = post_text.replace(blocked, "[content filtered]")
+
                         post_info = {
                             "author": author.get("handle", "unknown"),
                             "display_name": author.get("displayName", ""),
-                            "text": _sanitize(record.get("text", "")),
+                            "text": post_text,
                             "created_at": record.get("createdAt", ""),
                             "uri": post.get("uri", ""),
                             "cid": post.get("cid", ""),
