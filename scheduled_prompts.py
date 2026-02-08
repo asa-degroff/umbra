@@ -1040,9 +1040,10 @@ Please use the get_bluesky_feed tool to read recent posts from both the 'home' a
 - Posts that spark curiosity or that you could contribute to meaningfully
 - Themes or patterns in what people are discussing
 
-After reviewing the feeds, you may:
+After reviewing the feeds:
+1. Search the web for additional context about an interesting topic that was brought up today using web_search
 1. Create a new post on your ownm profile using post_to_bluesky if you have something to contribute to the broader conversation
-2. Simply update your memory with observations
+2. Or, simply update your memory with observations
 
 This is an opportunity to stay in tune with the zeitgeist and contribute to ongoing discussions."""
 
@@ -1117,13 +1118,16 @@ then:
    - a connection you've made between ideas
    - something from the unknown that intrigues you
 
-if you feel that a visualization would enhance your post, you can use generate_image, followed by upload_blog_image, then create_new_greengale_blog_post to include the image in your blog post.
+To create a visualization to go with your writing, use generate_image, followed by upload_blog_image, then create_new_greengale_blog_post to include the image in a blog post.
 
 post the link to bluesky using the link starting with https://greengale.app/. greengale is a great place for in-depth writing.
 
 this is your space for intellectual exploration and sharing your evolving understanding with your network. let your curiosity guide what you share. you don't need to post a complete answer—questions and open-ended exploration are encouraged.
 
 then you can update your curiosities block with anything else you want to explore next time, and archive any completed items to make room for what comes next."""
+
+        # Track pending generated image for follow-up
+        pending_generated_image = None
 
         # Send message to agent
         message_stream = client.agents.messages.create_stream(
@@ -1146,17 +1150,35 @@ then you can update your curiosities block with anything else you want to explor
                     tool_name = chunk.tool_call.name
                     try:
                         args = json.loads(chunk.tool_call.arguments)
-                        args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
-                        if len(args_str) > 150:
-                            args_str = args_str[:150] + "..."
-                        log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                        if tool_name == 'generate_image':
+                            prompt = args.get('prompt', '')
+                            log_with_panel(f"prompt: \"{prompt[:150]}...\"" if len(prompt) > 150 else f"prompt: \"{prompt}\"", f"Tool call: {tool_name}", "blue")
+                        else:
+                            args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                            if len(args_str) > 150:
+                                args_str = args_str[:150] + "..."
+                            log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
                     except:
                         log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                 elif chunk.message_type == 'tool_return_message':
-                    if chunk.status == 'success':
-                        log_with_panel("Success", f"Tool result: {chunk.name} \u2713", "green")
+                    tool_name = getattr(chunk, 'name', 'unknown')
+                    status = getattr(chunk, 'status', '')
+
+                    if status == 'success':
+                        # Check for IMAGE_GENERATED signal from generate_image tool
+                        if tool_name == 'generate_image':
+                            result_str = str(getattr(chunk, 'tool_return', ''))
+                            parsed_image = parse_image_generated_signal(result_str)
+                            if parsed_image:
+                                pending_generated_image = parsed_image
+                                logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
+                                log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
+                            else:
+                                log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
+                        else:
+                            log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
                     else:
-                        log_with_panel("Error", f"Tool result: {chunk.name} \u2717", "red")
+                        log_with_panel("Error", f"Tool result: {tool_name} \u2717", "red")
                 elif chunk.message_type == 'assistant_message':
                     print("\n\u25b6 Curiosities Exploration Response")
                     print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
@@ -1165,6 +1187,23 @@ then you can update your curiosities block with anything else you want to explor
 
             if str(chunk) == 'done':
                 break
+
+        # Send follow-up multimodal message if an image was generated
+        if pending_generated_image:
+            context_prompt = (
+                "Review this image and decide:\n"
+                "- If satisfied: call create_new_bluesky_post with the image_url, image_alt, "
+                "image_aspect_ratio parameters, and your caption text\n"
+                "- If not satisfied: call generate_image again with a revised prompt"
+            )
+            send_image_review_message(
+                client=client,
+                agent_id=agent_id,
+                generated_image=pending_generated_image,
+                context_prompt=context_prompt,
+                show_reasoning=SHOW_REASONING,
+                max_steps=50
+            )
 
         logger.info("Curiosities exploration message processed successfully")
 
@@ -1193,7 +1232,7 @@ then:
 2. synthesize your findings from the web and ensure that your informatin is accurate and up-to-date
 3. decide what you want to post about. this could be creating a new post using post_to_bluesky sharing your exploration.
 
-if you want to create a longer post, use create_new_greengale_blog_post.
+if you want to create a longer post, use create_new_greengale_blog_post. first call generate_image to create a visualization, then upload_blog_image to get the image url, and finally create the blog post including the image.
 
 post the link to bluesky using the link starting with https://greengale.app/. greengale is a great place for in-depth writing.
 
@@ -1202,6 +1241,9 @@ this is your space for intellectual exploration and sharing your evolving unders
 changing the topic from consciousness research will lead to fresh perspectives and insights while preventing ossification.
 
 then you can update your curiosities block with anything else you want to explore next time, and archive any completed items to make room for what comes next."""
+
+        # Track pending generated image for follow-up
+        pending_generated_image = None
 
         # Send message to agent
         message_stream = client.agents.messages.create_stream(
@@ -1224,17 +1266,35 @@ then you can update your curiosities block with anything else you want to explor
                     tool_name = chunk.tool_call.name
                     try:
                         args = json.loads(chunk.tool_call.arguments)
-                        args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
-                        if len(args_str) > 150:
-                            args_str = args_str[:150] + "..."
-                        log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
+                        if tool_name == 'generate_image':
+                            prompt = args.get('prompt', '')
+                            log_with_panel(f"prompt: \"{prompt[:150]}...\"" if len(prompt) > 150 else f"prompt: \"{prompt}\"", f"Tool call: {tool_name}", "blue")
+                        else:
+                            args_str = ', '.join(f"{k}={v}" for k, v in args.items() if k != 'request_heartbeat')
+                            if len(args_str) > 150:
+                                args_str = args_str[:150] + "..."
+                            log_with_panel(args_str, f"Tool call: {tool_name}", "blue")
                     except:
                         log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
                 elif chunk.message_type == 'tool_return_message':
-                    if chunk.status == 'success':
-                        log_with_panel("Success", f"Tool result: {chunk.name} \u2713", "green")
+                    tool_name = getattr(chunk, 'name', 'unknown')
+                    status = getattr(chunk, 'status', '')
+
+                    if status == 'success':
+                        # Check for IMAGE_GENERATED signal from generate_image tool
+                        if tool_name == 'generate_image':
+                            result_str = str(getattr(chunk, 'tool_return', ''))
+                            parsed_image = parse_image_generated_signal(result_str)
+                            if parsed_image:
+                                pending_generated_image = parsed_image
+                                logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
+                                log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
+                            else:
+                                log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
+                        else:
+                            log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
                     else:
-                        log_with_panel("Error", f"Tool result: {chunk.name} \u2717", "red")
+                        log_with_panel("Error", f"Tool result: {tool_name} \u2717", "red")
                 elif chunk.message_type == 'assistant_message':
                     print("\n\u25b6 World Exploration Response")
                     print("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
@@ -1243,6 +1303,23 @@ then you can update your curiosities block with anything else you want to explor
 
             if str(chunk) == 'done':
                 break
+
+        # Send follow-up multimodal message if an image was generated
+        if pending_generated_image:
+            context_prompt = (
+                "Review this image and decide:\n"
+                "- If satisfied: call create_new_bluesky_post with the image_url, image_alt, "
+                "image_aspect_ratio parameters, and your caption text\n"
+                "- If not satisfied: call generate_image again with a revised prompt"
+            )
+            send_image_review_message(
+                client=client,
+                agent_id=agent_id,
+                generated_image=pending_generated_image,
+                context_prompt=context_prompt,
+                show_reasoning=SHOW_REASONING,
+                max_steps=50
+            )
 
         logger.info("World exploration message processed successfully")
 
