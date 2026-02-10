@@ -30,6 +30,7 @@ from tools.generate_image import generate_image, GenerateImageArgs
 from tools.upload_blog_image import upload_blog_image, UploadBlogImageArgs
 from tools.comind import comind_records, ComindRecordsArgs
 from tools.comind_telepathy import comind_telepathy, ComindTelepathyArgs
+from tools.ask_umbriel import ask_umbriel, AskUmbrielArgs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -155,6 +156,13 @@ TOOL_CONFIGS = [
         "description": "Explore another agent's public cognition records on the comind network",
         "tags": ["comind", "telepathy", "query", "agent", "atproto"]
     },
+    {
+        "func": ask_umbriel,
+        "args_schema": AskUmbrielArgs,
+        "description": "Send a question to Umbriel, the server's technical advisor AI (async - response comes back as follow-up message)",
+        "tags": ["umbriel", "advisor", "inter-agent", "openclaw"],
+        "pip_requirements": [{"name": "boto3"}]
+    },
 ]
 
 
@@ -279,11 +287,17 @@ def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool 
 
             try:
                 # Create or update the tool using the standalone function
-                created_tool = client.tools.upsert_from_function(
-                    func=func,
-                    args_schema=tool_config["args_schema"],
-                    tags=tool_config["tags"]
-                )
+                upsert_kwargs = {
+                    "func": func,
+                    "args_schema": tool_config["args_schema"],
+                    "tags": tool_config["tags"],
+                }
+                if "pip_requirements" in tool_config:
+                    from letta_client.types.pip_requirement import PipRequirement
+                    upsert_kwargs["pip_requirements"] = [
+                        PipRequirement(**r) for r in tool_config["pip_requirements"]
+                    ]
+                created_tool = client.tools.upsert_from_function(**upsert_kwargs)
 
                 # Get current agent tools
                 current_tools = client.agents.tools.list(agent_id=str(agent.id))

@@ -40,6 +40,7 @@ from scheduled_prompts import (
     reschedule_task_after_execution,
 )
 from image_utils import download_image_as_base64, download_and_save_image, parse_image_generated_signal
+# umbriel_bridge import removed - now using R2 queue pattern via umbriel_poller.py
 
 
 def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str:
@@ -2429,6 +2430,8 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                     except Exception as e:
                         logger.error(f"Error handling debounce_thread tool call: {e}")
                         # Continue processing even if debounce fails
+
+            # ask_umbriel intercept removed - now uses R2 queue pattern (umbriel_poller.py)
 
             # Check for deprecated bluesky_reply tool
             if hasattr(message, 'tool_call') and message.tool_call:
