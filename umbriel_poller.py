@@ -33,7 +33,7 @@ except ImportError:
 
 
 POLL_INTERVAL_SECONDS = 5
-REQUEST_EXPIRATION_MINUTES = 10
+REQUEST_EXPIRATION_MINUTES = 15
 MAX_EXECUTION_TIME_SECONDS = 300
 
 
@@ -112,7 +112,14 @@ class UmbrielPoller:
         if self.verbose:
             self.log(f"   Message: {message[:200]}{'...' if len(message) > 200 else ''}")
 
-        timeout = 120 if priority == 'normal' else 240
+        # Daily reviews are large — give them more time
+        is_daily_review = request_data.get('submitted_by') == 'umbra-daily-review'
+        if is_daily_review:
+            timeout = 300
+        elif priority == 'high':
+            timeout = 240
+        else:
+            timeout = 120
 
         try:
             start_time = time.time()

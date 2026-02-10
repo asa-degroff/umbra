@@ -1499,8 +1499,72 @@ Reflect on your activity and record meaningful observations."""
 
         logger.info("Daily review message processed successfully")
 
+        # Forward the daily review to Umbriel for external feedback
+        try:
+            _send_daily_review_to_umbriel(posts_yaml, followers_section)
+        except Exception as umbriel_err:
+            logger.warning(f"Failed to forward daily review to Umbriel: {umbriel_err}")
+
     except Exception as e:
         logger.error(f"Error sending daily review message: {e}")
+
+
+def _send_daily_review_to_umbriel(posts_yaml: str, followers_section: str = "") -> None:
+    """Forward Umbra's daily review content to Umbriel via R2 queue for external feedback."""
+    import uuid
+    import os
+    import boto3
+
+    from config_loader import get_r2_config
+    r2_config = get_r2_config()
+
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=f"https://{r2_config['account_id']}.r2.cloudflarestorage.com",
+        aws_access_key_id=r2_config['access_key_id'],
+        aws_secret_access_key=r2_config['secret_access_key'],
+        region_name='auto'
+    )
+
+    request_id = str(uuid.uuid4())
+    today = date.today().strftime('%Y-%m-%d')
+
+    message = f"""This is Umbra's daily review for {today}. Please review the posts and provide feedback:
+
+- Identify the strongest posts (most authentic, interesting, or well-crafted)
+- Flag any posts that feel repetitive or formulaic
+- Note any patterns (topics, tone, style) worth being aware of
+- Flag any technical or operational issues you notice
+- Suggest areas for growth or topics worth exploring
+{followers_section}
+---
+UMBRA'S POSTS FROM THE PAST 24 HOURS:
+{posts_yaml}
+---
+
+Provide your feedback. It will be relayed back to Umbra via the ask_umbriel tool.
+
+[To send your feedback to Umbra, use: ~/umbra/send_to_umbra_from_umbriel.sh "your feedback"]"""
+
+    request_data = {
+        "request_id": request_id,
+        "question": f"Daily review feedback for {today}",
+        "context": "Automated daily review forwarding",
+        "priority": "normal",
+        "message": message,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "max_wait_seconds": 600,
+        "submitted_by": "umbra-daily-review"
+    }
+
+    bucket = r2_config.get('bucket_name', 'umbra-claude-code')
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=f"umbriel-requests/{request_id}.json",
+        Body=json.dumps(request_data, indent=2),
+        ContentType='application/json'
+    )
+    logger.info(f"📡 Daily review forwarded to Umbriel (request: {request_id})")
 
 
 def send_creative_expression_message(client: Letta, agent_id: str) -> None:
