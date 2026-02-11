@@ -1532,10 +1532,9 @@ def _send_daily_review_to_umbriel(posts_yaml: str, followers_section: str = "") 
     message = f"""This is Umbra's daily review for {today}. Please review the posts and provide feedback:
 
 - Identify the strongest posts (most authentic, interesting, or well-crafted)
-- Flag any posts that feel repetitive or formulaic
-- Note any patterns (topics, tone, style) worth being aware of
-- Flag any technical or operational issues you notice
-- Suggest areas for growth or topics worth exploring
+- Flag any posts that feel generic or formulaic
+- Suggest areas for expansion or topics worth exploring
+- Prefer positive, constructive feedback that encourages growth and creativity
 {followers_section}
 ---
 UMBRA'S POSTS FROM THE PAST 24 HOURS:
