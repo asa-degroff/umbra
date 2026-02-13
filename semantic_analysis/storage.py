@@ -253,6 +253,118 @@ class SemanticStorage:
         
         return records
     
+    def query_batch_neighbors(
+        self,
+        embeddings: list[list[float]],
+        k: int = 5,
+    ) -> list[list[float]]:
+        """
+        Find k-nearest neighbor distances for a batch of embeddings using ChromaDB's native ANN.
+        
+        This leverages ChromaDB's HNSW index for efficient similarity search instead of
+        manual O(n²) pairwise computation.
+        
+        Args:
+            embeddings: List of embedding vectors to query
+            k: Number of nearest neighbors per query
+            
+        Returns:
+            List of distance lists (one per embedding). Distances are cosine distances (0=identical, 2=opposite).
+        """
+        if embeddings is None or len(embeddings) == 0:
+            return []
+        
+        # ChromaDB query supports batch queries
+        # Note: Results include self-match at distance 0, so we request k+1
+        result = self.collection.query(
+            query_embeddings=embeddings,
+            n_results=min(k + 1, self.collection.count()),
+            include=['distances'],
+        )
+        
+        # Extract distances, excluding self-match (distance ~= 0)
+        all_distances = []
+        for distances in result.get('distances', []):
+            # Filter out self-match (distance < 0.001 for cosine)
+            neighbor_distances = [d for d in distances if d > 0.001][:k]
+            all_distances.append(neighbor_distances)
+        
+        return all_distances
+    
+    def compute_diversity_metrics_ann(
+        self,
+        sample_size: int = 200,
+        k_neighbors: int = 10,
+    ) -> dict:
+        """
+        Compute diversity metrics using ChromaDB's native ANN search.
+        
+        This is more efficient than manual pairwise computation for large datasets.
+        
+        Args:
+            sample_size: Number of records to sample for analysis
+            k_neighbors: Number of neighbors to consider per record
+            
+        Returns:
+            Dict with diversity metrics
+        """
+        import numpy as np
+        
+        total_count = self.collection.count()
+        if total_count == 0:
+            return {'error': 'No records in database'}
+        
+        # Get a sample of records with embeddings
+        actual_sample = min(sample_size, total_count)
+        result = self.collection.get(
+            limit=actual_sample,
+            include=['embeddings', 'metadatas'],
+        )
+        
+        embeddings = result.get('embeddings', [])
+        metadatas = result.get('metadatas', [])
+        
+        if embeddings is None or len(embeddings) == 0:
+            return {'error': 'No embeddings found'}
+        
+        # Query for nearest neighbors using ANN
+        neighbor_distances = self.query_batch_neighbors(embeddings, k=k_neighbors)
+        
+        # Calculate metrics from neighbor distances
+        all_neighbor_dists = []
+        for dists in neighbor_distances:
+            all_neighbor_dists.extend(dists)
+        
+        if not all_neighbor_dists:
+            return {'error': 'Could not compute neighbor distances'}
+        
+        all_neighbor_dists = np.array(all_neighbor_dists)
+        
+        # Diversity = average distance to nearest neighbors
+        # Higher = more diverse (records are more spread out)
+        avg_neighbor_distance = float(np.mean(all_neighbor_dists))
+        
+        # Local density = inverse of average nearest neighbor distance
+        # Lower avg distance = higher density = less diverse locally
+        avg_nearest_distance = float(np.mean([dists[0] if dists else 0 for dists in neighbor_distances]))
+        
+        # Platform distribution
+        platforms = {}
+        for m in metadatas:
+            p = m.get('platform', 'unknown')
+            platforms[p] = platforms.get(p, 0) + 1
+        
+        return {
+            'total_records': total_count,
+            'sample_size': actual_sample,
+            'avg_neighbor_distance': avg_neighbor_distance,
+            'avg_nearest_distance': avg_nearest_distance,
+            'diversity_score': avg_neighbor_distance,  # Alias for clarity
+            'platforms': platforms,
+            'k_neighbors': k_neighbors,
+            'method': 'ann',
+        }
+    
     def get_stats(self) -> dict:
         """Get storage statistics."""
         total = self.collection.count()
