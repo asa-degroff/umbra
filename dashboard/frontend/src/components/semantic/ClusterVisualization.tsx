@@ -143,7 +143,7 @@ export default function ClusterVisualization() {
                   tick={false}
                   axisLine={{ stroke: 'hsl(var(--border))' }}
                 />
-                <Tooltip content={<CustomTooltip />} />
+                <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
                 <Scatter 
                   data={data.points} 
                   onClick={(point) => setSelectedPoint(point as unknown as Point)}
