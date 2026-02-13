@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Brain, TrendingUp, MessageSquare } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import ClusterVisualization from '@/components/semantic/ClusterVisualization'
 
 const API_BASE = `http://${window.location.hostname}:8081/api`
 
@@ -80,6 +81,9 @@ export default function SemanticView() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Cluster Visualization */}
+      <ClusterVisualization />
 
       {/* Guidance Panel */}
       <Card>

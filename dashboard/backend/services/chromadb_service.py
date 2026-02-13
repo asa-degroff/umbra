@@ -113,6 +113,76 @@ class ChromaDBService:
         except Exception as e:
             return {"records": [], "total": 0, "error": str(e)}
     
+    def get_records_filtered(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        platform: Optional[str] = None,
+        collection: Optional[str] = None,
+        search: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> dict:
+        """
+        Get records with advanced filtering.
+        
+        Fetches all records and filters in Python since ChromaDB's
+        where clause is limited.
+        """
+        if not self.is_available:
+            return {"records": [], "total": 0, "error": "ChromaDB not available"}
+        
+        try:
+            # Fetch all records (up to 10k)
+            result = self.collection.get(
+                limit=10000,
+                include=["documents", "metadatas"],
+            )
+            
+            records = []
+            for i, uri in enumerate(result.get('ids', [])):
+                doc = result['documents'][i] if result.get('documents') else ""
+                meta = result['metadatas'][i] if result.get('metadatas') else {}
+                
+                # Apply filters
+                if platform and meta.get('platform') != platform:
+                    continue
+                if collection and meta.get('collection') != collection:
+                    continue
+                if search and search.lower() not in (doc or "").lower():
+                    continue
+                if start_date and meta.get('created_at', '') < start_date:
+                    continue
+                if end_date and meta.get('created_at', '') > end_date:
+                    continue
+                
+                records.append({
+                    "uri": uri,
+                    "text": doc,
+                    "metadata": meta,
+                })
+            
+            # Sort by created_at descending (newest first)
+            records.sort(
+                key=lambda r: r.get('metadata', {}).get('created_at', ''),
+                reverse=True
+            )
+            
+            total_filtered = len(records)
+            
+            # Apply pagination
+            records = records[offset:offset + limit]
+            
+            return {
+                "records": records,
+                "total": total_filtered,
+                "limit": limit,
+                "offset": offset,
+            }
+        except Exception as e:
+            logger.warning(f"Error in get_records_filtered: {e}")
+            return {"records": [], "total": 0, "error": str(e)}
+    
     def get_embeddings_for_visualization(self, limit: int = 500) -> dict:
         """
         Get embeddings for 2D visualization.

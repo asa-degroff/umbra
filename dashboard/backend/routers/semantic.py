@@ -35,9 +35,32 @@ async def get_records(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     platform: Optional[str] = None,
+    collection: Optional[str] = None,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ):
-    """Get semantic records with pagination."""
-    return chromadb_service.get_records(limit=limit, offset=offset, platform=platform)
+    """
+    Get semantic records with pagination and filtering.
+    
+    Args:
+        limit: Max records to return
+        offset: Pagination offset
+        platform: Filter by platform (bluesky, comind, etc.)
+        collection: Filter by AT Protocol collection
+        search: Full-text search in document text
+        start_date: Filter records after this date (ISO format)
+        end_date: Filter records before this date (ISO format)
+    """
+    return chromadb_service.get_records_filtered(
+        limit=limit,
+        offset=offset,
+        platform=platform,
+        collection=collection,
+        search=search,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @router.get("/embeddings")
@@ -46,6 +69,98 @@ async def get_embeddings(
 ):
     """Get embeddings for visualization."""
     return chromadb_service.get_embeddings_for_visualization(limit=limit)
+
+
+# Cache for 2D projections (in-memory)
+_embeddings_2d_cache: dict = {}
+
+
+@router.get("/embeddings/2d")
+async def get_embeddings_2d(
+    limit: int = Query(1000, ge=1, le=5000),
+    method: str = Query("umap", pattern="^(umap|pca)$"),
+):
+    """
+    Get 2D-projected embeddings for scatter plot visualization.
+    
+    Uses UMAP or PCA to reduce high-dimensional embeddings to 2D.
+    Results are cached until new records are added.
+    """
+    import hashlib
+    import numpy as np
+    
+    try:
+        # Get raw embeddings
+        raw_data = chromadb_service.get_embeddings_for_visualization(limit=limit)
+        if raw_data.get("error"):
+            return raw_data
+        
+        data = raw_data.get("data", [])
+        if not data:
+            return {"points": [], "method": method, "total": 0}
+        
+        # Filter out records without embeddings
+        valid_data = [d for d in data if d.get("embedding") is not None and len(d.get("embedding", [])) > 0]
+        if not valid_data:
+            return {"points": [], "method": method, "total": 0, "error": "No embeddings found"}
+        
+        # Create cache key based on URIs and method
+        uri_hash = hashlib.md5(
+            (method + "".join(sorted(d["uri"] for d in valid_data))).encode()
+        ).hexdigest()[:16]
+        
+        # Check cache
+        if uri_hash in _embeddings_2d_cache:
+            logger.info(f"Using cached 2D embeddings ({method})")
+            return _embeddings_2d_cache[uri_hash]
+        
+        # Extract embeddings matrix
+        embeddings = np.array([d["embedding"] for d in valid_data])
+        logger.info(f"Reducing {len(embeddings)} embeddings to 2D using {method}...")
+        
+        # Reduce dimensionality
+        if method == "umap":
+            import umap
+            reducer = umap.UMAP(
+                n_components=2,
+                n_neighbors=min(15, len(embeddings) - 1),
+                min_dist=0.1,
+                metric="cosine",
+                random_state=42,
+            )
+            coords_2d = reducer.fit_transform(embeddings)
+        else:  # PCA
+            from sklearn.decomposition import PCA
+            reducer = PCA(n_components=2, random_state=42)
+            coords_2d = reducer.fit_transform(embeddings)
+        
+        # Build response
+        points = []
+        for i, d in enumerate(valid_data):
+            points.append({
+                "x": float(coords_2d[i, 0]),
+                "y": float(coords_2d[i, 1]),
+                "uri": d["uri"],
+                "platform": d.get("platform", "unknown"),
+                "text_preview": d.get("text", "")[:150] if d.get("text") else "",
+                "created_at": d.get("created_at"),
+            })
+        
+        result = {
+            "points": points,
+            "method": method,
+            "total": len(points),
+        }
+        
+        # Cache result
+        _embeddings_2d_cache[uri_hash] = result
+        logger.info(f"Cached 2D embeddings: {len(points)} points")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error computing 2D embeddings: {e}")
+        return {"points": [], "method": method, "total": 0, "error": str(e)}
 
 
 @router.get("/metrics")
