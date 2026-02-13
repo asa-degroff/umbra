@@ -36,6 +36,7 @@ from scheduled_prompts import (
     send_rest_message,
     send_comind_thoughts_message,
     send_comind_reflection_message,
+    send_semantic_analysis_message,
     initialize_all_scheduled_tasks,
     reschedule_task_after_execution,
 )
@@ -4416,6 +4417,8 @@ def main():
                 send_comind_thoughts_message(CLIENT, umbra_agent.id)
             elif task_name == 'comind_reflection':
                 send_comind_reflection_message(CLIENT, umbra_agent.id)
+            elif task_name == 'semantic_analysis':
+                send_semantic_analysis_message(CLIENT, umbra_agent.id, atproto_client, get_config()._config)
             else:
                 logger.error(f"No handler for task: {task_name}")
                 return
@@ -4507,6 +4510,8 @@ def main():
                             send_comind_thoughts_message(CLIENT, umbra_agent.id)
                         elif task_name == 'comind_reflection':
                             send_comind_reflection_message(CLIENT, umbra_agent.id)
+                        elif task_name == 'semantic_analysis':
+                            send_semantic_analysis_message(CLIENT, umbra_agent.id, atproto_client, get_config()._config)
                         else:
                             logger.warning(f"Unknown task type: {task_name}")
                             continue

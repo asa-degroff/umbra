@@ -116,6 +116,14 @@ TASK_CONFIGS = {
         'window_seconds': 129600,
         'emoji': '🪞',
         'description': 'Comind reflection',
+    },
+    'semantic_analysis': {
+        'enabled': True,
+        'is_random_window': True,
+        'interval_seconds': None,
+        'window_seconds': 43200,  # 12-hour window
+        'emoji': '🔍',
+        'description': 'Semantic diversity analysis',
     }
 }
 
@@ -1791,5 +1799,166 @@ The network holds no expectations."""
 
     except Exception as e:
         logger.error(f"Error sending rest message: {e}")
+
+
+def send_semantic_analysis_message(client: Letta, agent_id: str, atproto_client=None, config: dict = None) -> None:
+    """
+    Run semantic diversity analysis and update zeitgeist with guidance.
+
+    Args:
+        client: Letta client
+        agent_id: Agent ID
+        atproto_client: ATProto client (for auth if needed)
+        config: Configuration dict (from config.yaml semantic_analysis section)
+    """
+    try:
+        logger.info("Running semantic diversity analysis")
+        
+        # Import here to avoid circular deps
+        from semantic_analysis import run_analysis
+        from semantic_analysis.scraper import ATProtoScraper
+        from semantic_analysis.embeddings import EmbeddingGenerator
+        from semantic_analysis.storage import SemanticStorage
+        from semantic_analysis.analyzer import DiversityAnalyzer
+        
+        # Get config values with defaults
+        if config is None:
+            config = {}
+        
+        sa_config = config.get('semantic_analysis', {})
+        ollama_config = sa_config.get('ollama', {})
+        chromadb_config = sa_config.get('chromadb', {})
+        
+        # Configuration
+        pds_host = config.get('bluesky', {}).get('pds_uri', 'https://bsky.social')
+        umbra_did = sa_config.get('umbra_did', 'did:plc:oetfdqwocv4aegq2yj6ix4w5')
+        lookback_days = sa_config.get('lookback_days', 7)
+        max_per_collection = sa_config.get('max_records_per_collection', 500)
+        dry_run = sa_config.get('dry_run', True)
+        
+        ollama_url = ollama_config.get('url', 'http://localhost:11434')
+        embedding_model = ollama_config.get('embedding_model', 'qwen3-embedding:8b')
+        llm_model = ollama_config.get('llm_model', 'qwen2.5:7b')
+        
+        chromadb_path = chromadb_config.get('path', './data/chromadb')
+        
+        # Get access token if available
+        access_token = None
+        if atproto_client and hasattr(atproto_client, 'access_token'):
+            access_token = atproto_client.access_token
+        
+        # Initialize components
+        scraper = ATProtoScraper(pds_host, umbra_did, access_token)
+        embedder = EmbeddingGenerator(ollama_url, model=embedding_model)
+        storage = SemanticStorage(chromadb_path)
+        analyzer = DiversityAnalyzer(ollama_url, llm_model=llm_model)
+        
+        # Check if Ollama is available
+        if not embedder.is_available():
+            logger.warning("Ollama not available, skipping semantic analysis")
+            return
+        
+        # 1. Scrape records
+        logger.info("Scraping AT Protocol records...")
+        records = scraper.scrape_all(max_per_collection=max_per_collection)
+        logger.info(f"Scraped {len(records)} total records")
+        
+        # 2. Filter to new records
+        existing_uris = storage.get_existing_uris()
+        new_records = [r for r in records if r['uri'] not in existing_uris]
+        logger.info(f"Found {len(new_records)} new records to embed")
+        
+        # 3. Generate embeddings for new records
+        if new_records:
+            logger.info("Generating embeddings...")
+            texts = [r['text'] for r in new_records]
+            embeddings = embedder.embed_batch(texts)
+            
+            # 4. Store
+            storage.upsert(new_records, embeddings)
+            logger.info(f"Stored {len(new_records)} new records")
+        
+        # 5. Analyze recent records
+        logger.info(f"Analyzing records from last {lookback_days} days...")
+        recent_data = storage.get_recent(days=lookback_days)
+        metrics = analyzer.calculate_metrics(recent_data)
+        
+        # 6. Generate guidance
+        logger.info("Generating diversity guidance...")
+        guidance = analyzer.generate_guidance(metrics)
+        summary = analyzer.format_summary(metrics)
+        
+        # Log results
+        logger.info(f"Analysis complete: {summary}")
+        logger.info(f"Guidance: {guidance[:200]}...")
+        
+        if dry_run:
+            logger.info("DRY RUN: Would update zeitgeist with guidance")
+            # Still send a message to agent for visibility
+            message = f"""🔍 **Semantic Diversity Analysis** (Dry Run)
+
+{summary}
+
+**Guidance:**
+{guidance}
+
+*(Dry run mode - zeitgeist not updated. Set dry_run: false in config to enable.)*"""
+        else:
+            # Update zeitgeist block directly
+            try:
+                blocks = client.blocks.list(label="zeitgeist")
+                if blocks:
+                    zeitgeist_block = blocks[0]
+                    current_value = zeitgeist_block.value or ""
+                    
+                    # Add guidance section
+                    guidance_section = f"""
+
+---
+**Semantic Diversity Guidance** (Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')})
+{guidance}
+---"""
+                    
+                    # Update the block
+                    new_value = current_value + guidance_section
+                    client.blocks.modify(
+                        block_id=str(zeitgeist_block.id),
+                        value=new_value[-10000:]  # Keep last 10k chars
+                    )
+                    logger.info("Updated zeitgeist block with diversity guidance")
+            except Exception as e:
+                logger.error(f"Failed to update zeitgeist: {e}")
+            
+            message = f"""🔍 **Semantic Diversity Analysis**
+
+{summary}
+
+**Guidance:**
+{guidance}
+
+Your zeitgeist block has been updated with this guidance."""
+        
+        # Send message to agent
+        message_stream = client.agents.messages.create_stream(
+            agent_id=agent_id,
+            messages=[{"role": "user", "content": message}],
+            stream_tokens=False,
+            max_steps=30
+        )
+        
+        # Process stream
+        for chunk in message_stream:
+            if hasattr(chunk, 'message_type'):
+                if chunk.message_type == 'assistant_message':
+                    logger.info(f"Agent response: {chunk.content[:200]}...")
+            if str(chunk) == 'done':
+                break
+        
+        logger.info("Semantic analysis message processed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error in semantic analysis: {e}")
+        import traceback
+        traceback.print_exc()
 
 
