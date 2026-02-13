@@ -77,8 +77,12 @@ class EventListener:
         
         try:
             while self._running:
-                # Read line-delimited JSON
-                line = await reader.readline()
+                # Read line-delimited JSON (timeout prevents stale connections)
+                try:
+                    line = await asyncio.wait_for(reader.readline(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    logger.debug(f"Read timeout from {addr}, sending keepalive check")
+                    continue
                 if not line:
                     break
                 

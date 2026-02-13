@@ -60,7 +60,7 @@ class SQLiteService:
             tables = [row[0] for row in cursor.fetchall()]
             
             for table in tables:
-                cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
                 count = cursor.fetchone()[0]
                 stats["tables"][table] = count
             
