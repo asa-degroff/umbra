@@ -170,19 +170,20 @@ async def get_embeddings_2d(
 
 @router.get("/metrics")
 async def get_metrics():
-    """Get current diversity metrics."""
+    """Get current diversity metrics using ANN-based computation."""
     try:
         from semantic_analysis.analyzer import DiversityAnalyzer
         from semantic_analysis.storage import SemanticStorage
         
         storage = SemanticStorage("./data/chromadb")
-        analyzer = DiversityAnalyzer()
+        analyzer = DiversityAnalyzer(storage=storage)  # Pass storage for ANN
         
         recent = storage.get_recent(days=7)
         if not recent:
             return {"error": "No recent records found"}
         
-        metrics = analyzer.calculate_metrics(recent)
+        # Use ANN-based metrics for efficiency
+        metrics = analyzer.calculate_metrics_ann(recent)
         return metrics
     except Exception as e:
         logger.error(f"Error calculating metrics: {e}")

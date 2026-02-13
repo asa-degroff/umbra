@@ -52,7 +52,7 @@ def run_analysis(
     scraper = ATProtoScraper(pds_host, did, access_token)
     embedder = EmbeddingGenerator(ollama_url)
     storage = SemanticStorage(chromadb_path)
-    analyzer = DiversityAnalyzer(ollama_url)
+    analyzer = DiversityAnalyzer(ollama_url, storage=storage)  # Pass storage for ANN
     
     # 1. Scrape all records
     records = scraper.scrape_all()
@@ -70,9 +70,9 @@ def run_analysis(
         if not dry_run:
             storage.upsert(new_records, embeddings)
     
-    # 5. Analyze diversity
+    # 5. Analyze diversity using ANN-based metrics (more efficient)
     recent_data = storage.get_recent(days=lookback_days)
-    metrics = analyzer.calculate_metrics(recent_data)
+    metrics = analyzer.calculate_metrics_ann(recent_data)
     
     # 6. Generate guidance
     guidance = analyzer.generate_guidance(metrics)
