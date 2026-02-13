@@ -7,12 +7,15 @@ Calculates semantic diversity metrics and generates guidance using local LLM.
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import requests
 
 import re
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .storage import SemanticStorage
 
 logger = logging.getLogger('umbra.semantic_analysis')
 
@@ -82,6 +85,7 @@ class DiversityAnalyzer:
         self,
         ollama_url: str = DEFAULT_OLLAMA_URL,
         llm_model: str = DEFAULT_LLM_MODEL,
+        storage: Optional['SemanticStorage'] = None,
     ):
         """
         Initialize the analyzer.
@@ -89,10 +93,89 @@ class DiversityAnalyzer:
         Args:
             ollama_url: URL for Ollama API
             llm_model: Model name for guidance generation
+            storage: Optional SemanticStorage for ANN-based metrics
         """
         self.ollama_url = ollama_url.rstrip('/')
         self.llm_model = llm_model
         self.session = requests.Session()
+        self.storage = storage
+    
+    def calculate_metrics_ann(
+        self,
+        records: list[dict],
+        sample_size: int = 200,
+        k_neighbors: int = 10,
+        temporal_half_life: float = 7.0,
+    ) -> dict:
+        """
+        Calculate diversity metrics using ChromaDB's native ANN search.
+        
+        This is more efficient than manual O(n²) pairwise computation.
+        Requires self.storage to be set.
+        
+        Args:
+            records: List of records (used for clustering and platform stats)
+            sample_size: Number of records to sample for ANN queries
+            k_neighbors: Number of neighbors to consider
+            temporal_half_life: Half-life for temporal weighting in clustering
+            
+        Returns:
+            Dict of metrics
+        """
+        if not self.storage:
+            logger.warning("No storage provided, falling back to manual metrics")
+            return self.calculate_metrics(records, temporal_half_life=temporal_half_life)
+        
+        # Get ANN-based diversity metrics from storage
+        ann_metrics = self.storage.compute_diversity_metrics_ann(
+            sample_size=sample_size,
+            k_neighbors=k_neighbors,
+        )
+        
+        if ann_metrics.get('error'):
+            logger.warning(f"ANN metrics failed: {ann_metrics['error']}, falling back to manual")
+            return self.calculate_metrics(records, temporal_half_life=temporal_half_life)
+        
+        # Combine with clustering analysis (still need embeddings for this)
+        embeddings = []
+        weights = []
+        for r in records:
+            emb = r.get('embedding')
+            if emb is not None:
+                embeddings.append(emb)
+                weights.append(temporal_weight(r.get('created_at'), temporal_half_life))
+        
+        if embeddings:
+            embeddings_arr = np.array(embeddings)
+            weights_arr = np.array(weights)
+            
+            # Run clustering on the sample
+            clusters = self._find_clusters(embeddings_arr, weights_arr, n_clusters=5)
+            
+            # Calculate cluster dominance
+            cluster_sizes = [len(c['indices']) for c in clusters]
+            total = sum(cluster_sizes)
+            cluster_dominance = max(cluster_sizes) / total if total > 0 else 0
+            
+            # Add sample texts to clusters
+            for cluster in clusters:
+                cluster['sample_texts'] = []
+                for idx in cluster['indices'][:3]:
+                    if idx < len(records):
+                        text = records[idx].get('text', '')[:200]
+                        cluster['sample_texts'].append(text)
+            
+            ann_metrics['clusters'] = clusters
+            ann_metrics['cluster_dominance'] = cluster_dominance
+        
+        # Map ANN metrics to standard metric names for compatibility
+        ann_metrics['records_with_embeddings'] = ann_metrics.get('sample_size', 0)
+        ann_metrics['weighted_avg_diversity'] = ann_metrics.get('diversity_score', 0)
+        ann_metrics['avg_diversity'] = ann_metrics.get('diversity_score', 0)
+        ann_metrics['avg_pairwise_similarity'] = 1.0 - ann_metrics.get('avg_neighbor_distance', 0)
+        ann_metrics['temporal_half_life'] = temporal_half_life
+        
+        return ann_metrics
     
     def calculate_metrics(
         self,
