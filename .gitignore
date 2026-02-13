@@ -16,3 +16,7 @@ claude_code_poller.log
 
 # Generated images backup
 generated_images/
+
+# Database files and test data
+*.db
+data/chromadb_test/

@@ -41,7 +41,11 @@ from scheduled_prompts import (
     reschedule_task_after_execution,
 )
 from image_utils import download_image_as_base64, download_and_save_image, parse_image_generated_signal
+from event_emitter import get_emitter, EventEmitter
 # umbriel_bridge import removed - now using R2 queue pattern via umbriel_poller.py
+
+# Global event emitter (initialized in main)
+EVENT_EMITTER: EventEmitter | None = None
 
 
 def build_multimodal_content(text_prompt: str, images: list[dict]) -> list | str:
@@ -1540,6 +1544,17 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
             'mention_text_length': len(mention_text),
             'mention_preview': mention_text[:100] if mention_text else ''
         })
+        
+        # Emit notification event to dashboard
+        if EVENT_EMITTER:
+            author_did = notification_data['author'].get('did', '') if isinstance(notification_data, dict) else getattr(notification_data.author, 'did', '')
+            EVENT_EMITTER.emit_notification(
+                uri=uri,
+                author_handle=author_handle,
+                author_did=author_did,
+                text=mention_text,
+                reason='mention',
+            )
 
         # Extract root_uri for image deduplication tracking
         # This determines which thread the notification belongs to
@@ -1964,6 +1979,10 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                             for line in chunk.reasoning.split('\n'):
                                 print(f"  {line}")
                         
+                        # Emit reasoning event to dashboard
+                        if EVENT_EMITTER:
+                            EVENT_EMITTER.emit_reasoning(chunk.reasoning)
+                        
                     elif chunk.message_type == 'tool_call_message':
                         # Parse tool arguments for better display
                         tool_name = chunk.tool_call.name
@@ -2010,6 +2029,15 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                         except:
                             # Fallback to original format if parsing fails
                             log_with_panel(chunk.tool_call.arguments[:150] + "...", f"Tool call: {tool_name}", "blue")
+                        
+                        # Emit tool call event to dashboard
+                        if EVENT_EMITTER:
+                            try:
+                                args = json.loads(chunk.tool_call.arguments)
+                            except:
+                                args = {"raw": chunk.tool_call.arguments[:200]}
+                            EVENT_EMITTER.emit_tool_call(tool_name, args, getattr(chunk.tool_call, 'id', None))
+                    
                     elif chunk.message_type == 'tool_return_message':
                         # Enhanced tool result logging
                         tool_name = chunk.name
@@ -2109,6 +2137,17 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                                     log_with_panel("Error occurred", f"Tool result: {tool_name} ✗", "red")
                         else:
                             logger.info(f"Tool result: {tool_name} - {status}")
+                        
+                        # Emit tool result event to dashboard
+                        if EVENT_EMITTER:
+                            result_str = str(chunk.tool_return)[:200] if hasattr(chunk, 'tool_return') and chunk.tool_return else None
+                            EVENT_EMITTER.emit_tool_result(
+                                tool_name, 
+                                status, 
+                                result=result_str if status == 'success' else None,
+                                error=result_str if status != 'success' else None
+                            )
+                    
                     elif chunk.message_type == 'assistant_message':
                         # Format with Unicode characters
                         print("\n▶ Assistant Response")
@@ -2116,6 +2155,11 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                         # Indent response text
                         for line in chunk.content.split('\n'):
                             print(f"  {line}")
+                        
+                        # Emit response event to dashboard
+                        if EVENT_EMITTER:
+                            EVENT_EMITTER.emit_response(chunk.content, thread_uri=notification.get('uri'))
+                    
                     elif chunk.message_type == 'error_message':
                         # Agent returned an error - log it prominently
                         # Check multiple possible attributes for error details
@@ -4270,6 +4314,19 @@ def main():
     
     # Clean up old records
     NOTIFICATION_DB.cleanup_old_records(days=7)
+    
+    # Initialize event emitter for dashboard
+    global EVENT_EMITTER
+    dashboard_config = get_config()._config.get('dashboard', {})
+    if dashboard_config.get('enabled', True):
+        event_host = dashboard_config.get('event_listener', {}).get('host', '127.0.0.1')
+        event_port = dashboard_config.get('event_listener', {}).get('port', 9876)
+        EVENT_EMITTER = get_emitter(host=event_host, port=event_port, enabled=True)
+        EVENT_EMITTER.start()
+        logger.info(f"Event emitter started (dashboard: {event_host}:{event_port})")
+    else:
+        EVENT_EMITTER = get_emitter(enabled=False)
+        logger.info("Event emitter disabled (dashboard not enabled)")
     
     # Ensure correct tools are attached for Bluesky
     logger.info("Configuring tools for Bluesky platform...")
