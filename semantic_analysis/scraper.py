@@ -6,6 +6,7 @@ Supports Bluesky posts, Greengale/WhiteWind blogs, and Comind cognition records.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 import requests
@@ -110,13 +111,13 @@ class ATProtoScraper:
             logger.warning(f"Failed to fetch {collection}: {e}")
             return [], None
     
-    def scrape_collection(self, collection: str, max_records: int = 1000) -> list[dict]:
+    def scrape_collection(self, collection: str, max_records: Optional[int] = None) -> list[dict]:
         """
         Scrape all records from a collection.
         
         Args:
             collection: The NSID of the collection
-            max_records: Maximum total records to fetch
+            max_records: Maximum total records to fetch (None = no limit)
             
         Returns:
             List of normalized record dicts
@@ -129,7 +130,7 @@ class ATProtoScraper:
         records = []
         cursor = None
         
-        while len(records) < max_records:
+        while max_records is None or len(records) < max_records:
             batch, cursor = self.list_records(collection, cursor=cursor)
             if not batch:
                 break
@@ -166,16 +167,19 @@ class ATProtoScraper:
             
             if not cursor:
                 break
+            
+            # Small delay to be polite to the API
+            time.sleep(0.1)
         
         logger.info(f"Scraped {len(records)} records from {collection}")
         return records
     
-    def scrape_all(self, max_per_collection: int = 1000) -> list[dict]:
+    def scrape_all(self, max_per_collection: Optional[int] = None) -> list[dict]:
         """
         Scrape all known collections.
         
         Args:
-            max_per_collection: Maximum records per collection
+            max_per_collection: Maximum records per collection (None = no limit)
             
         Returns:
             List of all normalized records
