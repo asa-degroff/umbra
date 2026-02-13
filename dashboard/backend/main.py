@@ -85,6 +85,8 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGI
     "http://localhost:5173",  # Vite dev server
     "http://127.0.0.1:5173",
     "http://localhost:3000",
+    "http://192.168.12.134:5173",  # Network access
+    "http://192.168.12.134:3000",
 ]
 app.add_middleware(
     CORSMiddleware,

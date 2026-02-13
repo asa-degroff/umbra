@@ -41,6 +41,7 @@ async def get_records(
     search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    source: Optional[str] = Query(None, pattern="^(umbra|network|all)$"),
 ):
     """
     Get semantic records with pagination and filtering.
@@ -53,6 +54,7 @@ async def get_records(
         search: Full-text search in document text
         start_date: Filter records after this date (ISO format)
         end_date: Filter records before this date (ISO format)
+        source: Filter by source - "umbra" (own content), "network" (followed accounts), or "all"
     """
     return chromadb_service.get_records_filtered(
         limit=limit,
@@ -62,6 +64,7 @@ async def get_records(
         search=search,
         start_date=start_date,
         end_date=end_date,
+        source=source,
     )
 
 
@@ -141,12 +144,14 @@ async def get_embeddings_2d(
         # Build response
         points = []
         for i, d in enumerate(valid_data):
+            full_text = d.get("text", "") or ""
             points.append({
                 "x": float(coords_2d[i, 0]),
                 "y": float(coords_2d[i, 1]),
                 "uri": d["uri"],
                 "platform": d.get("platform", "unknown"),
-                "text_preview": d.get("text", "")[:150] if d.get("text") else "",
+                "text_preview": full_text[:200] + ("..." if len(full_text) > 200 else ""),
+                "text": full_text,  # Full text for detail view
                 "created_at": d.get("created_at"),
             })
 

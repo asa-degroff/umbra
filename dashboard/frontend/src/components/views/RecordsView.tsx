@@ -14,6 +14,12 @@ import {
 } from '@/components/ui/select'
 import { API_BASE } from '@/lib/config'
 
+const SOURCES = [
+  { value: 'all', label: 'All Sources' },
+  { value: 'umbra', label: 'Umbra Only' },
+  { value: 'network', label: 'Network Only' },
+]
+
 const PLATFORMS = [
   { value: 'all', label: 'All Platforms' },
   { value: 'bluesky', label: 'Bluesky' },
@@ -41,11 +47,15 @@ interface RecordData {
     collection?: string
     created_at?: string
     word_count?: number
+    is_network?: number
+    source_handle?: string
+    source_did?: string
   }
 }
 
 export default function RecordsView() {
   const [page, setPage] = useState(0)
+  const [source, setSource] = useState('all')
   const [platform, setPlatform] = useState('all')
   const [collection, setCollection] = useState('all')
   const [search, setSearch] = useState('')
@@ -58,11 +68,12 @@ export default function RecordsView() {
     const params = new URLSearchParams()
     params.set('limit', String(limit))
     params.set('offset', String(page * limit))
+    if (source !== 'all') params.set('source', source)
     if (platform !== 'all') params.set('platform', platform)
     if (collection !== 'all') params.set('collection', collection)
     if (search) params.set('search', search)
     return params.toString()
-  }, [page, platform, collection, search])
+  }, [page, source, platform, collection, search])
 
   const { data, isLoading } = useQuery({
     queryKey: ['records', queryParams],
@@ -80,7 +91,8 @@ export default function RecordsView() {
     setPage(0)
   }
 
-  const handleFilterChange = (type: 'platform' | 'collection', value: string) => {
+  const handleFilterChange = (type: 'source' | 'platform' | 'collection', value: string) => {
+    if (type === 'source') setSource(value)
     if (type === 'platform') setPlatform(value)
     if (type === 'collection') setCollection(value)
     setPage(0)
@@ -124,6 +136,21 @@ export default function RecordsView() {
 
             {/* Filters */}
             <div className="flex flex-wrap gap-4">
+              <div className="w-40">
+                <Select value={source} onValueChange={(v) => handleFilterChange('source', v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SOURCES.map(s => (
+                      <SelectItem key={s.value} value={s.value}>
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="w-48">
                 <Select value={platform} onValueChange={(v) => handleFilterChange('platform', v)}>
                   <SelectTrigger>
@@ -154,11 +181,12 @@ export default function RecordsView() {
                 </Select>
               </div>
 
-              {(platform !== 'all' || collection !== 'all' || search) && (
+              {(source !== 'all' || platform !== 'all' || collection !== 'all' || search) && (
                 <Button 
                   variant="ghost" 
                   size="sm"
                   onClick={() => {
+                    setSource('all')
                     setPlatform('all')
                     setCollection('all')
                     setSearch('')
@@ -195,7 +223,7 @@ export default function RecordsView() {
             <table className="w-full">
               <thead className="bg-secondary">
                 <tr>
-                  <th className="text-left p-3 text-sm font-medium text-muted-foreground w-28">Platform</th>
+                  <th className="text-left p-3 text-sm font-medium text-muted-foreground w-32">Author</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">Text</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground w-24">Words</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground w-28">Date</th>
@@ -222,9 +250,17 @@ export default function RecordsView() {
                       onClick={() => setSelectedRecord(record)}
                     >
                       <td className="p-3">
-                        <Badge variant="secondary">
-                          {record.metadata?.platform || 'unknown'}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-sm font-medium truncate max-w-[120px]">
+                            {record.metadata?.is_network 
+                              ? `@${record.metadata?.source_handle || 'unknown'}`
+                              : 'Umbra'
+                            }
+                          </span>
+                          <Badge variant="secondary" className="w-fit text-xs">
+                            {record.metadata?.platform || 'unknown'}
+                          </Badge>
+                        </div>
                       </td>
                       <td className="p-3 max-w-md">
                         <div className="truncate text-sm">
@@ -281,20 +317,24 @@ export default function RecordsView() {
             <CardHeader className="flex-shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
+                  <span className="font-medium">
+                    {selectedRecord.metadata?.is_network 
+                      ? `@${selectedRecord.metadata?.source_handle}`
+                      : 'Umbra'
+                    }
+                  </span>
                   <Badge variant="secondary">
                     {selectedRecord.metadata?.platform}
                   </Badge>
-                  <span className="text-sm text-muted-foreground">
-                    {selectedRecord.metadata?.collection}
-                  </span>
                 </div>
                 <Button variant="ghost" size="icon" onClick={() => setSelectedRecord(null)}>
                   <X className="w-4 h-4" />
                 </Button>
               </div>
               <CardDescription>
+                {selectedRecord.metadata?.collection}
                 {selectedRecord.metadata?.created_at && 
-                  new Date(selectedRecord.metadata.created_at).toLocaleString()
+                  ` • ${new Date(selectedRecord.metadata.created_at).toLocaleString()}`
                 }
                 {selectedRecord.metadata?.word_count && 
                   ` • ${selectedRecord.metadata.word_count} words`

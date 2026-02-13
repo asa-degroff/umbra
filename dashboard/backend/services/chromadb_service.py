@@ -160,12 +160,16 @@ class ChromaDBService:
         search: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> dict:
         """
         Get records with advanced filtering.
         
         Fetches all records and filters in Python since ChromaDB's
         where clause is limited.
+        
+        Args:
+            source: "umbra" for own content, "network" for followed accounts, "all" or None for everything
         """
         if not self.is_available:
             return {"records": [], "total": 0, "error": "ChromaDB not available"}
@@ -189,6 +193,12 @@ class ChromaDBService:
                 if start_date and meta.get('created_at', '') < start_date:
                     continue
                 if end_date and meta.get('created_at', '') > end_date:
+                    continue
+                
+                # Source filter (umbra vs network)
+                if source == 'umbra' and meta.get('is_network'):
+                    continue
+                if source == 'network' and not meta.get('is_network'):
                     continue
                 
                 records.append({
@@ -247,7 +257,7 @@ class ChromaDBService:
                 data.append({
                     "uri": uri,
                     "embedding": embeddings[i] if i < len(embeddings) else None,
-                    "text": documents[i][:200] if i < len(documents) else None,
+                    "text": documents[i] if i < len(documents) else None,  # Full text
                     "platform": metadatas[i].get('platform') if i < len(metadatas) else None,
                     "created_at": metadatas[i].get('created_at') if i < len(metadatas) else None,
                 })

@@ -143,6 +143,14 @@ class SemanticStorage:
                 else:
                     metadata['created_at'] = str(created_at)
             
+            # Network content metadata
+            if record.get('source_did'):
+                metadata['source_did'] = record['source_did']
+            if record.get('source_handle'):
+                metadata['source_handle'] = record['source_handle']
+            if record.get('is_network'):
+                metadata['is_network'] = 1  # ChromaDB needs int, not bool
+            
             metadatas.append(metadata)
         
         # Upsert to ChromaDB
@@ -392,6 +400,106 @@ class SemanticStorage:
             'collections': collections,
             'db_path': str(self.db_path),
         }
+    
+    def get_network_content(self, days: int = 7) -> list[dict]:
+        """
+        Get network content (posts from followed accounts).
+        
+        Args:
+            days: Number of days to look back
+            
+        Returns:
+            List of records where is_network=1
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_str = cutoff.isoformat()
+        
+        try:
+            # Query with is_network filter
+            result = self.collection.get(
+                where={"is_network": 1},
+                include=['embeddings', 'documents', 'metadatas'],
+                limit=100000,
+            )
+        except Exception as e:
+            logger.error(f"Error querying network content: {e}")
+            return []
+        
+        records = []
+        ids = result.get('ids', [])
+        embeddings = result.get('embeddings', [])
+        documents = result.get('documents', [])
+        metadatas = result.get('metadatas', [])
+        
+        for i, uri in enumerate(ids):
+            metadata = metadatas[i] if i < len(metadatas) else {}
+            created_at_str = metadata.get('created_at', '')
+            
+            # Filter by date
+            if created_at_str and created_at_str < cutoff_str:
+                continue
+            
+            records.append({
+                'uri': uri,
+                'text': documents[i] if i < len(documents) else '',
+                'embedding': embeddings[i] if i < len(embeddings) else None,
+                'metadata': metadata,
+                'created_at': created_at_str,
+                'source_did': metadata.get('source_did', ''),
+                'source_handle': metadata.get('source_handle', ''),
+            })
+        
+        logger.info(f"Retrieved {len(records)} network records from last {days} days")
+        return records
+    
+    def get_umbra_content(self, days: int = 7) -> list[dict]:
+        """
+        Get Umbra's own content (not network content).
+        
+        Args:
+            days: Number of days to look back
+            
+        Returns:
+            List of records where is_network is not set or is 0
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_str = cutoff.isoformat()
+        
+        try:
+            result = self._get_all(include=['embeddings', 'documents', 'metadatas'])
+        except Exception as e:
+            logger.error(f"Error querying Umbra content: {e}")
+            return []
+        
+        records = []
+        ids = result.get('ids', [])
+        embeddings = result.get('embeddings', [])
+        documents = result.get('documents', [])
+        metadatas = result.get('metadatas', [])
+        
+        for i, uri in enumerate(ids):
+            metadata = metadatas[i] if i < len(metadatas) else {}
+            
+            # Skip network content
+            if metadata.get('is_network'):
+                continue
+            
+            created_at_str = metadata.get('created_at', '')
+            
+            # Filter by date
+            if created_at_str and created_at_str < cutoff_str:
+                continue
+            
+            records.append({
+                'uri': uri,
+                'text': documents[i] if i < len(documents) else '',
+                'embedding': embeddings[i] if i < len(embeddings) else None,
+                'metadata': metadata,
+                'created_at': created_at_str,
+            })
+        
+        logger.info(f"Retrieved {len(records)} Umbra records from last {days} days")
+        return records
     
     def clear(self) -> int:
         """Clear all records. Returns count of deleted records."""

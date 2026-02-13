@@ -21,6 +21,7 @@ interface Point {
   uri: string
   platform: string
   text_preview: string
+  text: string  // Full text
   created_at: string
 }
 
@@ -178,7 +179,7 @@ export default function ClusterVisualization() {
             
             {/* Selected Point Detail */}
             {selectedPoint && (
-              <div className="mt-4 p-4 bg-secondary rounded-lg">
+              <div className="mt-4 p-4 bg-secondary rounded-lg max-h-64 overflow-auto">
                 <div className="flex items-center justify-between mb-2">
                   <Badge 
                     style={{ backgroundColor: PLATFORM_COLORS[selectedPoint.platform] }}
@@ -194,7 +195,7 @@ export default function ClusterVisualization() {
                     Close
                   </Button>
                 </div>
-                <p className="text-sm">{selectedPoint.text_preview}</p>
+                <p className="text-sm whitespace-pre-wrap">{selectedPoint.text}</p>
                 <p className="text-xs text-muted-foreground mt-2">
                   {selectedPoint.created_at && new Date(selectedPoint.created_at).toLocaleString()}
                 </p>
