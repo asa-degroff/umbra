@@ -2158,7 +2158,7 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                         
                         # Emit response event to dashboard
                         if EVENT_EMITTER:
-                            EVENT_EMITTER.emit_response(chunk.content, thread_uri=notification.get('uri'))
+                            EVENT_EMITTER.emit_response(chunk.content, thread_uri=notification_data.get('uri') if isinstance(notification_data, dict) else getattr(notification_data, 'uri', None))
                     
                     elif chunk.message_type == 'error_message':
                         # Agent returned an error - log it prominently
