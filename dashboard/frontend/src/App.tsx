@@ -5,6 +5,7 @@ import MainPanel from './components/layout/MainPanel'
 import ActivityStream from './components/layout/ActivityStream'
 import { useWebSocket } from './hooks/useWebSocket'
 import type { Event } from './types'
+import { WS_URL } from './lib/config'
 import './App.css'
 
 const queryClient = new QueryClient()
@@ -23,7 +24,7 @@ function Dashboard() {
   }, [])
 
   const { isConnected } = useWebSocket({
-    url: `ws://${window.location.hostname}:8081/ws`,
+    url: WS_URL,
     onEvent: handleEvent,
     onHistory: handleHistory,
     onConnect: () => setConnectionStatus('connected'),

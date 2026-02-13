@@ -12,8 +12,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from '@/components/ui/select'
-
-const API_BASE = `http://${window.location.hostname}:8081/api`
+import { API_BASE } from '@/lib/config'
 
 const PLATFORMS = [
   { value: 'all', label: 'All Platforms' },

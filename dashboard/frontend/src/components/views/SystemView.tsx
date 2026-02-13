@@ -4,8 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-
-const API_BASE = `http://${window.location.hostname}:8081/api`
+import { API_BASE } from '@/lib/config'
 
 export default function SystemView() {
   const { data: ollama } = useQuery({

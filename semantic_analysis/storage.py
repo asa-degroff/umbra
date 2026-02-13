@@ -52,16 +52,51 @@ class SemanticStorage:
         )
         
         logger.info(f"Initialized ChromaDB at {self.db_path} with {self.collection.count()} records")
-    
+
+    def _get_all(self, include: list[str]) -> dict:
+        """Fetch all records by paginating in batches of 10,000."""
+        all_ids = []
+        all_embeddings = []
+        all_documents = []
+        all_metadatas = []
+        batch_size = 10000
+        offset = 0
+
+        while True:
+            result = self.collection.get(
+                include=include,
+                limit=batch_size,
+                offset=offset,
+            )
+            ids = result.get('ids', [])
+            if not ids:
+                break
+            all_ids.extend(ids)
+            if 'embeddings' in include:
+                all_embeddings.extend(result.get('embeddings', []))
+            if 'documents' in include:
+                all_documents.extend(result.get('documents', []))
+            if 'metadatas' in include:
+                all_metadatas.extend(result.get('metadatas', []))
+            if len(ids) < batch_size:
+                break
+            offset += batch_size
+
+        out: dict = {'ids': all_ids}
+        if 'embeddings' in include:
+            out['embeddings'] = all_embeddings
+        if 'documents' in include:
+            out['documents'] = all_documents
+        if 'metadatas' in include:
+            out['metadatas'] = all_metadatas
+        return out
+
     def get_existing_uris(self) -> set[str]:
         """Get all URIs currently in storage."""
         # ChromaDB doesn't have a great way to list all IDs efficiently
         # but we can query with a large limit
         try:
-            result = self.collection.get(
-                include=[],  # Don't include embeddings/documents
-                limit=100000,
-            )
+            result = self._get_all(include=[])
             return set(result.get('ids', []))
         except Exception as e:
             logger.warning(f"Error getting existing URIs: {e}")
@@ -137,10 +172,7 @@ class SemanticStorage:
         # Query all records and filter by date
         # ChromaDB's where clause is limited, so we fetch all and filter
         try:
-            result = self.collection.get(
-                include=['embeddings', 'documents', 'metadatas'],
-                limit=100000,
-            )
+            result = self._get_all(include=['embeddings', 'documents', 'metadatas'])
         except Exception as e:
             logger.error(f"Error querying ChromaDB: {e}")
             return []
@@ -227,10 +259,7 @@ class SemanticStorage:
         
         # Get platform breakdown
         try:
-            result = self.collection.get(
-                include=['metadatas'],
-                limit=100000,
-            )
+            result = self._get_all(include=['metadatas'])
             metadatas = result.get('metadatas', [])
             
             platforms = {}

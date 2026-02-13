@@ -4,6 +4,7 @@ Semantic Analysis API Router
 Endpoints for semantic diversity analysis data.
 """
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from dashboard.backend.services.chromadb_service import ChromaDBService
+from config_loader import get_config
 
 logger = logging.getLogger('dashboard.api.semantic')
 
@@ -73,6 +75,7 @@ async def get_embeddings(
 
 # Cache for 2D projections (in-memory)
 _embeddings_2d_cache: dict = {}
+_embeddings_2d_lock = asyncio.Lock()
 
 
 @router.get("/embeddings/2d")
@@ -110,14 +113,15 @@ async def get_embeddings_2d(
         ).hexdigest()[:16]
         
         # Check cache
-        if uri_hash in _embeddings_2d_cache:
-            logger.info(f"Using cached 2D embeddings ({method})")
-            return _embeddings_2d_cache[uri_hash]
-        
+        async with _embeddings_2d_lock:
+            if uri_hash in _embeddings_2d_cache:
+                logger.info(f"Using cached 2D embeddings ({method})")
+                return _embeddings_2d_cache[uri_hash]
+
         # Extract embeddings matrix
         embeddings = np.array([d["embedding"] for d in valid_data])
         logger.info(f"Reducing {len(embeddings)} embeddings to 2D using {method}...")
-        
+
         # Reduce dimensionality
         if method == "umap":
             import umap
@@ -133,7 +137,7 @@ async def get_embeddings_2d(
             from sklearn.decomposition import PCA
             reducer = PCA(n_components=2, random_state=42)
             coords_2d = reducer.fit_transform(embeddings)
-        
+
         # Build response
         points = []
         for i, d in enumerate(valid_data):
@@ -145,17 +149,18 @@ async def get_embeddings_2d(
                 "text_preview": d.get("text", "")[:150] if d.get("text") else "",
                 "created_at": d.get("created_at"),
             })
-        
+
         result = {
             "points": points,
             "method": method,
             "total": len(points),
         }
-        
+
         # Cache result
-        _embeddings_2d_cache[uri_hash] = result
+        async with _embeddings_2d_lock:
+            _embeddings_2d_cache[uri_hash] = result
         logger.info(f"Cached 2D embeddings: {len(points)} points")
-        
+
         return result
         
     except Exception as e:
@@ -221,9 +226,11 @@ async def trigger_analysis():
     try:
         from semantic_analysis import run_analysis
         
+        config = get_config()
+        umbra_did = config.get('semantic_analysis.umbra_did', 'did:plc:oetfdqwocv4aegq2yj6ix4w5')
         result = run_analysis(
             pds_host="https://bsky.social",
-            did="did:plc:oetfdqwocv4aegq2yj6ix4w5",
+            did=umbra_did,
             access_token=None,
             chromadb_path="./data/chromadb",
             lookback_days=7,

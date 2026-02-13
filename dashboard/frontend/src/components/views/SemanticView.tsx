@@ -3,8 +3,7 @@ import { Brain, TrendingUp, MessageSquare } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import ClusterVisualization from '@/components/semantic/ClusterVisualization'
-
-const API_BASE = `http://${window.location.hostname}:8081/api`
+import { API_BASE } from '@/lib/config'
 
 export default function SemanticView() {
   const { data: guidance, isLoading } = useQuery({

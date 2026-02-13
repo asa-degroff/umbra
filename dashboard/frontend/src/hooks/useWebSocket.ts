@@ -21,6 +21,7 @@ export function useWebSocket({
   const [isConnected, setIsConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
+  const reconnectAttemptRef = useRef(0)
   const mountedRef = useRef(true)
   const connectingRef = useRef(false)
   
@@ -50,25 +51,26 @@ export function useWebSocket({
           }
           console.log('WebSocket connected')
           connectingRef.current = false
+          reconnectAttemptRef.current = 0
           setIsConnected(true)
           callbacksRef.current.onConnect?.()
         }
 
         ws.onmessage = (event) => {
           if (!mountedRef.current) return
-          
+
+          // Handle pong before JSON.parse (it's a plain string)
+          if (event.data === 'pong') return
+
           try {
             const data = JSON.parse(event.data)
-            
+
             // Handle history message (sent on connect)
             if (data.type === 'history' && data.events) {
               callbacksRef.current.onHistory?.(data.events)
               return
             }
-            
-            // Handle pong
-            if (data === 'pong') return
-            
+
             // Handle regular events
             callbacksRef.current.onEvent?.(data as Event)
           } catch (e) {
@@ -79,19 +81,21 @@ export function useWebSocket({
         ws.onclose = () => {
           console.log('WebSocket disconnected')
           connectingRef.current = false
-          
+
           if (!mountedRef.current) return
-          
+
           setIsConnected(false)
           callbacksRef.current.onDisconnect?.()
-          
-          // Reconnect after delay (only if still mounted)
+
+          // Reconnect with exponential backoff (only if still mounted)
           if (mountedRef.current) {
+            const delay = Math.min(reconnectInterval * Math.pow(2, reconnectAttemptRef.current), 60000)
+            reconnectAttemptRef.current++
             reconnectTimeoutRef.current = window.setTimeout(() => {
               if (mountedRef.current) {
                 connect()
               }
-            }, reconnectInterval)
+            }, delay)
           }
         }
 
@@ -105,13 +109,15 @@ export function useWebSocket({
         console.error('Failed to connect WebSocket:', e)
         connectingRef.current = false
         
-        // Retry connection
+        // Retry connection with exponential backoff
         if (mountedRef.current) {
+          const delay = Math.min(reconnectInterval * Math.pow(2, reconnectAttemptRef.current), 60000)
+          reconnectAttemptRef.current++
           reconnectTimeoutRef.current = window.setTimeout(() => {
             if (mountedRef.current) {
               connect()
             }
-          }, reconnectInterval)
+          }, delay)
         }
       }
     }

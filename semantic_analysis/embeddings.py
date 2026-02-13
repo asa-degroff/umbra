@@ -129,10 +129,10 @@ class EmbeddingGenerator:
             
             embeddings = data.get('embeddings', [])
             if len(embeddings) != len(texts):
-                logger.warning(
+                raise ValueError(
                     f"Embedding count mismatch: got {len(embeddings)}, expected {len(texts)}"
                 )
-            
+
             return embeddings
             
         except requests.RequestException as e:

@@ -67,7 +67,8 @@ def run_analysis(
         embeddings = embedder.embed_batch(texts)
         
         # 4. Store new records with embeddings
-        storage.upsert(new_records, embeddings)
+        if not dry_run:
+            storage.upsert(new_records, embeddings)
     
     # 5. Analyze diversity
     recent_data = storage.get_recent(days=lookback_days)

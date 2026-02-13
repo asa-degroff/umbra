@@ -21,10 +21,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Flush after each log
-for handler in logging.root.handlers:
-    handler.flush = lambda: None
-
 from semantic_analysis import ATProtoScraper, EmbeddingGenerator, SemanticStorage, DiversityAnalyzer
 
 BATCH_SIZE = 25  # Smaller batches for reliability
@@ -115,12 +111,15 @@ def main():
                 embed_time = time.time() - start
                 
                 # Store in ChromaDB
-                storage.upsert(batch, embeddings)
+                upserted = storage.upsert(batch, embeddings)
                 store_time = time.time() - start - embed_time
-                
-                # Track progress
-                batch_uris = {r['uri'] for r in batch}
-                processed_this_run.update(batch_uris)
+
+                # Track progress - only mark as processed if all records were upserted
+                if upserted == len(batch):
+                    batch_uris = {r['uri'] for r in batch}
+                    processed_this_run.update(batch_uris)
+                else:
+                    logger.warning(f"  Batch {batch_num}: expected {len(batch)} upserts, got {upserted}")
                 
                 elapsed = time.time() - start
                 logger.info(f"  Batch {batch_num} complete: {elapsed:.1f}s total ({embed_time:.1f}s embed, {store_time:.1f}s store)")

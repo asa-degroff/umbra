@@ -13,8 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Loader2 } from 'lucide-react'
-
-const API_BASE = `http://${window.location.hostname}:8081/api`
+import { API_BASE } from '@/lib/config'
 
 interface Point {
   x: number

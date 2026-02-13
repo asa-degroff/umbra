@@ -51,7 +51,7 @@ class EventEmitter:
         self._socket: Optional[socket.socket] = None
         self._connected = False
         self._running = False
-        self._queue: Queue[dict] = Queue()
+        self._queue: Queue[dict] = Queue(maxsize=1000)
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
     
@@ -98,7 +98,7 @@ class EventEmitter:
         try:
             self._queue.put_nowait(event)
         except Exception:
-            pass  # Queue full, drop event
+            logger.warning(f"Event queue full, dropping event: {event_type}")
     
     def emit_notification(
         self,
@@ -267,12 +267,11 @@ class EventEmitter:
     
     def _send(self, event: dict) -> None:
         """Send an event to the dashboard."""
-        if not self._connected or not self._socket:
-            return
-        
         try:
             data = json.dumps(event) + "\n"
             with self._lock:
+                if not self._connected or not self._socket:
+                    return
                 self._socket.sendall(data.encode('utf-8'))
         except Exception as e:
             logger.debug(f"Send failed: {e}")
@@ -286,6 +285,7 @@ class EventEmitter:
 
 # Global event emitter instance
 _emitter: Optional[EventEmitter] = None
+_emitter_lock = threading.Lock()
 
 
 def get_emitter(
@@ -295,18 +295,20 @@ def get_emitter(
 ) -> EventEmitter:
     """
     Get or create the global event emitter.
-    
+
     Args:
         host: Dashboard backend host
         port: Dashboard event listener port
         enabled: Whether to emit events
-        
+
     Returns:
         EventEmitter instance
     """
     global _emitter
     if _emitter is None:
-        _emitter = EventEmitter(host, port, enabled=enabled)
+        with _emitter_lock:
+            if _emitter is None:
+                _emitter = EventEmitter(host, port, enabled=enabled)
     return _emitter
 
 

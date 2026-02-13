@@ -45,7 +45,45 @@ class ChromaDBService:
                 logger.info(f"ChromaDB connected: {self.collection.count()} records")
             except Exception as e:
                 logger.warning(f"ChromaDB connection failed: {e}")
-    
+
+    def _fetch_all(self, include: list[str]) -> dict:
+        """Fetch all records by paginating in batches of 10,000."""
+        all_ids: list = []
+        all_embeddings: list = []
+        all_documents: list = []
+        all_metadatas: list = []
+        batch_size = 10000
+        offset = 0
+
+        while True:
+            result = self.collection.get(
+                include=include,
+                limit=batch_size,
+                offset=offset,
+            )
+            ids = result.get('ids', [])
+            if not ids:
+                break
+            all_ids.extend(ids)
+            if 'embeddings' in include:
+                all_embeddings.extend(result.get('embeddings', []))
+            if 'documents' in include:
+                all_documents.extend(result.get('documents', []))
+            if 'metadatas' in include:
+                all_metadatas.extend(result.get('metadatas', []))
+            if len(ids) < batch_size:
+                break
+            offset += batch_size
+
+        out: dict = {'ids': all_ids}
+        if 'embeddings' in include:
+            out['embeddings'] = all_embeddings
+        if 'documents' in include:
+            out['documents'] = all_documents
+        if 'metadatas' in include:
+            out['metadatas'] = all_metadatas
+        return out
+
     @property
     def is_available(self) -> bool:
         """Check if ChromaDB is available."""
@@ -133,11 +171,8 @@ class ChromaDBService:
             return {"records": [], "total": 0, "error": "ChromaDB not available"}
         
         try:
-            # Fetch all records (up to 10k)
-            result = self.collection.get(
-                limit=10000,
-                include=["documents", "metadatas"],
-            )
+            # Fetch all records with pagination
+            result = self._fetch_all(include=["documents", "metadatas"])
             
             records = []
             for i, uri in enumerate(result.get('ids', [])):

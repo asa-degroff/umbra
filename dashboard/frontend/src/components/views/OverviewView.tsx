@@ -3,8 +3,7 @@ import { Activity, Database, Cpu, Clock } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-
-const API_BASE = `http://${window.location.hostname}:8081/api`
+import { API_BASE } from '@/lib/config'
 
 interface SystemStatus {
   dashboard: {

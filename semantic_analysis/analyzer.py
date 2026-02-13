@@ -10,9 +10,20 @@ from datetime import datetime, timezone
 from typing import Optional
 import requests
 
+import re
+
 import numpy as np
 
 logger = logging.getLogger('umbra.semantic_analysis')
+
+
+def _sanitize_for_prompt(text: str, max_length: int = 200) -> str:
+    """Strip control characters, truncate, and escape backticks for safe LLM prompt inclusion."""
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    text = text.replace('`', "'")
+    if len(text) > max_length:
+        text = text[:max_length] + "..."
+    return text
 
 DEFAULT_LLM_MODEL = "qwen2.5:7b"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
@@ -22,7 +33,11 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Calculate cosine similarity between two vectors."""
     a = np.array(a)
     b = np.array(b)
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
 
 
 def temporal_weight(created_at: str, half_life_days: float = 7.0) -> float:
@@ -145,7 +160,8 @@ class DiversityAnalyzer:
             pairwise_sims = []
             # Sample if too many records
             sample_size = min(n, 100)
-            indices = np.random.choice(n, sample_size, replace=False) if n > 100 else range(n)
+            rng = np.random.default_rng(42)
+            indices = rng.choice(n, sample_size, replace=False) if n > 100 else range(n)
             
             for i in indices:
                 for j in indices:
@@ -210,8 +226,8 @@ class DiversityAnalyzer:
             }]
         
         # Simple k-means initialization: pick k weighted random points
-        np.random.seed(42)  # Reproducibility
-        init_indices = np.random.choice(n, n_clusters, replace=False, p=weights/weights.sum())
+        rng = np.random.default_rng(42)
+        init_indices = rng.choice(n, n_clusters, replace=False, p=weights/weights.sum())
         centroids = embeddings[init_indices].copy()
         
         # Run a few iterations
@@ -269,7 +285,7 @@ class DiversityAnalyzer:
         cluster_summary = ""
         for i, cluster in enumerate(metrics.get('clusters', [])[:5]):
             samples = cluster.get('sample_texts', [])
-            sample_preview = samples[0][:100] + "..." if samples else "No samples"
+            sample_preview = _sanitize_for_prompt(samples[0], max_length=100) if samples else "No samples"
             cluster_summary += f"\n- Cluster {i+1} ({cluster['pct']:.1f}%): {sample_preview}"
         
         prompt = f"""You are analyzing an AI agent's recent content output for topic diversity.
