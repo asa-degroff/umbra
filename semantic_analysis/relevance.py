@@ -129,6 +129,46 @@ class RelevanceAnalyzer:
             })
         logger.info(f"Added {len(texts)} negative exemplars")
     
+    def add_feedback_exemplars(
+        self,
+        negative_embeddings: list[np.ndarray],
+        positive_embeddings: list[np.ndarray],
+    ) -> None:
+        """
+        Incorporate user feedback into the analyzer.
+
+        Args:
+            negative_embeddings: Embeddings from downranked sources — added as
+                negative exemplars so similar content is filtered out.
+            positive_embeddings: Embeddings from upranked sources — blended into
+                the umbra centroid with small weight (~10% total influence).
+        """
+        # Negatives → append to negative exemplars
+        for emb in negative_embeddings:
+            self._negative_exemplars.append({
+                'text': '[user-downranked]',
+                'embedding': np.array(emb),
+            })
+        if negative_embeddings:
+            logger.info(f"Added {len(negative_embeddings)} user-downranked negative exemplars")
+
+        # Positives → blend into centroid
+        if positive_embeddings and self._umbra_centroid is not None and self._umbra_embeddings is not None:
+            n_centroid = len(self._umbra_embeddings)
+            m_positive = len(positive_embeddings)
+            weight_each = 0.1 * n_centroid / m_positive  # total positive influence ~10%
+
+            weighted_sum = self._umbra_centroid * n_centroid
+            for emb in positive_embeddings:
+                weighted_sum = weighted_sum + np.array(emb) * weight_each
+
+            new_centroid = weighted_sum / (n_centroid + weight_each * m_positive)
+            self._umbra_centroid = new_centroid / np.linalg.norm(new_centroid)
+            logger.info(
+                f"Blended {m_positive} user-upranked embeddings into centroid "
+                f"(weight_each={weight_each:.2f})"
+            )
+
     def compute_relevance_score(self, embedding: np.ndarray) -> float:
         """
         Compute relevance score for an embedding.
@@ -424,6 +464,11 @@ DEFAULT_NEGATIVE_EXEMPLARS = [
     "Like and retweet if you agree! Share with your friends!",
     "Good morning everyone! Hope you have a great day!",
     "Can't believe it's already Friday, this week flew by",
+
+    # Automated health checks / status alerts
+    "Health check alert: XRPC indexer API is down (502/unreachable)",
+    "Service health check: API endpoint is down or unreachable",
+    "Status alert: server returned 502 bad gateway",
 ]
 
 

@@ -33,6 +33,10 @@ class DiscoveredSource:
     chunk_index: int = 0                  # If chunked, which chunk
     total_chunks: int = 1                 # Total chunks from this source
 
+    # User feedback
+    user_rating: int = 0                  # -1 = downranked, 0 = unrated, 1 = upranked
+    rated_at: Optional[datetime] = None
+
     # DB tracking (set after persistence)
     id: Optional[int] = None
 
@@ -52,6 +56,8 @@ class DiscoveredSource:
             'query_used': self.query_used,
             'chunk_index': self.chunk_index,
             'total_chunks': self.total_chunks,
+            'user_rating': self.user_rating,
+            'rated_at': self.rated_at.isoformat() if self.rated_at else None,
         }
         if self.id is not None:
             d['id'] = self.id

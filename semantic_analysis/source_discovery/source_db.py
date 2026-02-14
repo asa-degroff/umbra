@@ -72,6 +72,16 @@ class SourceDB:
             ON discovered_sources(url, chunk_index)
         """)
 
+        # Migration: add user_rating and rated_at columns
+        try:
+            self.conn.execute("ALTER TABLE discovered_sources ADD COLUMN user_rating INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        try:
+            self.conn.execute("ALTER TABLE discovered_sources ADD COLUMN rated_at TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         self.conn.commit()
 
     def save_sources(self, sources: list[DiscoveredSource]) -> int:
@@ -173,10 +183,54 @@ class SourceDB:
         stats['total'] = total
         return stats
 
+    def rate_source(self, source_id: int, rating: int) -> bool:
+        """
+        Set user rating on a source.
+
+        Args:
+            source_id: DB id of the source
+            rating: -1 (downrank), 0 (clear), or 1 (uprank)
+
+        Returns:
+            True if a row was updated.
+        """
+        if rating not in (-1, 0, 1):
+            raise ValueError(f"rating must be -1, 0, or 1, got {rating}")
+
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            status_clause = ", status = 'rejected'" if rating == -1 else ""
+            cursor = self.conn.execute(
+                f"UPDATE discovered_sources SET user_rating = ?, rated_at = ?{status_clause} WHERE id = ?",
+                (rating, now, source_id),
+            )
+            self.conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.info(f"Rated source {source_id} with rating={rating}")
+        return updated
+
+    def get_rated_sources(self, rating: int) -> list[DiscoveredSource]:
+        """
+        Fetch sources by user rating.
+
+        Args:
+            rating: -1, 0, or 1
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM discovered_sources WHERE user_rating = ? ORDER BY rated_at DESC",
+            (rating,),
+        ).fetchall()
+        return [self._row_to_source(row) for row in rows]
+
     def _row_to_source(self, row: sqlite3.Row) -> DiscoveredSource:
         """Convert a database row to a DiscoveredSource."""
         embedding = json.loads(row['embedding']) if row['embedding'] else []
         discovered_at = datetime.fromisoformat(row['discovered_at'])
+
+        rated_at_raw = row['rated_at'] if 'rated_at' in row.keys() else None
+        rated_at = datetime.fromisoformat(rated_at_raw) if rated_at_raw else None
+        user_rating = row['user_rating'] if 'user_rating' in row.keys() else 0
 
         source = DiscoveredSource(
             title=row['title'],
@@ -192,6 +246,8 @@ class SourceDB:
             query_used=row['query_used'] or "",
             chunk_index=row['chunk_index'],
             total_chunks=row['total_chunks'],
+            user_rating=user_rating,
+            rated_at=rated_at,
         )
         source.id = row['id']
         return source

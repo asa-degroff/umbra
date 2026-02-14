@@ -1,9 +1,9 @@
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import {
   Compass, Map, Globe, Zap, BookOpen,
   ChevronLeft, ChevronRight, ExternalLink, X,
-  Loader2, Play, AlertCircle
+  Loader2, Play, AlertCircle, ThumbsUp, ThumbsDown,
 } from 'lucide-react'
 import {
   ScatterChart, Scatter, XAxis, YAxis,
@@ -59,6 +59,8 @@ interface DiscoveredSourceItem {
   discovered_at: string
   chunk_index: number
   total_chunks: number
+  user_rating?: number   // -1 | 0 | 1
+  rated_at?: string | null
 }
 
 interface SourcesResponse {
@@ -184,6 +186,36 @@ function ZoneTooltip({ active, payload }: any) {
   )
 }
 
+// --- Rating Button ---
+
+function RatingButton({
+  current,
+  target,
+  icon: Icon,
+  activeColor,
+  onClick,
+}: {
+  current: number
+  target: 1 | -1
+  icon: React.ElementType
+  activeColor: string
+  onClick: () => void
+}) {
+  const isActive = current === target
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick() }}
+      className={cn(
+        'p-1 rounded transition-colors',
+        isActive ? activeColor : 'text-muted-foreground/40 hover:text-muted-foreground',
+      )}
+      title={target === 1 ? 'Uprank' : 'Downrank'}
+    >
+      <Icon className="w-4 h-4" />
+    </button>
+  )
+}
+
 // --- Constants ---
 
 const PAGE_SIZE = 20
@@ -215,6 +247,7 @@ type TabId = 'zones' | 'sources' | 'discover'
 // --- Component ---
 
 export default function FrontierView() {
+  const queryClient = useQueryClient()
   const [days, setDays] = useState(30)
   const [source, setSource] = useState('all')
   const [activeTab, setActiveTab] = useState<TabId>('zones')
@@ -256,6 +289,23 @@ export default function FrontierView() {
     mutationFn: () => fetch(
       `${API_BASE}/semantic/frontier/discover?max_rounds=${discoverRounds}&max_sources=${discoverMaxSources}&initial_zones=${discoverZones}&days=${days}&source=${source}&refresh=true`
     ).then(r => r.json()),
+  })
+
+  const rateMutation = useMutation({
+    mutationFn: ({ sourceId, rating }: { sourceId: number; rating: number }) =>
+      fetch(
+        `${API_BASE}/semantic/frontier/sources/${sourceId}/feedback?rating=${rating}`,
+        { method: 'POST' },
+      ).then(r => r.json()),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['frontierSources'] })
+      // Update selected source in-place so modal reflects new state
+      setSelectedSource(prev =>
+        prev && prev.id === variables.sourceId
+          ? { ...prev, user_rating: variables.rating, status: variables.rating === -1 ? 'rejected' : prev.status }
+          : prev
+      )
+    },
   })
 
   // --- Derived data ---
@@ -536,70 +586,96 @@ export default function FrontierView() {
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground w-24">Status</th>
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground w-28">Date</th>
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground w-12">Link</th>
+                    <th className="text-left p-3 text-sm font-medium text-muted-foreground w-16">Rate</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sourcesLoading ? (
                     <tr>
-                      <td colSpan={6} className="p-4 text-center text-muted-foreground">
+                      <td colSpan={7} className="p-4 text-center text-muted-foreground">
                         Loading...
                       </td>
                     </tr>
                   ) : paginatedSources.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-4 text-center text-muted-foreground">
+                      <td colSpan={7} className="p-4 text-center text-muted-foreground">
                         No sources found. Run a discovery to populate this list.
                       </td>
                     </tr>
                   ) : (
-                    paginatedSources.map((src, i) => (
-                      <tr
-                        key={src.id || i}
-                        className="border-t border-border hover:bg-secondary/50 cursor-pointer"
-                        onClick={() => setSelectedSource(src)}
-                      >
-                        <td className="p-3 max-w-md">
-                          <div className="truncate text-sm font-medium">
-                            {src.title}
-                            {src.total_chunks > 1 && (
-                              <span className="text-xs text-muted-foreground ml-1">
-                                (part {src.chunk_index + 1}/{src.total_chunks})
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          <Badge variant="outline" className="text-xs capitalize">
-                            {src.source_type}
-                          </Badge>
-                        </td>
-                        <td className="p-3">
-                          <Badge variant="outline" className="text-xs">
-                            {(src.relevance_score * 100).toFixed(0)}%
-                          </Badge>
-                        </td>
-                        <td className="p-3">
-                          <Badge variant={statusBadgeVariant(src.status)} className="text-xs capitalize">
-                            {src.status}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-sm text-muted-foreground">
-                          {new Date(src.discovered_at).toLocaleDateString()}
-                        </td>
-                        <td className="p-3">
-                          <a
-                            href={src.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-muted-foreground hover:text-cyan-400 transition-colors"
-                            title="Open source"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                          </a>
-                        </td>
-                      </tr>
-                    ))
+                    paginatedSources.map((src, i) => {
+                      const rating = src.user_rating ?? 0
+                      return (
+                        <tr
+                          key={src.id || i}
+                          className={cn(
+                            'border-t border-border hover:bg-secondary/50 cursor-pointer',
+                            rating === -1 && 'opacity-50',
+                            rating === 1 && 'border-l-2 border-l-green-500',
+                          )}
+                          onClick={() => setSelectedSource(src)}
+                        >
+                          <td className="p-3 max-w-md">
+                            <div className={cn('truncate text-sm font-medium', rating === -1 && 'line-through')}>
+                              {src.title}
+                              {src.total_chunks > 1 && (
+                                <span className="text-xs text-muted-foreground ml-1">
+                                  (part {src.chunk_index + 1}/{src.total_chunks})
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <Badge variant="outline" className="text-xs capitalize">
+                              {src.source_type}
+                            </Badge>
+                          </td>
+                          <td className="p-3">
+                            <Badge variant="outline" className="text-xs">
+                              {(src.relevance_score * 100).toFixed(0)}%
+                            </Badge>
+                          </td>
+                          <td className="p-3">
+                            <Badge variant={statusBadgeVariant(src.status)} className="text-xs capitalize">
+                              {src.status}
+                            </Badge>
+                          </td>
+                          <td className="p-3 text-sm text-muted-foreground">
+                            {new Date(src.discovered_at).toLocaleDateString()}
+                          </td>
+                          <td className="p-3">
+                            <a
+                              href={src.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-muted-foreground hover:text-cyan-400 transition-colors"
+                              title="Open source"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex gap-1">
+                              <RatingButton
+                                current={rating}
+                                target={1}
+                                icon={ThumbsUp}
+                                activeColor="text-green-400"
+                                onClick={() => rateMutation.mutate({ sourceId: src.id, rating: rating === 1 ? 0 : 1 })}
+                              />
+                              <RatingButton
+                                current={rating}
+                                target={-1}
+                                icon={ThumbsDown}
+                                activeColor="text-red-400"
+                                onClick={() => rateMutation.mutate({ sourceId: src.id, rating: rating === -1 ? 0 : -1 })}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })
                   )}
                 </tbody>
               </table>
@@ -851,6 +927,42 @@ export default function FrontierView() {
             </CardHeader>
             <CardContent className="overflow-auto flex-1">
               <p className="whitespace-pre-wrap text-sm">{selectedSource.excerpt}</p>
+
+              {/* Feedback section */}
+              <div className="mt-6 pt-4 border-t border-border">
+                <div className="text-sm font-medium mb-3">Rate this source</div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant={(selectedSource.user_rating ?? 0) === 1 ? 'default' : 'outline'}
+                    size="sm"
+                    className={cn('gap-2', (selectedSource.user_rating ?? 0) === 1 && 'bg-green-600 hover:bg-green-700')}
+                    onClick={() => rateMutation.mutate({
+                      sourceId: selectedSource.id,
+                      rating: (selectedSource.user_rating ?? 0) === 1 ? 0 : 1,
+                    })}
+                  >
+                    <ThumbsUp className="w-4 h-4" />
+                    Uprank
+                  </Button>
+                  <Button
+                    variant={(selectedSource.user_rating ?? 0) === -1 ? 'default' : 'outline'}
+                    size="sm"
+                    className={cn('gap-2', (selectedSource.user_rating ?? 0) === -1 && 'bg-red-600 hover:bg-red-700')}
+                    onClick={() => rateMutation.mutate({
+                      sourceId: selectedSource.id,
+                      rating: (selectedSource.user_rating ?? 0) === -1 ? 0 : -1,
+                    })}
+                  >
+                    <ThumbsDown className="w-4 h-4" />
+                    Downrank
+                  </Button>
+                  {(selectedSource.user_rating ?? 0) !== 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      Rated {selectedSource.rated_at ? new Date(selectedSource.rated_at).toLocaleString() : ''}
+                    </span>
+                  )}
+                </div>
+              </div>
             </CardContent>
           </Card>
         </div>

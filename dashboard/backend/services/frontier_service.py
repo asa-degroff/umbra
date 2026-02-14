@@ -73,12 +73,39 @@ def _init_components():
                 source_db=_source_db,
             )
 
+            # Apply any existing user feedback
+            _apply_feedback()
+
             logger.info("Frontier service components initialized")
             return True
 
         except Exception as e:
             logger.error(f"Failed to initialize frontier components: {e}")
             return False
+
+
+def _apply_feedback():
+    """Load user-rated sources and feed them into the relevance analyzer."""
+    if _source_db is None or _relevance_analyzer is None:
+        return
+
+    try:
+        import numpy as np
+
+        downranked = _source_db.get_rated_sources(rating=-1)
+        upranked = _source_db.get_rated_sources(rating=1)
+
+        neg_embeddings = [np.array(s.embedding) for s in downranked if s.embedding]
+        pos_embeddings = [np.array(s.embedding) for s in upranked if s.embedding]
+
+        if neg_embeddings or pos_embeddings:
+            _relevance_analyzer.add_feedback_exemplars(neg_embeddings, pos_embeddings)
+            logger.info(
+                f"Applied user feedback: {len(neg_embeddings)} negative, "
+                f"{len(pos_embeddings)} positive exemplars"
+            )
+    except Exception as e:
+        logger.error(f"Error applying feedback: {e}")
 
 
 def _cache_valid(key: str) -> bool:
@@ -147,7 +174,7 @@ class FrontierService:
                         "relevance_score": round(z.relevance_score, 3),
                         "nearby_posts": [
                             {
-                                "text": p.get('text', '')[:200],
+                                "text": p.get('text', ''),
                                 "uri": p.get('uri', ''),
                             }
                             for p in z.nearby_posts[:3]
@@ -201,7 +228,10 @@ class FrontierService:
         
         if not force_refresh and _cache_valid('discovery_result'):
             return _cache['discovery_result']
-        
+
+        # Re-apply latest user feedback before each run
+        _apply_feedback()
+
         try:
             result = _source_discovery.discover(
                 max_rounds=max_rounds,
@@ -256,6 +286,31 @@ class FrontierService:
             logger.error(f"Error in source discovery: {e}")
             return {"error": str(e)}
     
+    def rate_source(self, source_id: int, rating: int) -> dict:
+        """Rate a source and apply feedback to the relevance analyzer."""
+        if not _init_components() or _source_db is None:
+            raise RuntimeError("Service not available")
+
+        updated = _source_db.rate_source(source_id, rating)
+        if not updated:
+            raise ValueError(f"Source {source_id} not found")
+
+        # Re-apply all feedback so the analyzer stays up-to-date
+        _apply_feedback()
+
+        # Fetch updated source to return current status
+        rows = _source_db.conn.execute(
+            "SELECT status FROM discovered_sources WHERE id = ?", (source_id,)
+        ).fetchone()
+        status = rows['status'] if rows else 'unknown'
+
+        return {
+            "success": True,
+            "source_id": source_id,
+            "rating": rating,
+            "status": status,
+        }
+
     def get_persisted_sources(
         self,
         status: Optional[str] = None,
@@ -283,6 +338,8 @@ class FrontierService:
                         "discovered_at": s.discovered_at.isoformat(),
                         "chunk_index": s.chunk_index,
                         "total_chunks": s.total_chunks,
+                        "user_rating": s.user_rating,
+                        "rated_at": s.rated_at.isoformat() if s.rated_at else None,
                     }
                     for s in sources
                 ],

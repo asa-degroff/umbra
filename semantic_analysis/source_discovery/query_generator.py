@@ -137,7 +137,7 @@ Queries:"""
                     'temperature': self.temperature,
                     'stream': False,
                 },
-                timeout=60,
+                timeout=120,
             )
             response.raise_for_status()
             

@@ -405,6 +405,25 @@ async def get_frontier_sources(
         return {"sources": [], "error": str(e)}
 
 
+@router.post("/frontier/sources/{source_id}/feedback")
+async def rate_source(
+    source_id: int,
+    rating: int = Query(..., ge=-1, le=1),
+):
+    """
+    Rate a discovered source (thumbs up / thumbs down).
+
+    rating: -1 = downrank, 0 = clear, 1 = uprank.
+    Downranked sources are also marked as 'rejected'.
+    """
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        return frontier_service.rate_source(source_id, rating)
+    except Exception as e:
+        logger.error(f"Error rating source {source_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/frontier/stats")
 async def get_frontier_stats():
     """Get frontier service statistics."""

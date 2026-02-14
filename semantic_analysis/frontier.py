@@ -526,17 +526,25 @@ class FrontierDetector:
         since 2D distances are meaningful within the UMAP projection.
         """
         dists = np.linalg.norm(coords_2d - center_2d, axis=1)
-        nearest_idx = np.argsort(dists)[:k]
+        # Fetch more candidates than needed so we can filter
+        candidate_idx = np.argsort(dists)[:k * 3]
 
         nearby = []
-        for i in nearest_idx:
+        for i in candidate_idx:
+            if len(nearby) >= k:
+                break
             r = records[i]
+            # Skip posts that match negative exemplars
+            emb = r.get('embedding')
+            if emb is not None and self.relevance_analyzer is not None:
+                if self.relevance_analyzer.is_near_negative_exemplar(np.array(emb)):
+                    continue
             nearby.append({
                 'uri': r.get('uri', ''),
-                'text': r.get('text', '')[:200],
+                'text': r.get('text', ''),
                 'distance': float(dists[i]),
                 'metadata': r.get('metadata', {}),
-                'embedding': r.get('embedding'),
+                'embedding': emb,
             })
         return nearby
 
