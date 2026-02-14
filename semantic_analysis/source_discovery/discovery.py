@@ -365,8 +365,17 @@ def create_source_discovery(
     relevance_analyzer=None,
     ollama_url: str = "http://localhost:11434",
     source_db: Optional[SourceDB] = None,
+    db_path: Optional[str] = None,
 ) -> SourceDiscovery:
-    """Factory function to create a configured SourceDiscovery."""
+    """
+    Factory function to create a configured SourceDiscovery.
+
+    If neither source_db nor db_path is provided, defaults to
+    data/source_discovery.db alongside the ChromaDB path.
+    """
+    if source_db is None and db_path is not None:
+        source_db = SourceDB(db_path)
+
     return SourceDiscovery(
         storage=storage,
         embedder=embedder,
