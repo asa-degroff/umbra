@@ -210,7 +210,26 @@ class FrontierDetector:
             logger.info(f"Merged {len(extra_embeddings)} extra embeddings with storage data")
 
         logger.info(f"Fetched {len(embeddings)} total embeddings from last {days} days (source={source})")
-        return np.array(embeddings), valid_records
+
+        if not embeddings:
+            return np.array(embeddings), valid_records
+
+        arr = np.array(embeddings)
+
+        # Validate dimensions: all embeddings must have the same length
+        if arr.ndim != 2:
+            logger.error(f"Embedding dimension mismatch: expected 2D array, got shape {arr.shape}")
+            return np.array([]).reshape(0, 0), []
+
+        # Filter out rows with NaN or Inf values
+        valid_mask = np.isfinite(arr).all(axis=1)
+        n_invalid = int((~valid_mask).sum())
+        if n_invalid > 0:
+            logger.warning(f"Dropping {n_invalid}/{len(arr)} embeddings with NaN/Inf values")
+            arr = arr[valid_mask]
+            valid_records = [r for r, ok in zip(valid_records, valid_mask) if ok]
+
+        return arr, valid_records
 
     def _fit_umap(self, embeddings: np.ndarray):
         """Fit UMAP model and return 2D coordinates + model."""
