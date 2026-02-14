@@ -1,12 +1,13 @@
-import { 
-  LayoutDashboard, 
-  Brain, 
-  Database, 
-  Calendar, 
+import {
+  LayoutDashboard,
+  Brain,
+  Database,
+  Calendar,
   Settings,
   Activity,
   Wifi,
-  WifiOff
+  WifiOff,
+  Radio
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -21,6 +22,7 @@ interface SidebarProps {
 
 const menuItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'network', label: 'Network', icon: Radio },
   { id: 'semantic', label: 'Semantic Analysis', icon: Brain },
   { id: 'records', label: 'Records', icon: Database },
   { id: 'tasks', label: 'Scheduled Tasks', icon: Calendar },

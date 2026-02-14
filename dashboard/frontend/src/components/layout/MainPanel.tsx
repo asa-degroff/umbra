@@ -1,4 +1,5 @@
 import OverviewView from '../views/OverviewView'
+import NetworkView from '../views/NetworkView'
 import SemanticView from '../views/SemanticView'
 import RecordsView from '../views/RecordsView'
 import TasksView from '../views/TasksView'
@@ -13,6 +14,8 @@ export default function MainPanel({ activeView }: MainPanelProps) {
     switch (activeView) {
       case 'overview':
         return <OverviewView />
+      case 'network':
+        return <NetworkView />
       case 'semantic':
         return <SemanticView />
       case 'records':
