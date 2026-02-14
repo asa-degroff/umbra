@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Frontier dashboard view with zones scatter chart, sources table, and discovery controls
 - Ollama dependency not validated — silent degradation (#17)
 - No input validation in SourceDiscovery constructor (#12)
 

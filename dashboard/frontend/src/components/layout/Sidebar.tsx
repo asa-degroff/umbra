@@ -7,7 +7,8 @@ import {
   Activity,
   Wifi,
   WifiOff,
-  Radio
+  Radio,
+  Compass
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,7 @@ interface SidebarProps {
 const menuItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'network', label: 'Network', icon: Radio },
+  { id: 'frontier', label: 'Frontier', icon: Compass },
   { id: 'semantic', label: 'Semantic Analysis', icon: Brain },
   { id: 'records', label: 'Records', icon: Database },
   { id: 'tasks', label: 'Scheduled Tasks', icon: Calendar },
