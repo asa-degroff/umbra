@@ -1,9 +1,41 @@
 import { useQuery } from '@tanstack/react-query'
-import { Activity, Database, Cpu, Clock } from 'lucide-react'
+import { Activity, Database, Cpu, Clock, Radio, Users, TrendingUp, ExternalLink } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { API_BASE } from '@/lib/config'
+
+// Convert AT URI to Bluesky web URL
+function getBlueskyUrl(uri: string, handle: string): string | null {
+  // URI format: at://did:plc:xxx/app.bsky.feed.post/rkey
+  const match = uri.match(/at:\/\/[^/]+\/app\.bsky\.feed\.post\/([^/]+)/)
+  if (match && handle) {
+    return `https://bsky.app/profile/${handle}/post/${match[1]}`
+  }
+  return null
+}
+
+interface RelevantPost {
+  uri: string
+  text: string
+  relevance_score: number
+  source_handle: string
+  created_at?: string
+}
+
+interface RelevantAccount {
+  handle: string
+  post_count: number
+  avg_relevance: number
+  top_post?: string
+}
+
+interface TrendingTopic {
+  post_count: number
+  avg_relevance: number
+  contributors: string[]
+  sample_text?: string
+}
 
 interface SystemStatus {
   dashboard: {
@@ -88,6 +120,25 @@ export default function OverviewView() {
     queryKey: ['semanticMetrics'],
     queryFn: () => fetch(`${API_BASE}/semantic/metrics`).then(r => r.json()),
     refetchInterval: 30000,
+  })
+
+  // Network relevance queries
+  const { data: relevantPosts } = useQuery<{ posts: RelevantPost[] }>({
+    queryKey: ['relevantPosts'],
+    queryFn: () => fetch(`${API_BASE}/semantic/relevance/top?limit=5`).then(r => r.json()),
+    refetchInterval: 60000,
+  })
+
+  const { data: relevantAccounts } = useQuery<{ accounts: RelevantAccount[] }>({
+    queryKey: ['relevantAccounts'],
+    queryFn: () => fetch(`${API_BASE}/semantic/relevance/accounts?limit=5`).then(r => r.json()),
+    refetchInterval: 60000,
+  })
+
+  const { data: trendingTopics } = useQuery<{ topics: TrendingTopic[] }>({
+    queryKey: ['trendingTopics'],
+    queryFn: () => fetch(`${API_BASE}/semantic/relevance/trending`).then(r => r.json()),
+    refetchInterval: 60000,
   })
 
   return (
@@ -185,6 +236,129 @@ export default function OverviewView() {
                   <Badge variant="outline">
                     {(model.size / 1e9).toFixed(1)} GB
                   </Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Network Relevance Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Network Pulse - Top Relevant Posts */}
+        {relevantPosts?.posts && relevantPosts.posts.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Radio className="w-5 h-5 text-cyan-400" />
+                Network Pulse
+              </CardTitle>
+              <CardDescription>Most relevant posts from your network</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {relevantPosts.posts.slice(0, 5).map((post, i) => {
+                  const blueskyUrl = getBlueskyUrl(post.uri, post.source_handle)
+                  return (
+                    <div key={post.uri} className="p-3 bg-secondary rounded-lg">
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-sm font-medium text-cyan-400">@{post.source_handle}</span>
+                        <div className="flex items-center gap-2">
+                          {blueskyUrl && (
+                            <a
+                              href={blueskyUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-muted-foreground hover:text-cyan-400 transition-colors"
+                              title="View on Bluesky"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          <Badge variant="outline" className="text-xs">
+                            {(post.relevance_score * 100).toFixed(0)}%
+                          </Badge>
+                        </div>
+                      </div>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                        {post.text}
+                      </p>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Top Voices - Relevant Accounts */}
+        {relevantAccounts?.accounts && relevantAccounts.accounts.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-violet-400" />
+                Top Voices
+              </CardTitle>
+              <CardDescription>Accounts sharing the most relevant content</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {relevantAccounts.accounts.slice(0, 5).map((account, i) => (
+                  <div key={account.handle} className="flex items-center justify-between p-3 bg-secondary rounded-lg">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-violet-400">@{account.handle}</div>
+                      {account.top_post && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">
+                          {account.top_post}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 ml-3 shrink-0">
+                      <Badge variant="secondary" className="text-xs">
+                        {account.post_count} posts
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {(account.avg_relevance * 100).toFixed(0)}%
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Trending Topics */}
+      {trendingTopics?.topics && trendingTopics.topics.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-amber-400" />
+              Trending Topics
+            </CardTitle>
+            <CardDescription>Emerging themes in your network</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {trendingTopics.topics.slice(0, 6).map((topic, i) => (
+                <div key={i} className="p-4 bg-secondary rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge variant="default" className="bg-amber-500/20 text-amber-400">
+                      {topic.post_count} posts
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      {(topic.avg_relevance * 100).toFixed(0)}% relevant
+                    </Badge>
+                  </div>
+                  {topic.sample_text && (
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap mb-2">
+                      {topic.sample_text}
+                    </p>
+                  )}
+                  <div className="text-xs text-muted-foreground">
+                    {topic.contributors.slice(0, 3).map(c => `@${c}`).join(', ')}
+                  </div>
                 </div>
               ))}
             </div>

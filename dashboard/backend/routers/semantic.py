@@ -247,3 +247,75 @@ async def trigger_analysis():
     except Exception as e:
         logger.error(f"Error running analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Relevance Analysis Endpoints
+# ============================================================================
+
+@router.get("/relevance/top")
+async def get_relevance_top(
+    days: int = Query(14, ge=1, le=90),
+    min_relevance: float = Query(0.5, ge=0.0, le=1.0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """
+    Get top relevant posts from network content.
+    
+    Returns posts from followed accounts ranked by relevance to Umbra's interests.
+    """
+    try:
+        from dashboard.backend.services.relevance_service import relevance_service
+        return relevance_service.get_top_posts(days=days, min_relevance=min_relevance, limit=limit)
+    except Exception as e:
+        logger.error(f"Error getting relevance top: {e}")
+        return {"posts": [], "error": str(e)}
+
+
+@router.get("/relevance/accounts")
+async def get_relevance_accounts(
+    days: int = Query(14, ge=1, le=90),
+    min_relevance: float = Query(0.5, ge=0.0, le=1.0),
+    limit: int = Query(15, ge=1, le=50),
+):
+    """
+    Get accounts ranked by relevance to Umbra's interests.
+    
+    Shows which followed accounts share the most relevant content.
+    """
+    try:
+        from dashboard.backend.services.relevance_service import relevance_service
+        return relevance_service.get_top_accounts(days=days, min_relevance=min_relevance, limit=limit)
+    except Exception as e:
+        logger.error(f"Error getting relevance accounts: {e}")
+        return {"accounts": [], "error": str(e)}
+
+
+@router.get("/relevance/trending")
+async def get_relevance_trending(
+    days: int = Query(14, ge=1, le=90),
+    min_relevance: float = Query(0.5, ge=0.0, le=1.0),
+    min_posts: int = Query(2, ge=2, le=10),
+):
+    """
+    Get trending topics from network that are relevant to Umbra.
+    
+    Clusters similar posts to identify common themes.
+    """
+    try:
+        from dashboard.backend.services.relevance_service import relevance_service
+        return relevance_service.get_trending_topics(days=days, min_relevance=min_relevance, min_posts=min_posts)
+    except Exception as e:
+        logger.error(f"Error getting trending topics: {e}")
+        return {"topics": [], "error": str(e)}
+
+
+@router.get("/relevance/stats")
+async def get_relevance_stats():
+    """Get relevance analyzer statistics."""
+    try:
+        from dashboard.backend.services.relevance_service import relevance_service
+        return relevance_service.get_stats()
+    except Exception as e:
+        logger.error(f"Error getting relevance stats: {e}")
+        return {"error": str(e)}
