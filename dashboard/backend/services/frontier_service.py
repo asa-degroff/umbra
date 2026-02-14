@@ -6,6 +6,7 @@ Provides cached access to frontier detection and source discovery.
 
 import asyncio
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 import sys
@@ -29,6 +30,7 @@ _cache = {
     'discovery_time': None,
 }
 _cache_ttl = 300  # 5 minutes
+_init_lock = threading.Lock()
 
 
 def _init_components():
@@ -38,40 +40,45 @@ def _init_components():
     if _frontier_detector is not None:
         return True
 
-    try:
-        from semantic_analysis import (
-            SemanticStorage,
-            EmbeddingGenerator,
-            create_relevance_analyzer,
-            create_frontier_detector,
-            create_source_discovery,
-            SourceDB,
-        )
+    with _init_lock:
+        # Double-check after acquiring lock (another thread may have initialized)
+        if _frontier_detector is not None:
+            return True
 
-        storage = SemanticStorage('/home/asa/umbra/data/chromadb')
-        embedder = EmbeddingGenerator()
+        try:
+            from semantic_analysis import (
+                SemanticStorage,
+                EmbeddingGenerator,
+                create_relevance_analyzer,
+                create_frontier_detector,
+                create_source_discovery,
+                SourceDB,
+            )
 
-        _relevance_analyzer = create_relevance_analyzer(storage, embedder, use_default_negatives=True)
-        _relevance_analyzer.compute_umbra_centroid(days=30)
+            storage = SemanticStorage('/home/asa/umbra/data/chromadb')
+            embedder = EmbeddingGenerator()
 
-        _frontier_detector = create_frontier_detector(storage, relevance_analyzer=_relevance_analyzer)
+            _relevance_analyzer = create_relevance_analyzer(storage, embedder, use_default_negatives=True)
+            _relevance_analyzer.compute_umbra_centroid(days=30)
 
-        _source_db = SourceDB('/home/asa/umbra/data/source_discovery.db')
+            _frontier_detector = create_frontier_detector(storage, relevance_analyzer=_relevance_analyzer)
 
-        _source_discovery = create_source_discovery(
-            storage=storage,
-            embedder=embedder,
-            frontier_detector=_frontier_detector,
-            relevance_analyzer=_relevance_analyzer,
-            source_db=_source_db,
-        )
+            _source_db = SourceDB('/home/asa/umbra/data/source_discovery.db')
 
-        logger.info("Frontier service components initialized")
-        return True
+            _source_discovery = create_source_discovery(
+                storage=storage,
+                embedder=embedder,
+                frontier_detector=_frontier_detector,
+                relevance_analyzer=_relevance_analyzer,
+                source_db=_source_db,
+            )
 
-    except Exception as e:
-        logger.error(f"Failed to initialize frontier components: {e}")
-        return False
+            logger.info("Frontier service components initialized")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to initialize frontier components: {e}")
+            return False
 
 
 def _cache_valid(key: str) -> bool:

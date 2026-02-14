@@ -36,6 +36,7 @@ class QueryGenerator:
         self.model = model
         self.temperature = temperature
         self._verified_model = None
+        self.using_fallback = False  # True when LLM is unavailable
     
     def _verify_model(self) -> str:
         """Verify model is available, fall back if needed."""
@@ -142,13 +143,20 @@ Queries:"""
             
             result = response.json().get('response', '')
             queries = self._parse_queries(result, num_queries)
-            
-            logger.info(f"Generated {len(queries)} queries: {queries}")
-            return queries
-            
+
+            if queries:
+                self.using_fallback = False
+                logger.info(f"Generated {len(queries)} LLM queries: {queries}")
+                return queries
+
+            # LLM returned empty/unparseable — fall through to fallback
+            logger.warning("LLM returned no parseable queries, using fallback")
+
         except Exception as e:
-            logger.error(f"Query generation error: {e}")
-            return self._fallback_queries(nearby_posts, num_queries)
+            logger.warning(f"LLM query generation failed ({e}), using keyword fallback")
+
+        self.using_fallback = True
+        return self._fallback_queries(nearby_posts, num_queries)
     
     def _parse_queries(self, response: str, expected: int) -> list[str]:
         """Parse LLM response to extract query strings."""
@@ -172,11 +180,19 @@ Queries:"""
         lines = response.split('\n')
         queries = []
         for line in lines:
-            line = line.strip().strip('-').strip('•').strip('"').strip("'").strip()
-            # Skip lines that look like JSON artifacts or explanations
-            if line and not line.startswith('{') and not line.startswith('[') and len(line) > 3 and len(line) < 100:
+            # Strip list markers and quotes
+            line = line.strip()
+            line = line.lstrip('0123456789.-•*)> ').strip().strip('"').strip("'").strip()
+            if not line:
+                continue
+            # Reject lines that look like JSON, code, or explanations
+            if line.startswith(('{', '[', '//', '#', 'Note', 'Here')):
+                continue
+            # Must be plausible query length (5-100 chars) with mostly alpha content
+            alpha_ratio = sum(c.isalpha() or c.isspace() for c in line) / len(line) if line else 0
+            if 5 <= len(line) <= 100 and alpha_ratio > 0.7:
                 queries.append(line)
-        
+
         return queries[:expected]
     
     def _fallback_queries(self, nearby_posts: list[dict], num_queries: int) -> list[str]:
@@ -184,10 +200,19 @@ Queries:"""
         # Extract potential keywords from posts
         all_text = " ".join(p.get('text', '')[:200] for p in nearby_posts)
         
-        # Simple keyword extraction (very basic)
+        # Keyword extraction: keep words with 3+ chars, excluding stopwords
+        stopwords = {
+            'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can',
+            'has', 'her', 'was', 'one', 'our', 'out', 'had', 'hot', 'how',
+            'its', 'may', 'who', 'did', 'get', 'him', 'his', 'she', 'any',
+            'been', 'have', 'from', 'this', 'that', 'with', 'they', 'what',
+            'when', 'will', 'each', 'make', 'like', 'just', 'over', 'such',
+            'than', 'them', 'very', 'some', 'also', 'into', 'more', 'about',
+            'would', 'there', 'their', 'which', 'could', 'other', 'these',
+            'then', 'your', 'only', 'after', 'being', 'those', 'still',
+        }
         words = all_text.lower().split()
-        # Filter to longer words that might be meaningful
-        keywords = [w for w in words if len(w) > 6 and w.isalpha()]
+        keywords = [w for w in words if len(w) > 2 and w.isalpha() and w not in stopwords]
         
         # Take unique keywords
         seen = set()

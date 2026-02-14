@@ -22,6 +22,11 @@ from scipy.stats import gaussian_kde
 logger = logging.getLogger('umbra.semantic_analysis.frontier')
 
 
+class InsufficientDataError(Exception):
+    """Raised when there aren't enough embeddings for frontier detection."""
+    pass
+
+
 @dataclass
 class FrontierZone:
     """A detected frontier zone in embedding space."""
@@ -63,6 +68,11 @@ class FrontierDetector:
         self.umap_n_neighbors = umap_n_neighbors
         self.umap_min_dist = umap_min_dist
 
+        # UMAP model cache: avoids refitting when data hasn't changed
+        self._umap_cache_key: str | None = None
+        self._umap_cache_model = None
+        self._umap_cache_coords: np.ndarray | None = None
+
     def detect_frontiers(
         self,
         days: int = 30,
@@ -92,9 +102,12 @@ class FrontierDetector:
             extra_embeddings=extra_embeddings,
             extra_records=extra_records,
         )
-        if len(embeddings) < self.umap_n_neighbors + 1:
-            logger.warning(f"Too few embeddings ({len(embeddings)}) for frontier detection")
-            return []
+        min_required = self.umap_n_neighbors + 1
+        if len(embeddings) < min_required:
+            raise InsufficientDataError(
+                f"Need at least {min_required} embeddings for frontier detection, "
+                f"got {len(embeddings)}"
+            )
 
         # Fit UMAP
         coords_2d, umap_model = self._fit_umap(embeddings)
@@ -113,13 +126,19 @@ class FrontierDetector:
             grid_centers, kde, centroids_2d
         )
 
-        # Filter by relevance constraints (operates in 2D space)
+        # Filter by relevance constraints: 2D spatial gate + high-dim relevance
         keep_mask = self._filter_by_constraints(
             grid_centers, coords_2d, records, embeddings
         )
 
-        # Apply mask and select top-N
-        masked_scores = frontier_scores * keep_mask
+        # Secondary high-dim relevance: for cells that pass the 2D gate,
+        # compute mean relevance of nearby real embeddings as a multiplier
+        highd_mask = self._highd_relevance_mask(
+            grid_centers, coords_2d, records, keep_mask
+        )
+
+        # Apply both masks and select top-N
+        masked_scores = frontier_scores * keep_mask * highd_mask
         top_indices = np.argsort(masked_scores)[::-1][:top_n]
         top_indices = [i for i in top_indices if masked_scores[i] > 0]
 
@@ -231,8 +250,25 @@ class FrontierDetector:
 
         return arr, valid_records
 
+    @staticmethod
+    def _embedding_cache_key(embeddings: np.ndarray) -> str:
+        """Compute a fast cache key from embedding shape + sampled content."""
+        n, d = embeddings.shape
+        # Sample first, middle, last rows for a quick fingerprint
+        sample_idx = [0, n // 2, n - 1] if n >= 3 else list(range(n))
+        sample_bytes = embeddings[sample_idx].tobytes()
+        import hashlib
+        content_hash = hashlib.md5(sample_bytes).hexdigest()[:12]
+        return f"{n}x{d}_{content_hash}"
+
     def _fit_umap(self, embeddings: np.ndarray):
-        """Fit UMAP model and return 2D coordinates + model."""
+        """Fit UMAP model and return 2D coordinates + model. Uses cache when data unchanged."""
+        cache_key = self._embedding_cache_key(embeddings)
+
+        if cache_key == self._umap_cache_key and self._umap_cache_model is not None:
+            logger.info(f"UMAP cache hit ({cache_key}), reusing fitted model")
+            return self._umap_cache_coords, self._umap_cache_model
+
         import umap
 
         model = umap.UMAP(
@@ -244,6 +280,12 @@ class FrontierDetector:
         )
         coords_2d = model.fit_transform(embeddings)
         logger.info(f"UMAP fit complete: {embeddings.shape} -> {coords_2d.shape}")
+
+        # Cache the result
+        self._umap_cache_key = cache_key
+        self._umap_cache_model = model
+        self._umap_cache_coords = coords_2d
+
         return coords_2d, model
 
     def _estimate_density(self, coords_2d: np.ndarray):
@@ -270,6 +312,10 @@ class FrontierDetector:
             if indices:
                 centroid = coords_2d[indices].mean(axis=0)
                 centroids_2d.append(centroid)
+
+        if not centroids_2d:
+            logger.warning("No non-empty clusters found; returning empty (0,2) centroid array")
+            return np.empty((0, 2))
 
         result = np.array(centroids_2d)
         logger.info(f"Computed {len(result)} cluster centroids in 2D")
@@ -397,6 +443,53 @@ class FrontierDetector:
                      f"(relevance_radius={relevance_radius:.2f})")
         return mask
 
+    def _highd_relevance_mask(
+        self,
+        grid_centers: np.ndarray,
+        coords_2d: np.ndarray,
+        records: list[dict],
+        spatial_mask: np.ndarray,
+        k: int = 3,
+    ) -> np.ndarray:
+        """
+        Compute high-dimensional relevance for grid cells using nearby real embeddings.
+
+        For each grid cell that passes the spatial mask, find the k nearest
+        real posts (in 2D) and average their high-dim relevance scores.
+        Returns a soft multiplier (0-1) that boosts cells near relevant content.
+
+        Falls back to all-ones if no relevance_analyzer is available.
+        """
+        if self.relevance_analyzer is None:
+            return np.ones(len(grid_centers))
+
+        mask = np.ones(len(grid_centers))
+        # Only compute for cells that passed the spatial gate
+        candidate_idx = np.where(spatial_mask > 0)[0]
+        if len(candidate_idx) == 0:
+            return mask
+
+        # Compute distances from candidate grid cells to all 2D points
+        candidate_centers = grid_centers[candidate_idx]
+        dist_matrix = cdist(candidate_centers, coords_2d, metric='euclidean')
+
+        # Precompute relevance scores for all records (once)
+        record_scores = np.zeros(len(records))
+        for i, r in enumerate(records):
+            emb = r.get('embedding')
+            if emb is not None:
+                record_scores[i] = self.relevance_analyzer.compute_relevance_score(np.array(emb))
+
+        # For each candidate cell, average the relevance of k nearest real posts
+        for j, ci in enumerate(candidate_idx):
+            nearest_k = np.argsort(dist_matrix[j])[:k]
+            scores = record_scores[nearest_k]
+            mask[ci] = float(np.mean(scores)) if len(scores) > 0 else 0.0
+
+        kept = int((mask > 0).sum())
+        logger.info(f"High-dim relevance mask: {kept}/{len(candidate_idx)} candidates have relevance > 0")
+        return mask
+
     def _compute_zone_relevance(self, nearby_posts: list[dict]) -> float:
         """
         Compute relevance score for a zone from its nearby posts' real embeddings.
@@ -411,7 +504,10 @@ class FrontierDetector:
         for post in nearby_posts:
             emb = post.get('embedding')
             if emb is not None:
-                scores.append(self.relevance_analyzer.compute_relevance_score(np.array(emb)))
+                try:
+                    scores.append(self.relevance_analyzer.compute_relevance_score(np.array(emb)))
+                except Exception as e:
+                    logger.debug(f"Relevance scoring failed for post: {e}")
 
         if not scores:
             return 0.0

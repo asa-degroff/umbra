@@ -13,7 +13,7 @@ from .analyzer import DiversityAnalyzer
 from .network_scraper import NetworkScraper
 from .graph import SocialGraph, build_umbra_graph
 from .relevance import RelevanceAnalyzer, create_relevance_analyzer
-from .frontier import FrontierDetector, FrontierZone, create_frontier_detector
+from .frontier import FrontierDetector, FrontierZone, InsufficientDataError, create_frontier_detector
 from .source_discovery import (
     SourceDiscovery,
     create_source_discovery,
@@ -36,6 +36,7 @@ __all__ = [
     'create_relevance_analyzer',
     'FrontierDetector',
     'FrontierZone',
+    'InsufficientDataError',
     'create_frontier_detector',
     'SourceDiscovery',
     'create_source_discovery',

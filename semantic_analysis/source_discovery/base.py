@@ -2,10 +2,15 @@
 Base classes and dataclasses for source discovery.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, Protocol
 from abc import ABC, abstractmethod
+
+# Sentence boundary regex: split after .!? followed by whitespace and
+# an uppercase letter (avoids splitting on abbreviations like "Dr. Smith")
+_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
 
 
 @dataclass
@@ -117,17 +122,20 @@ class SourceProvider(ABC):
                 if current_chunk:
                     chunks.append(current_chunk)
                 
-                # If single paragraph is too long, split on sentences
+                # If single paragraph is too long, split on sentence boundaries
                 if len(para) > max_chars:
-                    sentences = para.replace('. ', '.|').split('|')
+                    sentences = _SENTENCE_SPLIT_RE.split(para)
                     current_chunk = ""
                     for sent in sentences:
                         if len(current_chunk) + len(sent) + 1 <= max_chars:
-                            current_chunk += sent + " "
+                            if current_chunk:
+                                current_chunk += " " + sent
+                            else:
+                                current_chunk = sent
                         else:
                             if current_chunk:
                                 chunks.append(current_chunk.strip())
-                            current_chunk = sent + " "
+                            current_chunk = sent
                 else:
                     current_chunk = para
         

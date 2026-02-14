@@ -54,6 +54,13 @@ class SourceDiscovery:
             ollama_url: Ollama URL for query generation
             source_db: Optional SourceDB for persisting discovered sources
         """
+        if storage is None:
+            raise ValueError("storage is required")
+        if embedder is None:
+            raise ValueError("embedder is required")
+        if frontier_detector is None:
+            raise ValueError("frontier_detector is required")
+
         self.storage = storage
         self.embedder = embedder
         self.frontier_detector = frontier_detector
@@ -98,6 +105,7 @@ class SourceDiscovery:
         
         all_sources: list[DiscoveredSource] = []
         explored_zone_ids: set[tuple] = set()  # Track by grid cell
+        seen_urls: set[tuple[str, int]] = set()  # (url, chunk_index) dedup within run
         
         # Initial frontier detection
         logger.info(f"Starting discovery: max_rounds={max_rounds}, max_sources={max_total_sources}")
@@ -119,6 +127,7 @@ class SourceDiscovery:
         
         logger.info(f"Detected {len(current_zones)} initial frontier zones")
         
+        round_num = -1
         for round_num in range(max_rounds):
             logger.info(f"=== Round {round_num + 1}/{max_rounds} ===")
             
@@ -190,6 +199,16 @@ class SourceDiscovery:
                         else:
                             logger.debug(f"Skipping already-discovered URL: {s.url}")
                     zone_sources = unique_sources
+
+                # Deduplicate within this run (across zones/rounds)
+                if zone_sources:
+                    deduped = []
+                    for s in zone_sources:
+                        key = (s.url, s.chunk_index)
+                        if key not in seen_urls:
+                            seen_urls.add(key)
+                            deduped.append(s)
+                    zone_sources = deduped
 
                 if not zone_sources:
                     explored_zone_ids.add(zone_id)
