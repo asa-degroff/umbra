@@ -1,0 +1,216 @@
+"""
+Query generator using LLM to create search queries from frontier context.
+
+Uses Qwen 3 14B 4-bit via Ollama.
+"""
+
+import logging
+import json
+import requests
+from typing import Optional
+
+logger = logging.getLogger('umbra.source_discovery.query_generator')
+
+DEFAULT_MODEL = "qwen3:14b-q4_K_M"
+FALLBACK_MODEL = "qwen2.5:7b"
+
+
+class QueryGenerator:
+    """Generates search queries from frontier zone context using LLM."""
+    
+    def __init__(
+        self,
+        ollama_url: str = "http://localhost:11434",
+        model: str = DEFAULT_MODEL,
+        temperature: float = 0.7,
+    ):
+        """
+        Initialize query generator.
+        
+        Args:
+            ollama_url: Ollama API URL
+            model: Model to use (default: qwen3:14b-q4_K_M)
+            temperature: Generation temperature
+        """
+        self.ollama_url = ollama_url.rstrip('/')
+        self.model = model
+        self.temperature = temperature
+        self._verified_model = None
+    
+    def _verify_model(self) -> str:
+        """Verify model is available, fall back if needed."""
+        if self._verified_model:
+            return self._verified_model
+        
+        try:
+            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            if response.ok:
+                models = [m['name'] for m in response.json().get('models', [])]
+                
+                # Check primary model
+                if self.model in models or self.model.split(':')[0] in [m.split(':')[0] for m in models]:
+                    self._verified_model = self.model
+                    return self.model
+                
+                # Check fallback
+                if FALLBACK_MODEL in models or FALLBACK_MODEL.split(':')[0] in [m.split(':')[0] for m in models]:
+                    logger.warning(f"Model {self.model} not found, using fallback {FALLBACK_MODEL}")
+                    self._verified_model = FALLBACK_MODEL
+                    return FALLBACK_MODEL
+                
+                # Use first available qwen model
+                qwen_models = [m for m in models if 'qwen' in m.lower()]
+                if qwen_models:
+                    self._verified_model = qwen_models[0]
+                    logger.warning(f"Using available model: {self._verified_model}")
+                    return self._verified_model
+                    
+        except Exception as e:
+            logger.error(f"Error verifying model: {e}")
+        
+        # Default to configured model and hope for the best
+        self._verified_model = self.model
+        return self.model
+    
+    def generate_queries(
+        self,
+        nearby_posts: list[dict],
+        num_queries: int = 3,
+        focus_topics: Optional[list[str]] = None,
+    ) -> list[str]:
+        """
+        Generate search queries based on frontier zone context.
+        
+        Args:
+            nearby_posts: Posts near the frontier zone (with 'text' field)
+            num_queries: Number of queries to generate
+            focus_topics: Optional topic hints to guide generation
+            
+        Returns:
+            List of search query strings
+        """
+        if not nearby_posts:
+            return []
+        
+        # Build context from nearby posts
+        context_texts = []
+        for post in nearby_posts[:5]:  # Use up to 5 posts
+            text = post.get('text', '')[:300]  # Truncate long posts
+            if text:
+                context_texts.append(f"- {text}")
+        
+        if not context_texts:
+            return []
+        
+        context = "\n".join(context_texts)
+        
+        # Build focus hint
+        if focus_topics:
+            focus_hint = f"\nFocus areas: {', '.join(focus_topics)}"
+        else:
+            focus_hint = "\nFocus areas: consciousness, AI systems, emergence, identity, protocols, cognition"
+        
+        prompt = f"""You are helping explore the boundaries of a knowledge space. Given these existing posts that represent the edge of explored territory:
+
+{context}
+
+Generate {num_queries} diverse Wikipedia search queries to find content that explores ADJACENT but UNEXPLORED topics. The queries should:
+1. Bridge from the existing content to new but related areas
+2. Be specific enough to find relevant articles
+3. Avoid generic or overly broad terms
+4. Focus on concepts, theories, or phenomena (not news or current events)
+{focus_hint}
+
+Return ONLY a JSON array of query strings, no explanation. Example:
+["embodied cognition theory", "autopoiesis systems biology", "phenomenal consciousness"]
+
+Queries:"""
+
+        try:
+            model = self._verify_model()
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    'model': model,
+                    'prompt': prompt,
+                    'temperature': self.temperature,
+                    'stream': False,
+                },
+                timeout=60,
+            )
+            response.raise_for_status()
+            
+            result = response.json().get('response', '')
+            queries = self._parse_queries(result, num_queries)
+            
+            logger.info(f"Generated {len(queries)} queries: {queries}")
+            return queries
+            
+        except Exception as e:
+            logger.error(f"Query generation error: {e}")
+            return self._fallback_queries(nearby_posts, num_queries)
+    
+    def _parse_queries(self, response: str, expected: int) -> list[str]:
+        """Parse LLM response to extract query strings."""
+        # Try to find JSON array in response
+        response = response.strip()
+        
+        # Look for JSON array
+        start = response.find('[')
+        end = response.rfind(']') + 1
+        
+        if start >= 0 and end > start:
+            try:
+                queries = json.loads(response[start:end])
+                if isinstance(queries, list):
+                    # Filter to strings only
+                    return [q for q in queries if isinstance(q, str) and q.strip()][:expected]
+            except json.JSONDecodeError:
+                pass
+        
+        # Fallback: split by newlines and clean
+        lines = response.split('\n')
+        queries = []
+        for line in lines:
+            line = line.strip().strip('-').strip('•').strip('"').strip("'").strip()
+            # Skip lines that look like JSON artifacts or explanations
+            if line and not line.startswith('{') and not line.startswith('[') and len(line) > 3 and len(line) < 100:
+                queries.append(line)
+        
+        return queries[:expected]
+    
+    def _fallback_queries(self, nearby_posts: list[dict], num_queries: int) -> list[str]:
+        """Generate simple fallback queries from post content."""
+        # Extract potential keywords from posts
+        all_text = " ".join(p.get('text', '')[:200] for p in nearby_posts)
+        
+        # Simple keyword extraction (very basic)
+        words = all_text.lower().split()
+        # Filter to longer words that might be meaningful
+        keywords = [w for w in words if len(w) > 6 and w.isalpha()]
+        
+        # Take unique keywords
+        seen = set()
+        unique = []
+        for w in keywords:
+            if w not in seen:
+                seen.add(w)
+                unique.append(w)
+        
+        # Create simple queries
+        queries = []
+        for kw in unique[:num_queries]:
+            queries.append(f"{kw} theory")
+        
+        return queries if queries else ["emergence complex systems", "consciousness philosophy"]
+
+
+def create_query_generator(
+    ollama_url: str = "http://localhost:11434",
+    model: Optional[str] = None,
+) -> QueryGenerator:
+    """Factory function to create a QueryGenerator."""
+    return QueryGenerator(
+        ollama_url=ollama_url,
+        model=model or DEFAULT_MODEL,
+    )

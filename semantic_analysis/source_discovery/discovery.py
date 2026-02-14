@@ -1,0 +1,323 @@
+"""
+Main source discovery loop.
+
+Orchestrates frontier detection, query generation, source fetching,
+and iterative expansion.
+"""
+
+import logging
+from typing import Optional
+import numpy as np
+
+from .base import DiscoveredSource, DiscoveryResult, SourceProvider
+from .wikipedia import WikipediaProvider
+from .query_generator import QueryGenerator
+
+logger = logging.getLogger('umbra.source_discovery.discovery')
+
+
+class SourceDiscovery:
+    """
+    Discovers external sources that fall within frontier zones.
+    
+    Uses an iterative approach:
+    1. Detect frontier zones
+    2. Generate queries from zone context
+    3. Fetch sources and embed them
+    4. Classify sources as frontier/pending
+    5. Re-detect frontiers with new sources
+    6. Repeat until limits reached
+    """
+    
+    def __init__(
+        self,
+        storage,
+        embedder,
+        frontier_detector,
+        relevance_analyzer=None,
+        providers: Optional[list[SourceProvider]] = None,
+        query_generator: Optional[QueryGenerator] = None,
+        ollama_url: str = "http://localhost:11434",
+    ):
+        """
+        Initialize source discovery.
+        
+        Args:
+            storage: SemanticStorage instance
+            embedder: EmbeddingGenerator instance
+            frontier_detector: FrontierDetector instance
+            relevance_analyzer: Optional RelevanceAnalyzer for scoring
+            providers: List of source providers (default: Wikipedia)
+            query_generator: Optional custom query generator
+            ollama_url: Ollama URL for query generation
+        """
+        self.storage = storage
+        self.embedder = embedder
+        self.frontier_detector = frontier_detector
+        self.relevance_analyzer = relevance_analyzer
+        
+        self.providers = providers or [WikipediaProvider()]
+        self.query_generator = query_generator or QueryGenerator(ollama_url)
+    
+    def discover(
+        self,
+        max_rounds: int = 3,
+        max_sources_per_zone: int = 10,
+        max_total_sources: int = 50,
+        initial_zones: int = 5,
+        queries_per_zone: int = 3,
+        days: int = 30,
+        source: str = 'all',
+        chunk_sources: bool = True,
+        chunk_size: int = 1500,
+        frontier_threshold: float = 0.4,
+    ) -> DiscoveryResult:
+        """
+        Run the source discovery loop.
+        
+        Args:
+            max_rounds: Maximum expansion rounds
+            max_sources_per_zone: Sources to fetch per zone
+            max_total_sources: Hard cap on total sources
+            initial_zones: Number of frontier zones to start with
+            queries_per_zone: Queries to generate per zone
+            days: Lookback period for frontier detection
+            source: Content source filter ('umbra', 'network', 'all')
+            chunk_sources: Whether to chunk long sources
+            chunk_size: Characters per chunk
+            frontier_threshold: Min relevance to count as "in frontier"
+            
+        Returns:
+            DiscoveryResult with categorized sources
+        """
+        result = DiscoveryResult()
+        
+        all_sources: list[DiscoveredSource] = []
+        explored_zone_ids: set[tuple] = set()  # Track by grid cell
+        
+        # Initial frontier detection
+        logger.info(f"Starting discovery: max_rounds={max_rounds}, max_sources={max_total_sources}")
+        
+        try:
+            current_zones = self.frontier_detector.detect_frontiers(
+                days=days,
+                top_n=initial_zones,
+                source=source,
+            )
+        except Exception as e:
+            logger.error(f"Initial frontier detection failed: {e}")
+            result.errors.append(f"Frontier detection failed: {e}")
+            return result
+        
+        if not current_zones:
+            logger.warning("No frontier zones detected")
+            return result
+        
+        logger.info(f"Detected {len(current_zones)} initial frontier zones")
+        
+        for round_num in range(max_rounds):
+            logger.info(f"=== Round {round_num + 1}/{max_rounds} ===")
+            
+            # Check total source cap
+            if len(all_sources) >= max_total_sources:
+                logger.info(f"Reached max_total_sources cap ({max_total_sources})")
+                result.capped = True
+                break
+            
+            zones_this_round = 0
+            
+            for zone in current_zones:
+                zone_id = zone.grid_cell
+                
+                if zone_id in explored_zone_ids:
+                    continue
+                
+                if len(all_sources) >= max_total_sources:
+                    result.capped = True
+                    break
+                
+                # Generate queries for this zone
+                queries = self.query_generator.generate_queries(
+                    zone.nearby_posts,
+                    num_queries=queries_per_zone,
+                )
+                
+                if not queries:
+                    logger.debug(f"No queries generated for zone {zone_id}")
+                    explored_zone_ids.add(zone_id)
+                    continue
+                
+                # Fetch sources for each query
+                zone_sources: list[DiscoveredSource] = []
+                sources_remaining = max_sources_per_zone
+                
+                for query in queries:
+                    if sources_remaining <= 0:
+                        break
+                    
+                    for provider in self.providers:
+                        try:
+                            if chunk_sources:
+                                sources = provider.search_with_chunks(
+                                    query,
+                                    limit=min(3, sources_remaining),
+                                    chunk_size=chunk_size,
+                                )
+                            else:
+                                sources = provider.search(
+                                    query,
+                                    limit=min(3, sources_remaining),
+                                )
+                            
+                            zone_sources.extend(sources)
+                            sources_remaining -= len(sources)
+                            
+                        except Exception as e:
+                            logger.error(f"Provider {provider.source_type} error: {e}")
+                            result.errors.append(f"{provider.source_type}: {e}")
+                
+                if not zone_sources:
+                    explored_zone_ids.add(zone_id)
+                    continue
+                
+                # Embed sources
+                try:
+                    texts = [s.excerpt for s in zone_sources]
+                    embeddings = self.embedder.embed_batch(texts)
+                    
+                    for source, embedding in zip(zone_sources, embeddings):
+                        source.embedding = embedding
+                        source.frontier_zone_id = str(zone_id)
+                        
+                        # Score relevance
+                        if self.relevance_analyzer:
+                            source.relevance_score = self.relevance_analyzer.compute_relevance_score(
+                                np.array(embedding)
+                            )
+                        
+                        # Classify: frontier vs pending
+                        if source.relevance_score >= frontier_threshold:
+                            source.status = 'frontier'
+                            result.frontier_sources.append(source)
+                        else:
+                            source.status = 'pending'
+                            result.pending_sources.append(source)
+                        
+                        all_sources.append(source)
+                        
+                except Exception as e:
+                    logger.error(f"Embedding error: {e}")
+                    result.errors.append(f"Embedding: {e}")
+                
+                explored_zone_ids.add(zone_id)
+                zones_this_round += 1
+                
+                logger.info(f"Zone {zone_id}: {len(zone_sources)} sources "
+                           f"({sum(1 for s in zone_sources if s.status == 'frontier')} frontier)")
+            
+            result.zones_explored = len(explored_zone_ids)
+            
+            if zones_this_round == 0:
+                logger.info("No new zones explored this round")
+                break
+            
+            # Re-detect frontiers for next round (if not last round)
+            if round_num < max_rounds - 1 and len(all_sources) < max_total_sources:
+                try:
+                    # Note: In a more sophisticated implementation, we would
+                    # add the discovered source embeddings to the frontier
+                    # detection to find newly revealed frontiers.
+                    # For now, we just re-run with the same data.
+                    new_zones = self.frontier_detector.detect_frontiers(
+                        days=days,
+                        top_n=initial_zones,
+                        source=source,
+                    )
+                    
+                    # Filter to unexplored zones
+                    current_zones = [z for z in new_zones if z.grid_cell not in explored_zone_ids]
+                    
+                    if not current_zones:
+                        logger.info("No new frontier zones to explore")
+                        break
+                    
+                    logger.info(f"Found {len(current_zones)} new zones for next round")
+                    
+                except Exception as e:
+                    logger.error(f"Re-detection failed: {e}")
+                    result.errors.append(f"Re-detection: {e}")
+                    break
+        
+        result.rounds_completed = round_num + 1
+        result.total_sources_found = len(all_sources)
+        
+        logger.info(f"Discovery complete: {len(result.frontier_sources)} frontier, "
+                   f"{len(result.pending_sources)} pending, "
+                   f"{result.zones_explored} zones, {result.rounds_completed} rounds")
+        
+        return result
+    
+    def evaluate_pending_sources(
+        self,
+        pending_sources: list[DiscoveredSource],
+        threshold: float = 0.4,
+    ) -> tuple[list[DiscoveredSource], list[DiscoveredSource]]:
+        """
+        Re-evaluate pending sources against current frontiers.
+        
+        Call this periodically to check if pending sources have
+        become relevant as Umbra's content evolves.
+        
+        Args:
+            pending_sources: Sources to re-evaluate
+            threshold: Relevance threshold for frontier status
+            
+        Returns:
+            Tuple of (newly_frontier, still_pending)
+        """
+        if not self.relevance_analyzer:
+            return [], pending_sources
+        
+        # Recompute Umbra centroid with latest data
+        self.relevance_analyzer.compute_umbra_centroid(days=30)
+        
+        newly_frontier = []
+        still_pending = []
+        
+        for source in pending_sources:
+            if not source.embedding:
+                still_pending.append(source)
+                continue
+            
+            score = self.relevance_analyzer.compute_relevance_score(
+                np.array(source.embedding)
+            )
+            source.relevance_score = score
+            
+            if score >= threshold:
+                source.status = 'frontier'
+                newly_frontier.append(source)
+            else:
+                still_pending.append(source)
+        
+        logger.info(f"Re-evaluated {len(pending_sources)} pending: "
+                   f"{len(newly_frontier)} promoted to frontier")
+        
+        return newly_frontier, still_pending
+
+
+def create_source_discovery(
+    storage,
+    embedder,
+    frontier_detector,
+    relevance_analyzer=None,
+    ollama_url: str = "http://localhost:11434",
+) -> SourceDiscovery:
+    """Factory function to create a configured SourceDiscovery."""
+    return SourceDiscovery(
+        storage=storage,
+        embedder=embedder,
+        frontier_detector=frontier_detector,
+        relevance_analyzer=relevance_analyzer,
+        ollama_url=ollama_url,
+    )

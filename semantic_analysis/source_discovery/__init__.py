@@ -1,0 +1,22 @@
+"""
+Source Discovery Module
+
+Discovers external sources (Wikipedia, etc.) that fall within
+frontier zones of Umbra's semantic space.
+"""
+
+from .base import DiscoveredSource, DiscoveryResult, SourceProvider
+from .wikipedia import WikipediaProvider
+from .query_generator import QueryGenerator, create_query_generator
+from .discovery import SourceDiscovery, create_source_discovery
+
+__all__ = [
+    'DiscoveredSource',
+    'DiscoveryResult',
+    'SourceProvider',
+    'WikipediaProvider',
+    'QueryGenerator',
+    'create_query_generator',
+    'SourceDiscovery',
+    'create_source_discovery',
+]

@@ -14,6 +14,14 @@ from .network_scraper import NetworkScraper
 from .graph import SocialGraph, build_umbra_graph
 from .relevance import RelevanceAnalyzer, create_relevance_analyzer
 from .frontier import FrontierDetector, FrontierZone, create_frontier_detector
+from .source_discovery import (
+    SourceDiscovery,
+    create_source_discovery,
+    DiscoveredSource,
+    DiscoveryResult,
+    WikipediaProvider,
+    QueryGenerator,
+)
 
 __all__ = [
     'ATProtoScraper',
@@ -28,6 +36,12 @@ __all__ = [
     'FrontierDetector',
     'FrontierZone',
     'create_frontier_detector',
+    'SourceDiscovery',
+    'create_source_discovery',
+    'DiscoveredSource',
+    'DiscoveryResult',
+    'WikipediaProvider',
+    'QueryGenerator',
     'run_analysis',
     'run_network_analysis',
 ]

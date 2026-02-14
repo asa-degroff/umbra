@@ -319,3 +319,74 @@ async def get_relevance_stats():
     except Exception as e:
         logger.error(f"Error getting relevance stats: {e}")
         return {"error": str(e)}
+
+
+# ============================================================================
+# Frontier Detection Endpoints
+# ============================================================================
+
+@router.get("/frontier/zones")
+async def get_frontier_zones(
+    days: int = Query(30, ge=7, le=90),
+    top_n: int = Query(10, ge=1, le=20),
+    source: str = Query("all", pattern="^(umbra|network|all)$"),
+    refresh: bool = Query(False),
+):
+    """
+    Get detected frontier zones.
+    
+    Frontier zones are unexplored regions in embedding space
+    adjacent to existing content clusters.
+    """
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        return frontier_service.get_zones(
+            days=days,
+            top_n=top_n,
+            source=source,
+            force_refresh=refresh,
+        )
+    except Exception as e:
+        logger.error(f"Error getting frontier zones: {e}")
+        return {"zones": [], "error": str(e)}
+
+
+@router.get("/frontier/discover")
+async def discover_sources(
+    max_rounds: int = Query(2, ge=1, le=5),
+    max_sources: int = Query(25, ge=5, le=100),
+    initial_zones: int = Query(3, ge=1, le=10),
+    days: int = Query(30, ge=7, le=90),
+    source: str = Query("all", pattern="^(umbra|network|all)$"),
+    refresh: bool = Query(False),
+):
+    """
+    Run source discovery to find external content in frontier zones.
+    
+    Searches Wikipedia for content that falls within detected frontiers.
+    Note: This can take 30-60 seconds on first run.
+    """
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        return frontier_service.discover_sources(
+            max_rounds=max_rounds,
+            max_total_sources=max_sources,
+            initial_zones=initial_zones,
+            days=days,
+            source=source,
+            force_refresh=refresh,
+        )
+    except Exception as e:
+        logger.error(f"Error in source discovery: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/frontier/stats")
+async def get_frontier_stats():
+    """Get frontier service statistics."""
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        return frontier_service.get_stats()
+    except Exception as e:
+        logger.error(f"Error getting frontier stats: {e}")
+        return {"error": str(e)}
