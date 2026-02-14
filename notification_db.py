@@ -388,6 +388,76 @@ class NotificationDB:
         except Exception as e:
             logger.error(f"Error marking notification processed: {e}")
 
+    def ensure_processed(self, uri: str, notif_dict: Dict = None, status: str = 'processed'):
+        """
+        Mark a notification as processed, inserting it first if it doesn't exist in the DB.
+
+        This prevents a race condition where process_mention finds a consecutive chain post
+        on the live thread (via Bluesky API) and tries to mark it processed, but the
+        notification for that post hasn't been fetched/queued yet. A plain UPDATE would
+        silently affect 0 rows, allowing the notification to be queued and processed later
+        as a duplicate.
+
+        Args:
+            uri: The notification URI to mark as processed
+            notif_dict: Optional dict with notification fields (author, reason, etc.)
+                        used to INSERT the row if it doesn't exist yet
+            status: Status to set (default: 'processed')
+        """
+        try:
+            now = datetime.now().isoformat()
+            cursor = self.conn.execute(
+                "UPDATE notifications SET status = ?, processed_at = ? WHERE uri = ?",
+                (status, now, uri)
+            )
+            if cursor.rowcount == 0:
+                # URI not in DB yet — insert a pre-emptive row so future fetches
+                # see it as already processed and skip it.
+                notif_dict = notif_dict or {}
+                author = notif_dict.get('author', {}) or {}
+                record = notif_dict.get('record', {}) or {}
+                text = (record.get('text', '') or '')[:500]
+
+                # Extract thread info
+                parent_uri = None
+                root_uri = None
+                reply_info = record.get('reply', {}) or {}
+                if isinstance(reply_info, dict):
+                    parent_info = reply_info.get('parent', {}) or {}
+                    root_info = reply_info.get('root', {}) or {}
+                    parent_uri = parent_info.get('uri')
+                    root_uri = root_info.get('uri')
+                if not root_uri:
+                    root_uri = uri
+
+                metadata = json.dumps({
+                    'cid': notif_dict.get('cid'),
+                    'pre_emptive': True,  # Flag that this was inserted before notification fetch
+                })
+
+                self.conn.execute("""
+                    INSERT OR IGNORE INTO notifications
+                    (uri, indexed_at, reason, author_handle, author_did, text,
+                     parent_uri, root_uri, status, processed_at, metadata, retry_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """, (
+                    uri,
+                    notif_dict.get('indexed_at', now),
+                    notif_dict.get('reason', 'reply'),
+                    author.get('handle', ''),
+                    author.get('did', ''),
+                    text,
+                    parent_uri,
+                    root_uri,
+                    status,
+                    now,
+                    metadata,
+                ))
+                logger.info(f"Pre-emptively inserted notification as '{status}' to prevent duplicate processing: {uri}")
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error in ensure_processed for {uri}: {e}")
+
     def mark_consecutive_chain_processed(self, root_uri: str, author_did: str,
                                           reference_time: str, status: str = 'processed',
                                           time_window_seconds: int = 120) -> int:

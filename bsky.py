@@ -1637,9 +1637,32 @@ def process_mention(umbra_agent, atproto_client, notification_data, queue_filepa
                     # Mark the last consecutive post as processed to prevent duplicate processing
                     # This handles the case where both posts A (1/2) and B (2/2) are notifications
                     # We're processing A but replying to B, so we should mark B as processed too
+                    # Uses ensure_processed to INSERT a pre-emptive row if the notification
+                    # hasn't been fetched/queued yet, preventing a race condition where a
+                    # later fetch cycle would queue and re-process it as a duplicate.
                     if NOTIFICATION_DB:
                         logger.debug(f"[{correlation_id}] Marking last consecutive post as processed to prevent duplicate: {last_uri}")
-                        NOTIFICATION_DB.mark_processed(last_uri, status='processed')
+                        # Build a minimal notif_dict so ensure_processed can INSERT if needed
+                        if isinstance(notification_data, dict):
+                            last_post_author = notification_data.get('author', {})
+                            last_post_record = notification_data.get('record', {})
+                        else:
+                            last_post_author = {
+                                'handle': getattr(notification_data.author, 'handle', ''),
+                                'did': getattr(notification_data.author, 'did', ''),
+                            }
+                            last_post_record = {}
+                        last_post_notif = {
+                            'uri': last_uri,
+                            'cid': last_cid,
+                            'reason': 'reply',
+                            'author': last_post_author,
+                            'record': {
+                                'text': last_text,
+                                'reply': last_post_record.get('reply', {}),
+                            },
+                        }
+                        NOTIFICATION_DB.ensure_processed(last_uri, notif_dict=last_post_notif)
                 else:
                     logger.debug(f"[{correlation_id}] No consecutive posts found (mention is last post)")
             else:
