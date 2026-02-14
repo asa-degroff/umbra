@@ -8,7 +8,15 @@ import type { Event } from './types'
 import { WS_URL } from './lib/config'
 import './App.css'
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 2 * 60 * 1000,       // Data fresh for 2 minutes before refetch on mount
+      gcTime: 10 * 60 * 1000,         // Keep unused cache entries for 10 minutes
+      refetchOnWindowFocus: false,     // Don't refetch when user alt-tabs back
+    },
+  },
+})
 
 function Dashboard() {
   const [activeView, setActiveView] = useState('overview')
