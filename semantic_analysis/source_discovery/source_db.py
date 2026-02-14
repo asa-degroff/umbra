@@ -7,6 +7,7 @@ Follows the same patterns as notification_db.py for consistency.
 import json
 import sqlite3
 import logging
+import threading
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -23,6 +24,7 @@ class SourceDB:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(exist_ok=True, parents=True)
         self.conn = None
+        self._lock = threading.Lock()
         self._init_db()
 
     def _init_db(self):
@@ -80,30 +82,31 @@ class SourceDB:
             Number of newly inserted sources.
         """
         inserted = 0
-        for source in sources:
-            embedding_json = json.dumps(source.embedding) if source.embedding else None
-            discovered_at = source.discovered_at.isoformat()
+        with self._lock:
+            for source in sources:
+                embedding_json = json.dumps(source.embedding) if source.embedding else None
+                discovered_at = source.discovered_at.isoformat()
 
-            try:
-                cursor = self.conn.execute("""
-                    INSERT OR IGNORE INTO discovered_sources
-                    (title, url, excerpt, full_text, source_type, relevance_score,
-                     frontier_zone_id, embedding, discovered_at, status,
-                     query_used, chunk_index, total_chunks)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    source.title, source.url, source.excerpt, source.full_text,
-                    source.source_type, source.relevance_score,
-                    source.frontier_zone_id, embedding_json, discovered_at,
-                    source.status, source.query_used,
-                    source.chunk_index, source.total_chunks,
-                ))
-                if cursor.rowcount > 0:
-                    inserted += 1
-            except sqlite3.Error as e:
-                logger.error(f"Error saving source {source.url}: {e}")
+                try:
+                    cursor = self.conn.execute("""
+                        INSERT OR IGNORE INTO discovered_sources
+                        (title, url, excerpt, full_text, source_type, relevance_score,
+                         frontier_zone_id, embedding, discovered_at, status,
+                         query_used, chunk_index, total_chunks)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        source.title, source.url, source.excerpt, source.full_text,
+                        source.source_type, source.relevance_score,
+                        source.frontier_zone_id, embedding_json, discovered_at,
+                        source.status, source.query_used,
+                        source.chunk_index, source.total_chunks,
+                    ))
+                    if cursor.rowcount > 0:
+                        inserted += 1
+                except sqlite3.Error as e:
+                    logger.error(f"Error saving source {source.url}: {e}")
 
-        self.conn.commit()
+            self.conn.commit()
         logger.info(f"Saved {inserted}/{len(sources)} new sources to DB")
         return inserted
 
@@ -145,11 +148,12 @@ class SourceDB:
 
     def update_status(self, source_id: int, status: str):
         """Change status of a source."""
-        self.conn.execute(
-            "UPDATE discovered_sources SET status = ? WHERE id = ?",
-            (status, source_id),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "UPDATE discovered_sources SET status = ? WHERE id = ?",
+                (status, source_id),
+            )
+            self.conn.commit()
 
     def get_by_url(self, url: str) -> list[DiscoveredSource]:
         """Check if a URL has already been discovered."""
