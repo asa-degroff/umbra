@@ -7,6 +7,7 @@ Provides cached access to frontier detection and source discovery.
 import asyncio
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Optional
 import sys
@@ -156,12 +157,32 @@ class FrontierService:
                 return cached
         
         try:
-            zones = _frontier_detector.detect_frontiers(
-                days=days,
-                top_n=top_n,
-                source=source,
-            )
-            
+            # Retry up to 3 times on transient ChromaDB errors
+            last_err = None
+            for attempt in range(3):
+                try:
+                    zones = _frontier_detector.detect_frontiers(
+                        days=days,
+                        top_n=top_n,
+                        source=source,
+                    )
+                    break
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e)
+                    # Retry on ChromaDB contention / InsufficientDataError from 0 embeddings
+                    if "got 0" in err_str or "Error finding id" in err_str:
+                        logger.warning(f"Frontier detection attempt {attempt + 1}/3 failed (transient): {e}")
+                        time.sleep(1 + attempt)
+                        continue
+                    raise  # Non-transient error, don't retry
+            else:
+                # All retries exhausted — serve stale cache if available
+                if _cache.get('zones') is not None:
+                    logger.warning("All retries failed, serving stale cached zones")
+                    return _cache['zones']
+                raise last_err
+
             result = {
                 "zones": [
                     {
