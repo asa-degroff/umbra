@@ -300,11 +300,10 @@ class FrontierDetector:
         coords_2d: np.ndarray,
     ) -> np.ndarray:
         """Compute cluster centroids in 2D space using DiversityAnalyzer clustering."""
-        from .analyzer import DiversityAnalyzer
+        from .analyzer import find_clusters
 
         weights = np.ones(len(embeddings))
-        # _find_clusters is a pure function that doesn't use self
-        clusters = DiversityAnalyzer._find_clusters(None, embeddings, weights, self.n_clusters)
+        clusters = find_clusters(embeddings, weights, self.n_clusters)
 
         centroids_2d = []
         for cluster in clusters:
