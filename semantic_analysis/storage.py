@@ -119,6 +119,18 @@ class SemanticStorage:
         if len(records) != len(embeddings):
             raise ValueError(f"Record/embedding count mismatch: {len(records)} vs {len(embeddings)}")
         
+        # Deduplicate by URI (keep last occurrence)
+        seen_uris = {}
+        for i, record in enumerate(records):
+            seen_uris[record['uri']] = i
+        
+        unique_indices = sorted(seen_uris.values())
+        records = [records[i] for i in unique_indices]
+        embeddings = [embeddings[i] for i in unique_indices]
+        
+        if len(records) < len(seen_uris):
+            logger.info(f"Deduplicated: {len(seen_uris)} -> {len(records)} records")
+        
         # Prepare data for ChromaDB
         ids = []
         documents = []

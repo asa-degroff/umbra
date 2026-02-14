@@ -12,6 +12,7 @@ from .storage import SemanticStorage
 from .analyzer import DiversityAnalyzer
 from .network_scraper import NetworkScraper
 from .graph import SocialGraph, build_umbra_graph
+from .relevance import RelevanceAnalyzer, create_relevance_analyzer
 
 __all__ = [
     'ATProtoScraper',
@@ -21,6 +22,8 @@ __all__ = [
     'NetworkScraper',
     'SocialGraph',
     'build_umbra_graph',
+    'RelevanceAnalyzer',
+    'create_relevance_analyzer',
     'run_analysis',
     'run_network_analysis',
 ]
