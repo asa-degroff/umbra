@@ -21,6 +21,7 @@ from .source_discovery import (
     DiscoveryResult,
     WikipediaProvider,
     QueryGenerator,
+    SourceDB,
 )
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     'DiscoveryResult',
     'WikipediaProvider',
     'QueryGenerator',
+    'SourceDB',
     'run_analysis',
     'run_network_analysis',
 ]

@@ -12,6 +12,7 @@ import numpy as np
 from .base import DiscoveredSource, DiscoveryResult, SourceProvider
 from .wikipedia import WikipediaProvider
 from .query_generator import QueryGenerator
+from .source_db import SourceDB
 
 logger = logging.getLogger('umbra.source_discovery.discovery')
 
@@ -38,10 +39,11 @@ class SourceDiscovery:
         providers: Optional[list[SourceProvider]] = None,
         query_generator: Optional[QueryGenerator] = None,
         ollama_url: str = "http://localhost:11434",
+        source_db: Optional[SourceDB] = None,
     ):
         """
         Initialize source discovery.
-        
+
         Args:
             storage: SemanticStorage instance
             embedder: EmbeddingGenerator instance
@@ -50,12 +52,14 @@ class SourceDiscovery:
             providers: List of source providers (default: Wikipedia)
             query_generator: Optional custom query generator
             ollama_url: Ollama URL for query generation
+            source_db: Optional SourceDB for persisting discovered sources
         """
         self.storage = storage
         self.embedder = embedder
         self.frontier_detector = frontier_detector
         self.relevance_analyzer = relevance_analyzer
-        
+        self.source_db = source_db
+
         self.providers = providers or [WikipediaProvider()]
         self.query_generator = query_generator or QueryGenerator(ollama_url)
     
@@ -176,38 +180,53 @@ class SourceDiscovery:
                             logger.error(f"Provider {provider.source_type} error: {e}")
                             result.errors.append(f"{provider.source_type}: {e}")
                 
+                # Deduplicate against DB
+                if self.source_db and zone_sources:
+                    unique_sources = []
+                    for s in zone_sources:
+                        existing = self.source_db.get_by_url(s.url)
+                        if not existing:
+                            unique_sources.append(s)
+                        else:
+                            logger.debug(f"Skipping already-discovered URL: {s.url}")
+                    zone_sources = unique_sources
+
                 if not zone_sources:
                     explored_zone_ids.add(zone_id)
                     continue
-                
+
                 # Embed sources
                 try:
                     texts = [s.excerpt for s in zone_sources]
                     embeddings = self.embedder.embed_batch(texts)
-                    
-                    for source, embedding in zip(zone_sources, embeddings):
-                        source.embedding = embedding
-                        source.frontier_zone_id = str(zone_id)
-                        
+
+                    for source_obj, embedding in zip(zone_sources, embeddings):
+                        source_obj.embedding = embedding
+                        source_obj.frontier_zone_id = str(zone_id)
+
                         # Score relevance
                         if self.relevance_analyzer:
-                            source.relevance_score = self.relevance_analyzer.compute_relevance_score(
+                            source_obj.relevance_score = self.relevance_analyzer.compute_relevance_score(
                                 np.array(embedding)
                             )
-                        
+
                         # Classify: frontier vs pending
-                        if source.relevance_score >= frontier_threshold:
-                            source.status = 'frontier'
-                            result.frontier_sources.append(source)
+                        if source_obj.relevance_score >= frontier_threshold:
+                            source_obj.status = 'frontier'
+                            result.frontier_sources.append(source_obj)
                         else:
-                            source.status = 'pending'
-                            result.pending_sources.append(source)
-                        
-                        all_sources.append(source)
-                        
+                            source_obj.status = 'pending'
+                            result.pending_sources.append(source_obj)
+
+                        all_sources.append(source_obj)
+
                 except Exception as e:
                     logger.error(f"Embedding error: {e}")
                     result.errors.append(f"Embedding: {e}")
+
+                # Persist to DB
+                if self.source_db and zone_sources:
+                    self.source_db.save_sources(zone_sources)
                 
                 explored_zone_ids.add(zone_id)
                 zones_this_round += 1
@@ -224,25 +243,39 @@ class SourceDiscovery:
             # Re-detect frontiers for next round (if not last round)
             if round_num < max_rounds - 1 and len(all_sources) < max_total_sources:
                 try:
-                    # Note: In a more sophisticated implementation, we would
-                    # add the discovered source embeddings to the frontier
-                    # detection to find newly revealed frontiers.
-                    # For now, we just re-run with the same data.
+                    # Build extra data from discovered sources so UMAP sees
+                    # the new embeddings and can reveal new frontier zones
+                    extra_embeddings = [s.embedding for s in all_sources if s.embedding]
+                    extra_records = [
+                        {
+                            'uri': f'discovered:{s.url}',
+                            'text': s.excerpt,
+                            'embedding': s.embedding,
+                            'metadata': {},
+                        }
+                        for s in all_sources if s.embedding
+                    ]
+
+                    logger.info(f"Re-detecting frontiers with {len(extra_embeddings)} "
+                               f"discovered source embeddings")
+
                     new_zones = self.frontier_detector.detect_frontiers(
                         days=days,
                         top_n=initial_zones,
                         source=source,
+                        extra_embeddings=extra_embeddings,
+                        extra_records=extra_records,
                     )
-                    
+
                     # Filter to unexplored zones
                     current_zones = [z for z in new_zones if z.grid_cell not in explored_zone_ids]
-                    
+
                     if not current_zones:
                         logger.info("No new frontier zones to explore")
                         break
-                    
+
                     logger.info(f"Found {len(current_zones)} new zones for next round")
-                    
+
                 except Exception as e:
                     logger.error(f"Re-detection failed: {e}")
                     result.errors.append(f"Re-detection: {e}")
@@ -312,6 +345,7 @@ def create_source_discovery(
     frontier_detector,
     relevance_analyzer=None,
     ollama_url: str = "http://localhost:11434",
+    source_db: Optional[SourceDB] = None,
 ) -> SourceDiscovery:
     """Factory function to create a configured SourceDiscovery."""
     return SourceDiscovery(
@@ -320,4 +354,5 @@ def create_source_discovery(
         frontier_detector=frontier_detector,
         relevance_analyzer=relevance_analyzer,
         ollama_url=ollama_url,
+        source_db=source_db,
     )

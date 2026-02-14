@@ -69,6 +69,8 @@ class FrontierDetector:
         top_n: int = 10,
         nearby_k: int = 5,
         source: str = 'all',
+        extra_embeddings: list[list[float]] | None = None,
+        extra_records: list[dict] | None = None,
     ) -> list[FrontierZone]:
         """
         Detect frontier zones in embedding space.
@@ -78,12 +80,18 @@ class FrontierDetector:
             top_n: Number of top frontier zones to return
             nearby_k: Number of nearby posts per zone
             source: Filter content source - 'umbra', 'network', or 'all'
+            extra_embeddings: Additional embeddings to merge (e.g. from discovered sources)
+            extra_records: Additional records matching extra_embeddings
 
         Returns:
             List of FrontierZone objects sorted by frontier_score descending
         """
         # Fetch embeddings
-        embeddings, records = self._fetch_embeddings(days, source=source)
+        embeddings, records = self._fetch_embeddings(
+            days, source=source,
+            extra_embeddings=extra_embeddings,
+            extra_records=extra_records,
+        )
         if len(embeddings) < self.umap_n_neighbors + 1:
             logger.warning(f"Too few embeddings ({len(embeddings)}) for frontier detection")
             return []
@@ -150,23 +158,31 @@ class FrontierDetector:
                      f"{[f'{z.frontier_score:.3f}' for z in zones[:3]]})")
         return zones
 
-    def _fetch_embeddings(self, days: int, source: str = 'all') -> tuple[np.ndarray, list[dict]]:
+    def _fetch_embeddings(
+        self,
+        days: int,
+        source: str = 'all',
+        extra_embeddings: list[list[float]] | None = None,
+        extra_records: list[dict] | None = None,
+    ) -> tuple[np.ndarray, list[dict]]:
         """
-        Fetch embeddings from storage.
-        
+        Fetch embeddings from storage, optionally merging extra data.
+
         Args:
             days: Lookback period
             source: 'umbra' (Umbra's content only), 'network' (followed accounts), or 'all'
+            extra_embeddings: Additional embeddings to append (e.g. from discovered sources)
+            extra_records: Additional records matching extra_embeddings
         """
         records = self.storage.get_recent(days=days)
         embeddings = []
         valid_records = []
-        
+
         for r in records:
             emb = r.get('embedding')
             if emb is None:
                 continue
-            
+
             # Apply source filter
             is_network = r.get('metadata', {}).get('is_network')
             if source == 'umbra' and is_network:
@@ -174,11 +190,18 @@ class FrontierDetector:
             elif source == 'network' and not is_network:
                 continue
             # 'all' includes everything
-            
+
             embeddings.append(emb)
             valid_records.append(r)
 
-        logger.info(f"Fetched {len(embeddings)} embeddings from last {days} days (source={source})")
+        # Merge extra embeddings (e.g. from discovered sources in iterative expansion)
+        if extra_embeddings and extra_records:
+            for emb, rec in zip(extra_embeddings, extra_records):
+                embeddings.append(emb)
+                valid_records.append(rec)
+            logger.info(f"Merged {len(extra_embeddings)} extra embeddings with storage data")
+
+        logger.info(f"Fetched {len(embeddings)} total embeddings from last {days} days (source={source})")
         return np.array(embeddings), valid_records
 
     def _fit_umap(self, embeddings: np.ndarray):
@@ -211,8 +234,8 @@ class FrontierDetector:
         from .analyzer import DiversityAnalyzer
 
         weights = np.ones(len(embeddings))
-        analyzer = DiversityAnalyzer.__new__(DiversityAnalyzer)
-        clusters = analyzer._find_clusters(embeddings, weights, self.n_clusters)
+        # _find_clusters is a pure function that doesn't use self
+        clusters = DiversityAnalyzer._find_clusters(None, embeddings, weights, self.n_clusters)
 
         centroids_2d = []
         for cluster in clusters:
@@ -277,16 +300,15 @@ class FrontierDetector:
             dist_matrix = cdist(grid_centers, centroids_2d, metric='euclidean')
             nearest_dist = dist_matrix.min(axis=1)
 
-            # Normalize by max inter-cluster distance
-            if len(centroids_2d) > 1:
-                inter_cluster = cdist(centroids_2d, centroids_2d, metric='euclidean')
-                max_inter = inter_cluster.max()
-            else:
-                max_inter = nearest_dist.max() if nearest_dist.max() > 0 else 1.0
-
-            if max_inter < 1e-12:
-                max_inter = 1.0
-            norm_dist = nearest_dist / max_inter
+            # Normalize by diagonal of the 2D coordinate range
+            # This gives consistent scale regardless of cluster spacing
+            coord_range = np.sqrt(
+                (grid_centers[:, 0].max() - grid_centers[:, 0].min())**2 +
+                (grid_centers[:, 1].max() - grid_centers[:, 1].min())**2
+            )
+            if coord_range < 1e-12:
+                coord_range = 1.0
+            norm_dist = nearest_dist / coord_range
 
             # Gaussian bell curve centered on sweet spot
             center = (self.adjacency_min + self.adjacency_max) / 2

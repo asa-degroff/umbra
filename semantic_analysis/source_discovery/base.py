@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 @dataclass
 class DiscoveredSource:
     """A source discovered through frontier exploration."""
-    
+
     title: str
     url: str
     excerpt: str                          # Key passage for embedding
@@ -22,15 +22,18 @@ class DiscoveredSource:
     embedding: list[float] = field(default_factory=list)
     discovered_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = "pending"               # 'frontier', 'pending', 'used', 'rejected'
-    
+
     # Metadata
     query_used: str = ""                  # Query that found this source
     chunk_index: int = 0                  # If chunked, which chunk
     total_chunks: int = 1                 # Total chunks from this source
-    
+
+    # DB tracking (set after persistence)
+    id: Optional[int] = None
+
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
-        return {
+        d = {
             'title': self.title,
             'url': self.url,
             'excerpt': self.excerpt,
@@ -45,7 +48,10 @@ class DiscoveredSource:
             'chunk_index': self.chunk_index,
             'total_chunks': self.total_chunks,
         }
-    
+        if self.id is not None:
+            d['id'] = self.id
+        return d
+
     @classmethod
     def from_dict(cls, data: dict) -> 'DiscoveredSource':
         """Create from dict."""

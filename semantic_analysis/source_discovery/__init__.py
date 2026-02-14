@@ -9,6 +9,7 @@ from .base import DiscoveredSource, DiscoveryResult, SourceProvider
 from .wikipedia import WikipediaProvider
 from .query_generator import QueryGenerator, create_query_generator
 from .discovery import SourceDiscovery, create_source_discovery
+from .source_db import SourceDB
 
 __all__ = [
     'DiscoveredSource',
@@ -19,4 +20,5 @@ __all__ = [
     'create_query_generator',
     'SourceDiscovery',
     'create_source_discovery',
+    'SourceDB',
 ]

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 _frontier_detector = None
 _source_discovery = None
 _relevance_analyzer = None
+_source_db = None
 _last_detection = None
 _detection_interval = 600  # 10 minutes
 
@@ -32,11 +33,11 @@ _cache_ttl = 300  # 5 minutes
 
 def _init_components():
     """Initialize frontier detection components."""
-    global _frontier_detector, _source_discovery, _relevance_analyzer
-    
+    global _frontier_detector, _source_discovery, _relevance_analyzer, _source_db
+
     if _frontier_detector is not None:
         return True
-    
+
     try:
         from semantic_analysis import (
             SemanticStorage,
@@ -44,26 +45,30 @@ def _init_components():
             create_relevance_analyzer,
             create_frontier_detector,
             create_source_discovery,
+            SourceDB,
         )
-        
+
         storage = SemanticStorage('/home/asa/umbra/data/chromadb')
         embedder = EmbeddingGenerator()
-        
+
         _relevance_analyzer = create_relevance_analyzer(storage, embedder, use_default_negatives=True)
         _relevance_analyzer.compute_umbra_centroid(days=30)
-        
+
         _frontier_detector = create_frontier_detector(storage, relevance_analyzer=_relevance_analyzer)
-        
+
+        _source_db = SourceDB('/home/asa/umbra/data/source_discovery.db')
+
         _source_discovery = create_source_discovery(
             storage=storage,
             embedder=embedder,
             frontier_detector=_frontier_detector,
             relevance_analyzer=_relevance_analyzer,
+            source_db=_source_db,
         )
-        
+
         logger.info("Frontier service components initialized")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize frontier components: {e}")
         return False
@@ -244,15 +249,57 @@ class FrontierService:
             logger.error(f"Error in source discovery: {e}")
             return {"error": str(e)}
     
+    def get_persisted_sources(
+        self,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """Get sources from the persistence DB (not just cache)."""
+        if not _init_components() or _source_db is None:
+            return {"sources": [], "error": "Service not available"}
+
+        try:
+            sources = _source_db.get_sources(status=status, limit=limit, offset=offset)
+            return {
+                "sources": [
+                    {
+                        "id": s.id,
+                        "title": s.title,
+                        "url": s.url,
+                        "excerpt": s.excerpt[:300],
+                        "source_type": s.source_type,
+                        "relevance_score": round(s.relevance_score, 3),
+                        "status": s.status,
+                        "frontier_zone_id": s.frontier_zone_id,
+                        "query_used": s.query_used,
+                        "discovered_at": s.discovered_at.isoformat(),
+                        "chunk_index": s.chunk_index,
+                        "total_chunks": s.total_chunks,
+                    }
+                    for s in sources
+                ],
+                "count": len(sources),
+            }
+        except Exception as e:
+            logger.error(f"Error getting persisted sources: {e}")
+            return {"sources": [], "error": str(e)}
+
     def get_stats(self) -> dict:
         """Get frontier service stats."""
-        return {
+        stats = {
             "available": _frontier_detector is not None,
             "zones_cached": _cache.get('zones') is not None,
             "discovery_cached": _cache.get('discovery_result') is not None,
             "cache_ttl": _cache_ttl,
             "detection_interval": _detection_interval,
         }
+        if _source_db is not None:
+            try:
+                stats["source_db"] = _source_db.get_stats()
+            except Exception as e:
+                stats["source_db_error"] = str(e)
+        return stats
 
 
 # Global service instance

@@ -381,6 +381,30 @@ async def discover_sources(
         return {"error": str(e)}
 
 
+@router.get("/frontier/sources")
+async def get_frontier_sources(
+    status: Optional[str] = Query(None, pattern="^(frontier|pending|used|rejected)$"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Get persisted discovered sources from the database.
+
+    Unlike /frontier/discover, this returns previously saved results
+    without re-running discovery.
+    """
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        return frontier_service.get_persisted_sources(
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as e:
+        logger.error(f"Error getting persisted sources: {e}")
+        return {"sources": [], "error": str(e)}
+
+
 @router.get("/frontier/stats")
 async def get_frontier_stats():
     """Get frontier service statistics."""
