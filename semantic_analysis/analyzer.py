@@ -32,6 +32,65 @@ DEFAULT_LLM_MODEL = "qwen2.5:7b"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 
+def find_clusters(
+    embeddings: np.ndarray,
+    weights: np.ndarray,
+    n_clusters: int,
+) -> list[dict]:
+    """
+    Find topic clusters using simple k-means-like approach.
+
+    Pure function — no class instance required.
+
+    Returns list of cluster dicts with centroid, indices, size.
+    """
+    n = len(embeddings)
+    if n < n_clusters:
+        return [{
+            'centroid': embeddings[0].tolist() if n > 0 else [],
+            'indices': list(range(n)),
+            'size': n,
+            'weight_sum': float(np.sum(weights)),
+        }]
+
+    rng = np.random.default_rng(42)
+    init_indices = rng.choice(n, n_clusters, replace=False, p=weights / weights.sum())
+    centroids = embeddings[init_indices].copy()
+
+    for _ in range(10):
+        assignments = []
+        for emb in embeddings:
+            sims = [cosine_similarity(emb, c) for c in centroids]
+            assignments.append(np.argmax(sims))
+
+        new_centroids = []
+        for k in range(n_clusters):
+            cluster_mask = np.array(assignments) == k
+            if np.any(cluster_mask):
+                cluster_weights = weights[cluster_mask]
+                cluster_embs = embeddings[cluster_mask]
+                new_centroid = np.average(cluster_embs, axis=0, weights=cluster_weights)
+                new_centroids.append(new_centroid)
+            else:
+                new_centroids.append(centroids[k])
+        centroids = np.array(new_centroids)
+
+    clusters = []
+    for k in range(n_clusters):
+        indices = [i for i, a in enumerate(assignments) if a == k]
+        cluster_weights = weights[indices] if indices else np.array([0])
+        clusters.append({
+            'centroid': centroids[k].tolist(),
+            'indices': indices,
+            'size': len(indices),
+            'weight_sum': float(np.sum(cluster_weights)),
+            'pct': len(indices) / n * 100,
+        })
+
+    clusters.sort(key=lambda c: c['weight_sum'], reverse=True)
+    return clusters
+
+
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Calculate cosine similarity between two vectors."""
     a = np.array(a)
@@ -293,63 +352,8 @@ class DiversityAnalyzer:
         weights: np.ndarray,
         n_clusters: int,
     ) -> list[dict]:
-        """
-        Find topic clusters using simple k-means-like approach.
-        
-        Returns list of cluster dicts with centroid, indices, size.
-        """
-        n = len(embeddings)
-        if n < n_clusters:
-            # Not enough records for clustering
-            return [{
-                'centroid': embeddings[0].tolist() if n > 0 else [],
-                'indices': list(range(n)),
-                'size': n,
-                'weight_sum': float(np.sum(weights)),
-            }]
-        
-        # Simple k-means initialization: pick k weighted random points
-        rng = np.random.default_rng(42)
-        init_indices = rng.choice(n, n_clusters, replace=False, p=weights/weights.sum())
-        centroids = embeddings[init_indices].copy()
-        
-        # Run a few iterations
-        for _ in range(10):
-            # Assign points to nearest centroid
-            assignments = []
-            for emb in embeddings:
-                sims = [cosine_similarity(emb, c) for c in centroids]
-                assignments.append(np.argmax(sims))
-            
-            # Update centroids
-            new_centroids = []
-            for k in range(n_clusters):
-                cluster_mask = np.array(assignments) == k
-                if np.any(cluster_mask):
-                    cluster_weights = weights[cluster_mask]
-                    cluster_embs = embeddings[cluster_mask]
-                    new_centroid = np.average(cluster_embs, axis=0, weights=cluster_weights)
-                    new_centroids.append(new_centroid)
-                else:
-                    new_centroids.append(centroids[k])
-            centroids = np.array(new_centroids)
-        
-        # Build cluster info
-        clusters = []
-        for k in range(n_clusters):
-            indices = [i for i, a in enumerate(assignments) if a == k]
-            cluster_weights = weights[indices] if indices else np.array([0])
-            clusters.append({
-                'centroid': centroids[k].tolist(),
-                'indices': indices,
-                'size': len(indices),
-                'weight_sum': float(np.sum(cluster_weights)),
-                'pct': len(indices) / n * 100,
-            })
-        
-        # Sort by weighted size
-        clusters.sort(key=lambda c: c['weight_sum'], reverse=True)
-        return clusters
+        """Delegate to module-level find_clusters()."""
+        return find_clusters(embeddings, weights, n_clusters)
     
     def generate_guidance(self, metrics: dict) -> str:
         """
