@@ -360,9 +360,10 @@ class FrontierDetector:
         umbra_dists = np.linalg.norm(coords_2d[umbra_mask] - umbra_2d, axis=1)
         relevance_radius = np.percentile(umbra_dists, 90)
 
-        # Soft gate: grid cells beyond 2x the radius are rejected,
-        # cells within the radius pass fully, linear falloff between
-        mask = np.clip(1.0 - (dists - relevance_radius) / relevance_radius, 0, 1)
+        # Soft gate: cells within the radius pass fully (1.0),
+        # linear falloff from 1.0 to 0.0 over the next 2 radius-lengths,
+        # cells beyond 3x the radius from centroid are fully rejected (0.0)
+        mask = np.clip(1.0 - (dists - relevance_radius) / (2 * relevance_radius), 0, 1)
 
         kept = int((mask > 0).sum())
         logger.info(f"Constraint filter: {kept}/{len(grid_centers)} cells passed "
