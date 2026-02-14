@@ -127,7 +127,10 @@ class FrontierDetector:
             logger.warning("No frontier zones passed constraint filtering")
             return []
 
-        # Batch inverse_transform for selected zones only
+        # Inverse_transform gives approximate high-dim embeddings for the
+        # centroid. These are stored for reference but NOT used for nearby
+        # post lookup (unreliable — see issue #5). Nearby posts are found
+        # via 2D distance instead.
         selected_2d = grid_centers[top_indices]
         high_dim_embeddings = umap_model.inverse_transform(selected_2d)
 
@@ -135,15 +138,20 @@ class FrontierDetector:
         zones = []
         for rank, idx in enumerate(top_indices):
             embedding_hd = high_dim_embeddings[rank]
-            nearby = self._find_nearby_posts(embedding_hd.tolist(), nearby_k)
+            center_2d = selected_2d[rank]
 
-            # Compute relevance from nearby posts' real embeddings (more
-            # reliable than inverse_transform embeddings for relevance)
+            # Find nearby posts by 2D distance (reliable) instead of
+            # querying ChromaDB with inverse_transform embeddings (unreliable)
+            nearby = self._find_nearby_posts_2d(
+                center_2d, coords_2d, records, nearby_k
+            )
+
+            # Compute relevance from nearby posts' real embeddings
             rel_score = self._compute_zone_relevance(nearby)
 
             gi, gj = grid_indices[idx]
             zone = FrontierZone(
-                centroid_2d=(float(selected_2d[rank, 0]), float(selected_2d[rank, 1])),
+                centroid_2d=(float(center_2d[0]), float(center_2d[1])),
                 centroid_embedding=embedding_hd.tolist(),
                 frontier_score=float(masked_scores[idx]),
                 density_score=float(density_scores[idx]),
@@ -390,15 +398,29 @@ class FrontierDetector:
             return 0.0
         return float(np.mean(scores))
 
-    def _find_nearby_posts(self, embedding: list[float], k: int) -> list[dict]:
-        """Find k nearest existing posts to a frontier zone centroid."""
-        results = self.storage.query_similar(embedding, n=k)
+    def _find_nearby_posts_2d(
+        self,
+        center_2d: np.ndarray,
+        coords_2d: np.ndarray,
+        records: list[dict],
+        k: int,
+    ) -> list[dict]:
+        """
+        Find k nearest posts to a point using 2D UMAP coordinates.
+
+        More reliable than querying ChromaDB with inverse_transform embeddings,
+        since 2D distances are meaningful within the UMAP projection.
+        """
+        dists = np.linalg.norm(coords_2d - center_2d, axis=1)
+        nearest_idx = np.argsort(dists)[:k]
+
         nearby = []
-        for r in results:
+        for i in nearest_idx:
+            r = records[i]
             nearby.append({
                 'uri': r.get('uri', ''),
                 'text': r.get('text', '')[:200],
-                'distance': r.get('distance'),
+                'distance': float(dists[i]),
                 'metadata': r.get('metadata', {}),
                 'embedding': r.get('embedding'),
             })
