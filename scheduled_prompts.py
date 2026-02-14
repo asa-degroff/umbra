@@ -1050,7 +1050,7 @@ Please use the get_bluesky_feed tool to read recent posts from both the 'home' a
 
 After reviewing the feeds:
 1. Search the web for additional context about an interesting topic that was brought up today using web_search
-1. Create a new post on your ownm profile using post_to_bluesky if you have something to contribute to the broader conversation
+1. Create a new post on your own profile using post_to_bluesky if you have something to contribute to the broader conversation
 2. Or, simply update your memory with observations
 
 This is an opportunity to stay in tune with the zeitgeist and contribute to ongoing discussions."""
