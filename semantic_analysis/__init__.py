@@ -13,10 +13,11 @@ from .analyzer import DiversityAnalyzer
 from .network_scraper import NetworkScraper
 from .graph import SocialGraph, build_umbra_graph
 from .relevance import RelevanceAnalyzer, create_relevance_analyzer
+from .frontier import FrontierDetector, FrontierZone, create_frontier_detector
 
 __all__ = [
     'ATProtoScraper',
-    'EmbeddingGenerator', 
+    'EmbeddingGenerator',
     'SemanticStorage',
     'DiversityAnalyzer',
     'NetworkScraper',
@@ -24,6 +25,9 @@ __all__ = [
     'build_umbra_graph',
     'RelevanceAnalyzer',
     'create_relevance_analyzer',
+    'FrontierDetector',
+    'FrontierZone',
+    'create_frontier_detector',
     'run_analysis',
     'run_network_analysis',
 ]
