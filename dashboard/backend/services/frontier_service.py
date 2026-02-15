@@ -21,12 +21,15 @@ _frontier_detector = None
 _source_discovery = None
 _relevance_analyzer = None
 _source_db = None
+_seed_detector = None
 _last_detection = None
 _detection_interval = 600  # 10 minutes
 
 _cache = {
     'zones': None,
     'zones_time': None,
+    'seeds': None,
+    'seeds_time': None,
     'discovery_result': None,
     'discovery_time': None,
 }
@@ -36,7 +39,7 @@ _init_lock = threading.Lock()
 
 def _init_components():
     """Initialize frontier detection components."""
-    global _frontier_detector, _source_discovery, _relevance_analyzer, _source_db
+    global _frontier_detector, _source_discovery, _relevance_analyzer, _source_db, _seed_detector
 
     if _frontier_detector is not None:
         return True
@@ -55,6 +58,7 @@ def _init_components():
                 create_source_discovery,
                 SourceDB,
             )
+            from semantic_analysis.seeds import create_interest_seed_detector
 
             storage = SemanticStorage('/home/asa/umbra/data/chromadb')
             embedder = EmbeddingGenerator()
@@ -63,6 +67,8 @@ def _init_components():
             _relevance_analyzer.compute_umbra_centroid(days=30)
 
             _frontier_detector = create_frontier_detector(storage, relevance_analyzer=_relevance_analyzer)
+
+            _seed_detector = create_interest_seed_detector(storage)
 
             _source_db = SourceDB('/home/asa/umbra/data/source_discovery.db')
 
@@ -127,11 +133,73 @@ class FrontierService:
         """Check if service is available."""
         return _init_components()
     
+    def get_seeds(
+        self,
+        days: int = 30,
+        force_refresh: bool = False,
+    ) -> dict:
+        """
+        Get detected interest seeds.
+
+        Args:
+            days: Lookback period
+            force_refresh: Skip cache
+
+        Returns:
+            Dict with seeds list and metadata
+        """
+        if not _init_components() or _seed_detector is None:
+            return {"seeds": [], "error": "Service not available"}
+
+        cache_key = f"seeds_{days}"
+
+        if not force_refresh and _cache_valid('seeds'):
+            cached = _cache.get('seeds')
+            if cached and cached.get('cache_key') == cache_key:
+                return cached
+
+        try:
+            seeds = _seed_detector.detect_seeds(days=days, label_seeds=True)
+
+            result = {
+                "seeds": [
+                    {
+                        "seed_id": s.seed_id,
+                        "seed_type": s.seed_type,
+                        "label": s.label,
+                        "post_count": s.post_count,
+                        "weight": round(s.weight, 3),
+                        "recency_weight": round(s.recency_weight, 3),
+                        "rarity_weight": round(s.rarity_weight, 3),
+                        "avg_distance_to_global_centroid": round(s.avg_distance_to_global_centroid, 3),
+                        "representative_texts": [t[:200] for t in s.representative_texts[:3]],
+                    }
+                    for s in seeds
+                ],
+                "count": len(seeds),
+                "cluster_count": sum(1 for s in seeds if s.seed_type == "cluster"),
+                "outlier_count": sum(1 for s in seeds if s.seed_type == "outlier"),
+                "days": days,
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+                "cache_key": cache_key,
+                "_seed_objects": seeds,  # Internal: used by get_zones for seeded detection
+            }
+
+            _cache['seeds'] = result
+            _cache['seeds_time'] = datetime.now(timezone.utc)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error detecting seeds: {e}")
+            return {"seeds": [], "error": str(e)}
+
     def get_zones(
         self,
         days: int = 30,
         top_n: int = 10,
         source: str = 'all',
+        use_seeds: bool = True,
         force_refresh: bool = False,
     ) -> dict:
         """
@@ -149,13 +217,22 @@ class FrontierService:
         if not _init_components():
             return {"zones": [], "error": "Service not available"}
         
-        cache_key = f"zones_{days}_{top_n}_{source}"
+        cache_key = f"zones_{days}_{top_n}_{source}_{use_seeds}"
         
         if not force_refresh and _cache_valid('zones'):
             cached = _cache.get('zones')
             if cached and cached.get('cache_key') == cache_key:
                 return cached
-        
+
+        # Get seeds if enabled
+        seed_objects = None
+        if use_seeds and _seed_detector is not None:
+            try:
+                seeds_data = self.get_seeds(days=days)
+                seed_objects = seeds_data.get('_seed_objects')
+            except Exception as e:
+                logger.warning(f"Seed detection failed, falling back to unseeded: {e}")
+
         try:
             # Retry up to 3 times on transient ChromaDB errors
             last_err = None
@@ -165,6 +242,7 @@ class FrontierService:
                         days=days,
                         top_n=top_n,
                         source=source,
+                        seeds=seed_objects,
                     )
                     break
                 except Exception as e:
@@ -193,6 +271,8 @@ class FrontierService:
                         "density_score": round(z.density_score, 3),
                         "adjacency_score": round(z.adjacency_score, 3),
                         "relevance_score": round(z.relevance_score, 3),
+                        "seed_id": z.seed_id,
+                        "seed_label": z.seed_label,
                         "nearby_posts": [
                             {
                                 "text": p.get('text', ''),
@@ -204,6 +284,7 @@ class FrontierService:
                     for z in zones
                 ],
                 "count": len(zones),
+                "seeded": seed_objects is not None,
                 "days": days,
                 "source": source,
                 "detected_at": datetime.now(timezone.utc).isoformat(),

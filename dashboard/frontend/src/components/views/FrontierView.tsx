@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import {
-  Compass, Map, Globe, Zap, BookOpen,
+  Compass, Map, Globe, Zap, BookOpen, Sprout, Sparkles,
   ChevronLeft, ChevronRight, ExternalLink, X,
   Loader2, Play, AlertCircle, ThumbsUp, ThumbsDown,
 } from 'lucide-react'
@@ -34,14 +34,39 @@ interface FrontierZone {
   density_score: number
   adjacency_score: number
   relevance_score: number
+  seed_id?: string
+  seed_label?: string
   nearby_posts: NearbyPost[]
 }
 
 interface ZonesResponse {
   zones: FrontierZone[]
   count: number
+  seeded?: boolean
   days: number
   source: string
+  detected_at?: string
+  error?: string
+}
+
+interface InterestSeed {
+  seed_id: string
+  seed_type: 'cluster' | 'outlier'
+  label: string
+  post_count: number
+  weight: number
+  recency_weight: number
+  rarity_weight: number
+  avg_distance_to_global_centroid: number
+  representative_texts: string[]
+}
+
+interface SeedsResponse {
+  seeds: InterestSeed[]
+  count: number
+  cluster_count: number
+  outlier_count: number
+  days: number
   detected_at?: string
   error?: string
 }
@@ -147,6 +172,26 @@ function scoreColor(score: number): string {
   return '#6b7280'                      // gray-500
 }
 
+// Distinct colors for seed-tagged zones
+const SEED_COLORS = [
+  '#22c55e', // green
+  '#3b82f6', // blue
+  '#f59e0b', // amber
+  '#a855f7', // purple
+  '#ec4899', // pink
+  '#06b6d4', // cyan
+  '#f97316', // orange
+  '#84cc16', // lime
+  '#e11d48', // rose
+  '#6366f1', // indigo
+]
+
+function seedColor(seedId: string | undefined, seeds: InterestSeed[]): string {
+  if (!seedId) return '#6b7280'
+  const idx = seeds.findIndex(s => s.seed_id === seedId)
+  return idx >= 0 ? SEED_COLORS[idx % SEED_COLORS.length] : '#6b7280'
+}
+
 function statusBadgeVariant(status: string): 'default' | 'secondary' | 'outline' | 'destructive' {
   switch (status) {
     case 'frontier': return 'default'
@@ -172,6 +217,11 @@ function ZoneTooltip({ active, payload }: any) {
           Zone {zone.id}
         </span>
       </div>
+      {zone.seed_label && (
+        <div className="text-xs font-medium text-primary mb-2">
+          Seed: {zone.seed_label}
+        </div>
+      )}
       <div className="text-xs space-y-1 mb-2">
         <div>Density: {(zone.density_score * 100).toFixed(0)}%</div>
         <div>Adjacency: {(zone.adjacency_score * 100).toFixed(0)}%</div>
@@ -242,7 +292,7 @@ const STATUS_OPTIONS = [
   { value: 'rejected', label: 'Rejected' },
 ]
 
-type TabId = 'zones' | 'sources' | 'discover'
+type TabId = 'seeds' | 'zones' | 'sources' | 'discover'
 
 // --- Component ---
 
@@ -263,10 +313,18 @@ export default function FrontierView() {
 
   // --- Data fetching ---
 
+  const { data: seedsData, isLoading: seedsLoading } = useQuery<SeedsResponse>({
+    queryKey: ['interestSeeds', days],
+    queryFn: () => fetch(
+      `${API_BASE}/semantic/frontier/seeds?days=${days}`
+    ).then(r => r.json()),
+    refetchInterval: 120000,
+  })
+
   const { data: zonesData, isLoading: zonesLoading } = useQuery<ZonesResponse>({
     queryKey: ['frontierZones', days, source],
     queryFn: () => fetch(
-      `${API_BASE}/semantic/frontier/zones?days=${days}&top_n=10&source=${source}`
+      `${API_BASE}/semantic/frontier/zones?days=${days}&top_n=10&source=${source}&use_seeds=true`
     ).then(r => r.json()),
     refetchInterval: 120000,
   })
@@ -327,6 +385,7 @@ export default function FrontierView() {
   // --- Tabs ---
 
   const tabs: { id: TabId; label: string }[] = [
+    { id: 'seeds', label: 'Seeds' },
     { id: 'zones', label: 'Zones' },
     { id: 'sources', label: 'Sources' },
     { id: 'discover', label: 'Discover' },
@@ -346,11 +405,18 @@ export default function FrontierView() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard
+          title="Interest Seeds"
+          value={seedsData?.count ?? 0}
+          subtitle={seedsData ? `${seedsData.cluster_count} clusters, ${seedsData.outlier_count} outliers` : undefined}
+          icon={Sprout}
+          iconColor="text-purple-400"
+        />
         <StatCard
           title="Frontier Zones"
           value={zonesData?.count ?? 0}
-          subtitle={zonesData?.detected_at ? `Detected: ${new Date(zonesData.detected_at).toLocaleTimeString()}` : undefined}
+          subtitle={zonesData?.seeded ? 'Seed-guided' : 'Legacy mode'}
           icon={Map}
           iconColor="text-cyan-400"
         />
@@ -437,6 +503,130 @@ export default function FrontierView() {
         ))}
       </div>
 
+      {/* ==================== SEEDS TAB ==================== */}
+      {activeTab === 'seeds' && (
+        <div className="space-y-4">
+          {seedsLoading ? (
+            <Card>
+              <CardContent className="p-6 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-muted-foreground">Detecting interest seeds...</span>
+              </CardContent>
+            </Card>
+          ) : seedsData?.error ? (
+            <Card>
+              <CardContent className="p-6 flex items-center text-destructive">
+                <AlertCircle className="w-5 h-5 mr-2" />
+                {seedsData.error}
+              </CardContent>
+            </Card>
+          ) : !seedsData?.seeds?.length ? (
+            <Card>
+              <CardContent className="p-6 text-center text-muted-foreground">
+                No interest seeds detected.
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Cluster Seeds */}
+              {seedsData.seeds.filter(s => s.seed_type === 'cluster').length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Sprout className="w-5 h-5 text-green-400" />
+                      Topic Clusters
+                    </CardTitle>
+                    <CardDescription>
+                      Main content areas — centroids of Umbra's topic clusters
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {seedsData.seeds.filter(s => s.seed_type === 'cluster').map((seed, i) => (
+                        <div
+                          key={seed.seed_id}
+                          className="p-4 bg-secondary rounded-lg border-l-4"
+                          style={{ borderLeftColor: SEED_COLORS[i % SEED_COLORS.length] }}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-sm">{seed.label}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {seed.post_count} posts
+                            </Badge>
+                          </div>
+                          <div className="flex gap-2 mb-3">
+                            <Badge variant="secondary" className="text-xs">
+                              Weight: {(seed.weight * 100).toFixed(0)}%
+                            </Badge>
+                            <Badge variant="secondary" className="text-xs">
+                              Recency: {(seed.recency_weight * 100).toFixed(0)}%
+                            </Badge>
+                          </div>
+                          {seed.representative_texts?.[0] && (
+                            <p className="text-xs text-muted-foreground line-clamp-3">
+                              {seed.representative_texts[0]}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Outlier Seeds */}
+              {seedsData.seeds.filter(s => s.seed_type === 'outlier').length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Sparkles className="w-5 h-5 text-amber-400" />
+                      Creative Outliers
+                    </CardTitle>
+                    <CardDescription>
+                      Intentional diversifications — recent posts far from main topic clusters
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {seedsData.seeds.filter(s => s.seed_type === 'outlier').map((seed, i) => {
+                        const colorIdx = seedsData.seeds.findIndex(s => s.seed_id === seed.seed_id)
+                        return (
+                          <div
+                            key={seed.seed_id}
+                            className="p-4 bg-secondary rounded-lg border-l-4"
+                            style={{ borderLeftColor: SEED_COLORS[colorIdx % SEED_COLORS.length] }}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-medium text-sm">{seed.label}</span>
+                              <Badge variant="secondary" className="text-xs">
+                                Dist: {(seed.avg_distance_to_global_centroid * 100).toFixed(0)}%
+                              </Badge>
+                            </div>
+                            <div className="flex gap-2 mb-3">
+                              <Badge variant="secondary" className="text-xs">
+                                Weight: {(seed.weight * 100).toFixed(0)}%
+                              </Badge>
+                              <Badge variant="secondary" className="text-xs">
+                                Recency: {(seed.recency_weight * 100).toFixed(0)}%
+                              </Badge>
+                            </div>
+                            {seed.representative_texts?.[0] && (
+                              <p className="text-xs text-muted-foreground line-clamp-3">
+                                {seed.representative_texts[0]}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {/* ==================== ZONES TAB ==================== */}
       {activeTab === 'zones' && (
         <Card>
@@ -488,33 +678,54 @@ export default function FrontierView() {
                       }))}
                       onClick={(point: any) => setSelectedZone(point as FrontierZone)}
                     >
-                      {zonesData.zones.map((zone, i) => (
-                        <Cell
-                          key={i}
-                          fill={scoreColor(zone.frontier_score)}
-                          fillOpacity={0.8}
-                          stroke={scoreColor(zone.frontier_score)}
-                          strokeWidth={selectedZone?.id === zone.id ? 3 : 1}
-                          r={Math.max(6, zone.frontier_score * 20)}
-                        />
-                      ))}
+                      {zonesData.zones.map((zone, i) => {
+                        const seeds = seedsData?.seeds ?? []
+                        const color = zone.seed_id
+                          ? seedColor(zone.seed_id, seeds)
+                          : scoreColor(zone.frontier_score)
+                        return (
+                          <Cell
+                            key={i}
+                            fill={color}
+                            fillOpacity={0.8}
+                            stroke={color}
+                            strokeWidth={selectedZone?.id === zone.id ? 3 : 1}
+                            r={Math.max(6, zone.frontier_score * 20)}
+                          />
+                        )
+                      })}
                     </Scatter>
                   </ScatterChart>
                 </ResponsiveContainer>
 
-                {/* Legend */}
+                {/* Legend — show seed labels if seeded, score ranges otherwise */}
                 <div className="flex flex-wrap gap-4 mt-4 justify-center">
-                  {[
-                    { label: 'High (70%+)', color: '#22c55e' },
-                    { label: 'Medium (50%+)', color: '#3b82f6' },
-                    { label: 'Low (30%+)', color: '#f59e0b' },
-                    { label: 'Minimal (<30%)', color: '#6b7280' },
-                  ].map(item => (
-                    <div key={item.label} className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                      <span className="text-sm text-muted-foreground">{item.label}</span>
-                    </div>
-                  ))}
+                  {zonesData.seeded && seedsData?.seeds?.length ? (
+                    // Seed-based legend: show only seeds that have zones
+                    (() => {
+                      const usedSeedIds = new Set(zonesData.zones.map(z => z.seed_id).filter(Boolean))
+                      return seedsData.seeds
+                        .filter(s => usedSeedIds.has(s.seed_id))
+                        .map(s => (
+                          <div key={s.seed_id} className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seedColor(s.seed_id, seedsData.seeds) }} />
+                            <span className="text-sm text-muted-foreground">{s.label}</span>
+                          </div>
+                        ))
+                    })()
+                  ) : (
+                    [
+                      { label: 'High (70%+)', color: '#22c55e' },
+                      { label: 'Medium (50%+)', color: '#3b82f6' },
+                      { label: 'Low (30%+)', color: '#f59e0b' },
+                      { label: 'Minimal (<30%)', color: '#6b7280' },
+                    ].map(item => (
+                      <div key={item.label} className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                        <span className="text-sm text-muted-foreground">{item.label}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
 
                 {/* Selected Zone Detail */}
@@ -526,6 +737,15 @@ export default function FrontierView() {
                           Score: {(selectedZone.frontier_score * 100).toFixed(0)}%
                         </Badge>
                         <span className="text-sm text-muted-foreground">Zone {selectedZone.id}</span>
+                        {selectedZone.seed_label && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs"
+                            style={{ borderColor: seedColor(selectedZone.seed_id, seedsData?.seeds ?? []) }}
+                          >
+                            {selectedZone.seed_label}
+                          </Badge>
+                        )}
                       </div>
                       <Button variant="ghost" size="sm" onClick={() => setSelectedZone(null)}>
                         <X className="w-4 h-4" />

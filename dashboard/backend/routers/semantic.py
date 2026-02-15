@@ -325,18 +325,41 @@ async def get_relevance_stats():
 # Frontier Detection Endpoints
 # ============================================================================
 
+@router.get("/frontier/seeds")
+async def get_interest_seeds(
+    days: int = Query(30, ge=7, le=90),
+    refresh: bool = Query(False),
+):
+    """
+    Get detected interest seeds.
+    
+    Seeds are anchor points in embedding space: cluster centroids (main topics)
+    and outlier posts (intentional creative diversifications).
+    """
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        result = frontier_service.get_seeds(days=days, force_refresh=refresh)
+        # Strip internal _seed_objects before sending to client
+        result.pop('_seed_objects', None)
+        return result
+    except Exception as e:
+        logger.error(f"Error getting seeds: {e}")
+        return {"seeds": [], "error": str(e)}
+
+
 @router.get("/frontier/zones")
 async def get_frontier_zones(
     days: int = Query(30, ge=7, le=90),
     top_n: int = Query(10, ge=1, le=20),
     source: str = Query("all", pattern="^(umbra|network|all)$"),
+    use_seeds: bool = Query(True),
     refresh: bool = Query(False),
 ):
     """
     Get detected frontier zones.
     
     Frontier zones are unexplored regions in embedding space
-    adjacent to existing content clusters.
+    adjacent to existing content clusters or interest seeds.
     """
     try:
         from dashboard.backend.services.frontier_service import frontier_service
@@ -344,6 +367,7 @@ async def get_frontier_zones(
             days=days,
             top_n=top_n,
             source=source,
+            use_seeds=use_seeds,
             force_refresh=refresh,
         )
     except Exception as e:
