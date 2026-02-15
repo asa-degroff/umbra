@@ -7,12 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- No source expiration or TTL in source_discovery.db (#56)
+- Source discovery is fully synchronous with no timeout (#55)
+- No semantic deduplication across providers (#54)
 - Only Wikipedia provider implemented (#37)
 - Frontier dashboard view with zones scatter chart, sources table, and discovery controls
 - Ollama dependency not validated — silent degradation (#17)
 - No input validation in SourceDiscovery constructor (#12)
 
 ### Fixed
+- UMAP cache key based on only 3 sampled rows is fragile (#50)
+- _seed_objects with full embeddings leaked into API-facing cache dict (#49)
+- arXiv API called over plain HTTP (#47)
+- DiscoveredSource.from_dict crashes on unknown keys (#46)
 - evaluate_pending_sources is never called anywhere (#53)
 - rounds_completed off-by-one in discovery loop (#45)
 - _apply_feedback accumulates duplicate negative exemplars on every call (#44)
@@ -32,6 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Constraint filter math off-by-2x (#4)
 
 ### Changed
+- Density scoring logic duplicated between seeded and unseeded paths (#48)
 - WikipediaProvider.search_with_chunks duplicates base class (#43)
 - Query generator prompt biased toward Wikipedia queries (#42)
 - Relevance filter operates in 2D space only (#14)

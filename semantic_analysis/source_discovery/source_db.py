@@ -9,7 +9,7 @@ import sqlite3
 import logging
 import threading
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .base import DiscoveredSource
@@ -260,6 +260,36 @@ class SourceDB:
         )
         source.id = row['id']
         return source
+
+    def cleanup_old(self, max_age_days: int = 90, protect_rated: bool = True) -> int:
+        """
+        Delete sources older than max_age_days.
+
+        Args:
+            max_age_days: Delete sources discovered more than this many days ago
+            protect_rated: If True, keep user-rated sources regardless of age
+
+        Returns:
+            Number of deleted rows.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        conditions = "discovered_at < ?"
+        params: list = [cutoff]
+
+        if protect_rated:
+            conditions += " AND user_rating = 0"
+
+        with self._lock:
+            cursor = self.conn.execute(
+                f"DELETE FROM discovered_sources WHERE {conditions}",
+                params,
+            )
+            self.conn.commit()
+
+        deleted = cursor.rowcount
+        if deleted:
+            logger.info(f"Cleaned up {deleted} sources older than {max_age_days} days")
+        return deleted
 
     def close(self):
         """Close database connection."""

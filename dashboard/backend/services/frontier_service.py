@@ -30,11 +30,14 @@ _cache = {
     'zones_time': None,
     'seeds': None,
     'seeds_time': None,
+    'seed_objects': None,  # Raw InterestSeed list, separate from API-facing cache
     'discovery_result': None,
     'discovery_time': None,
 }
 _cache_ttl = 300  # 5 minutes
 _init_lock = threading.Lock()
+_discovery_lock = threading.Lock()
+_discovery_running = False
 
 
 def _init_components():
@@ -185,11 +188,11 @@ class FrontierService:
                 "days": days,
                 "detected_at": datetime.now(timezone.utc).isoformat(),
                 "cache_key": cache_key,
-                "_seed_objects": seeds,  # Internal: used by get_zones for seeded detection
             }
 
             _cache['seeds'] = result
             _cache['seeds_time'] = datetime.now(timezone.utc)
+            _cache['seed_objects'] = seeds
 
             return result
 
@@ -231,8 +234,8 @@ class FrontierService:
         seed_objects = None
         if use_seeds and _seed_detector is not None:
             try:
-                seeds_data = self.get_seeds(days=days)
-                seed_objects = seeds_data.get('_seed_objects')
+                self.get_seeds(days=days)  # Populates cache
+                seed_objects = _cache.get('seed_objects')
             except Exception as e:
                 logger.warning(f"Seed detection failed, falling back to unseeded: {e}")
 
@@ -303,6 +306,45 @@ class FrontierService:
             logger.error(f"Error detecting frontiers: {e}")
             return {"zones": [], "error": str(e)}
     
+    @staticmethod
+    def _format_discovery_result(result) -> dict:
+        """Format a DiscoveryResult into the API response dict."""
+        return {
+            "frontier_sources": [
+                {
+                    "title": s.title,
+                    "url": s.url,
+                    "excerpt": s.excerpt[:300],
+                    "source_type": s.source_type,
+                    "relevance_score": round(s.relevance_score, 3),
+                    "query_used": s.query_used,
+                    "status": s.status,
+                }
+                for s in result.frontier_sources
+            ],
+            "pending_sources": [
+                {
+                    "title": s.title,
+                    "url": s.url,
+                    "excerpt": s.excerpt[:300],
+                    "source_type": s.source_type,
+                    "relevance_score": round(s.relevance_score, 3),
+                    "query_used": s.query_used,
+                    "status": s.status,
+                }
+                for s in result.pending_sources
+            ],
+            "stats": {
+                "zones_explored": result.zones_explored,
+                "rounds_completed": result.rounds_completed,
+                "total_sources_found": result.total_sources_found,
+                "capped": result.capped,
+            },
+            "errors": result.errors,
+            "discovered_at": datetime.now(timezone.utc).isoformat(),
+            "status": "complete",
+        }
+
     def discover_sources(
         self,
         max_rounds: int = 2,
@@ -312,10 +354,11 @@ class FrontierService:
         days: int = 30,
         source: str = 'all',
         force_refresh: bool = False,
+        background: bool = False,
     ) -> dict:
         """
         Run source discovery.
-        
+
         Args:
             max_rounds: Maximum expansion rounds
             max_sources_per_zone: Sources per zone
@@ -324,72 +367,73 @@ class FrontierService:
             days: Lookback period
             source: Content filter
             force_refresh: Skip cache
-            
+            background: If True, run in a background thread and return immediately
+
         Returns:
-            Dict with discovery results
+            Dict with discovery results, or status dict if background=True
         """
+        global _discovery_running
+
         if not _init_components():
             return {"error": "Service not available"}
-        
+
         if not force_refresh and _cache_valid('discovery_result'):
             return _cache['discovery_result']
 
-        # Re-apply latest user feedback before each run
-        _apply_feedback()
-
-        try:
-            result = _source_discovery.discover(
-                max_rounds=max_rounds,
-                max_sources_per_zone=max_sources_per_zone,
-                max_total_sources=max_total_sources,
-                initial_zones=initial_zones,
-                days=days,
-                source=source,
-            )
-            
-            response = {
-                "frontier_sources": [
-                    {
-                        "title": s.title,
-                        "url": s.url,
-                        "excerpt": s.excerpt[:300],
-                        "source_type": s.source_type,
-                        "relevance_score": round(s.relevance_score, 3),
-                        "query_used": s.query_used,
-                        "status": s.status,
-                    }
-                    for s in result.frontier_sources
-                ],
-                "pending_sources": [
-                    {
-                        "title": s.title,
-                        "url": s.url,
-                        "excerpt": s.excerpt[:300],
-                        "source_type": s.source_type,
-                        "relevance_score": round(s.relevance_score, 3),
-                        "query_used": s.query_used,
-                        "status": s.status,
-                    }
-                    for s in result.pending_sources
-                ],
-                "stats": {
-                    "zones_explored": result.zones_explored,
-                    "rounds_completed": result.rounds_completed,
-                    "total_sources_found": result.total_sources_found,
-                    "capped": result.capped,
-                },
-                "errors": result.errors,
-                "discovered_at": datetime.now(timezone.utc).isoformat(),
+        # If already running, report status
+        if _discovery_running:
+            return {
+                "status": "in_progress",
+                "message": "Discovery is already running in the background",
             }
-            
+
+        kwargs = dict(
+            max_rounds=max_rounds,
+            max_sources_per_zone=max_sources_per_zone,
+            max_total_sources=max_total_sources,
+            initial_zones=initial_zones,
+            days=days,
+            source=source,
+        )
+
+        if background:
+            thread = threading.Thread(
+                target=self._run_discovery_background,
+                kwargs=kwargs,
+                daemon=True,
+            )
+            thread.start()
+            return {
+                "status": "started",
+                "message": "Discovery started in background. Poll this endpoint to get results.",
+            }
+
+        # Synchronous path (backwards-compatible)
+        return self._run_discovery(**kwargs)
+
+    def _run_discovery(self, **kwargs) -> dict:
+        """Execute discovery synchronously and cache the result."""
+        _apply_feedback()
+        try:
+            result = _source_discovery.discover(**kwargs)
+            response = self._format_discovery_result(result)
             _cache['discovery_result'] = response
             _cache['discovery_time'] = datetime.now(timezone.utc)
-            
             return response
-            
         except Exception as e:
             logger.error(f"Error in source discovery: {e}")
-            return {"error": str(e)}
+            return {"error": str(e), "status": "error"}
+
+    def _run_discovery_background(self, **kwargs):
+        """Execute discovery in a background thread."""
+        global _discovery_running
+        with _discovery_lock:
+            _discovery_running = True
+        try:
+            self._run_discovery(**kwargs)
+        finally:
+            with _discovery_lock:
+                _discovery_running = False
     
     def rate_source(self, source_id: int, rating: int) -> dict:
         """Rate a source and apply feedback to the relevance analyzer."""
@@ -503,6 +547,17 @@ class FrontierService:
         except Exception as e:
             logger.error(f"Error getting persisted sources: {e}")
             return {"sources": [], "error": str(e)}
+
+    def cleanup_sources(self, max_age_days: int = 90) -> dict:
+        """Delete old sources from the DB, preserving user-rated ones."""
+        if not _init_components() or _source_db is None:
+            return {"error": "Service not available"}
+        try:
+            deleted = _source_db.cleanup_old(max_age_days=max_age_days, protect_rated=True)
+            return {"deleted": deleted, "max_age_days": max_age_days}
+        except Exception as e:
+            logger.error(f"Error cleaning up sources: {e}")
+            return {"error": str(e)}
 
     def get_stats(self) -> dict:
         """Get frontier service stats."""

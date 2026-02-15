@@ -16,7 +16,7 @@ from .base import SourceProvider, DiscoveredSource
 
 logger = logging.getLogger('umbra.source_discovery.arxiv')
 
-ARXIV_API = "http://export.arxiv.org/api/query"
+ARXIV_API = "https://export.arxiv.org/api/query"
 
 # Namespace for Atom feed parsing
 ATOM_NS = '{http://www.w3.org/2005/Atom}'

@@ -388,12 +388,13 @@ async def discover_sources(
     days: int = Query(30, ge=7, le=90),
     source: str = Query("all", pattern="^(umbra|network|all)$"),
     refresh: bool = Query(False),
+    background: bool = Query(False),
 ):
     """
     Run source discovery to find external content in frontier zones.
-    
-    Searches Wikipedia for content that falls within detected frontiers.
-    Note: This can take 30-60 seconds on first run.
+
+    Searches Wikipedia, arXiv, and Semantic Scholar for content in detected frontiers.
+    Set background=true to run asynchronously and poll for results.
     """
     try:
         from dashboard.backend.services.frontier_service import frontier_service
@@ -404,6 +405,7 @@ async def discover_sources(
             days=days,
             source=source,
             force_refresh=refresh,
+            background=background,
         )
     except Exception as e:
         logger.error(f"Error in source discovery: {e}")
@@ -468,6 +470,23 @@ async def evaluate_pending_sources(
         return frontier_service.evaluate_pending(threshold=threshold)
     except Exception as e:
         logger.error(f"Error evaluating pending sources: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/frontier/sources/cleanup")
+async def cleanup_old_sources(
+    max_age_days: int = Query(90, ge=7, le=365),
+):
+    """
+    Delete sources older than max_age_days.
+
+    User-rated sources are preserved regardless of age.
+    """
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        return frontier_service.cleanup_sources(max_age_days=max_age_days)
+    except Exception as e:
+        logger.error(f"Error cleaning up sources: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

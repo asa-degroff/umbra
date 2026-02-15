@@ -65,10 +65,14 @@ class DiscoveredSource:
 
     @classmethod
     def from_dict(cls, data: dict) -> 'DiscoveredSource':
-        """Create from dict."""
-        data = data.copy()
+        """Create from dict, ignoring unknown keys."""
+        import dataclasses
+        known_fields = {f.name for f in dataclasses.fields(cls)}
+        data = {k: v for k, v in data.items() if k in known_fields}
         if isinstance(data.get('discovered_at'), str):
             data['discovered_at'] = datetime.fromisoformat(data['discovered_at'])
+        if isinstance(data.get('rated_at'), str):
+            data['rated_at'] = datetime.fromisoformat(data['rated_at'])
         return cls(**data)
 
 

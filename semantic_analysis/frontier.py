@@ -280,13 +280,10 @@ class FrontierDetector:
 
     @staticmethod
     def _embedding_cache_key(embeddings: np.ndarray) -> str:
-        """Compute a fast cache key from embedding shape + sampled content."""
-        n, d = embeddings.shape
-        # Sample first, middle, last rows for a quick fingerprint
-        sample_idx = [0, n // 2, n - 1] if n >= 3 else list(range(n))
-        sample_bytes = embeddings[sample_idx].tobytes()
+        """Compute a cache key from embedding shape + full content hash."""
         import hashlib
-        content_hash = hashlib.md5(sample_bytes).hexdigest()[:12]
+        n, d = embeddings.shape
+        content_hash = hashlib.md5(embeddings.data.tobytes()).hexdigest()[:16]
         return f"{n}x{d}_{content_hash}"
 
     def _fit_umap(self, embeddings: np.ndarray):
@@ -370,6 +367,36 @@ class FrontierDetector:
 
         return np.array(grid_centers), grid_indices
 
+    @staticmethod
+    def _compute_density_scores(grid_centers: np.ndarray, kde) -> np.ndarray:
+        """Evaluate KDE, percentile-normalize, and invert to get frontier density scores."""
+        raw_density = kde(grid_centers.T)
+        p5 = np.percentile(raw_density, 5)
+        p95 = np.percentile(raw_density, 95)
+        denom = p95 - p5
+        if denom < 1e-12:
+            normalized = np.zeros_like(raw_density)
+        else:
+            normalized = np.clip((raw_density - p5) / denom, 0, 1)
+        return 1.0 - normalized
+
+    @staticmethod
+    def _grid_coord_range(grid_centers: np.ndarray) -> float:
+        """Compute diagonal of the 2D grid bounding box for distance normalization."""
+        coord_range = np.sqrt(
+            (grid_centers[:, 0].max() - grid_centers[:, 0].min())**2 +
+            (grid_centers[:, 1].max() - grid_centers[:, 1].min())**2
+        )
+        return coord_range if coord_range > 1e-12 else 1.0
+
+    def _adjacency_bell(self, norm_dist: np.ndarray) -> np.ndarray:
+        """Gaussian bell curve scoring for adjacency sweet spot."""
+        center = (self.adjacency_min + self.adjacency_max) / 2
+        width = (self.adjacency_max - self.adjacency_min) / 2
+        if width < 1e-12:
+            width = 0.1
+        return np.exp(-0.5 * ((norm_dist - center) / width) ** 2)
+
     def _score_grid_cells(
         self,
         grid_centers: np.ndarray,
@@ -382,16 +409,7 @@ class FrontierDetector:
         Returns:
             (density_scores, adjacency_scores, frontier_scores)
         """
-        # Density scoring: evaluate KDE, percentile-normalize, invert
-        raw_density = kde(grid_centers.T)
-        p5 = np.percentile(raw_density, 5)
-        p95 = np.percentile(raw_density, 95)
-        denom = p95 - p5
-        if denom < 1e-12:
-            normalized = np.zeros_like(raw_density)
-        else:
-            normalized = np.clip((raw_density - p5) / denom, 0, 1)
-        density_scores = 1.0 - normalized
+        density_scores = self._compute_density_scores(grid_centers, kde)
 
         # Adjacency scoring: distance to nearest cluster centroid
         if len(centroids_2d) == 0:
@@ -399,23 +417,8 @@ class FrontierDetector:
         else:
             dist_matrix = cdist(grid_centers, centroids_2d, metric='euclidean')
             nearest_dist = dist_matrix.min(axis=1)
-
-            # Normalize by diagonal of the 2D coordinate range
-            # This gives consistent scale regardless of cluster spacing
-            coord_range = np.sqrt(
-                (grid_centers[:, 0].max() - grid_centers[:, 0].min())**2 +
-                (grid_centers[:, 1].max() - grid_centers[:, 1].min())**2
-            )
-            if coord_range < 1e-12:
-                coord_range = 1.0
-            norm_dist = nearest_dist / coord_range
-
-            # Gaussian bell curve centered on sweet spot
-            center = (self.adjacency_min + self.adjacency_max) / 2
-            width = (self.adjacency_max - self.adjacency_min) / 2
-            if width < 1e-12:
-                width = 0.1
-            adjacency_scores = np.exp(-0.5 * ((norm_dist - center) / width) ** 2)
+            norm_dist = nearest_dist / self._grid_coord_range(grid_centers)
+            adjacency_scores = self._adjacency_bell(norm_dist)
 
         frontier_scores = density_scores * adjacency_scores
         return density_scores, adjacency_scores, frontier_scores
@@ -442,42 +445,17 @@ class FrontierDetector:
         Returns:
             (density_scores, adjacency_scores, frontier_scores)
         """
-        # Density scoring (same as unseeded)
-        raw_density = kde(grid_centers.T)
-        p5 = np.percentile(raw_density, 5)
-        p95 = np.percentile(raw_density, 95)
-        denom = p95 - p5
-        if denom < 1e-12:
-            normalized = np.zeros_like(raw_density)
-        else:
-            normalized = np.clip((raw_density - p5) / denom, 0, 1)
-        density_scores = 1.0 - normalized
+        density_scores = self._compute_density_scores(grid_centers, kde)
 
         if len(seed_centroids_2d) == 0:
             return density_scores, np.zeros(len(grid_centers)), np.zeros(len(grid_centers))
 
-        # Distance from each grid cell to each seed
+        # Distance from each grid cell to each seed, normalized
         dist_matrix = cdist(grid_centers, seed_centroids_2d, metric='euclidean')
-
-        # Normalize by diagonal of the 2D coordinate range
-        coord_range = np.sqrt(
-            (grid_centers[:, 0].max() - grid_centers[:, 0].min())**2 +
-            (grid_centers[:, 1].max() - grid_centers[:, 1].min())**2
-        )
-        if coord_range < 1e-12:
-            coord_range = 1.0
-        norm_dist_matrix = dist_matrix / coord_range
+        norm_dist_matrix = dist_matrix / self._grid_coord_range(grid_centers)
 
         # Adjacency: Gaussian bell per seed, then take weighted max
-        center = (self.adjacency_min + self.adjacency_max) / 2
-        width = (self.adjacency_max - self.adjacency_min) / 2
-        if width < 1e-12:
-            width = 0.1
-
-        # Shape: (n_grid_cells, n_seeds)
-        adjacency_per_seed = np.exp(-0.5 * ((norm_dist_matrix - center) / width) ** 2)
-
-        # Weight by seed importance and take max across seeds
+        adjacency_per_seed = self._adjacency_bell(norm_dist_matrix)
         weighted_adjacency = adjacency_per_seed * seed_weights[np.newaxis, :]
         adjacency_scores = weighted_adjacency.max(axis=1)
 

@@ -110,8 +110,10 @@ class SourceDiscovery:
         result = DiscoveryResult()
         
         all_sources: list[DiscoveredSource] = []
+        all_embeddings: list[np.ndarray] = []  # Parallel to all_sources, for semantic dedup
         explored_zone_ids: set[tuple] = set()  # Track by grid cell
         seen_urls: set[tuple[str, int]] = set()  # (url, chunk_index) dedup within run
+        semantic_dedup_threshold = 0.95  # Skip sources with cosine sim > this to any existing
         
         # Initial frontier detection
         logger.info(f"Starting discovery: max_rounds={max_rounds}, max_sources={max_total_sources}")
@@ -224,15 +226,29 @@ class SourceDiscovery:
                 try:
                     texts = [s.excerpt for s in zone_sources]
                     embeddings = self.embedder.embed_batch(texts)
+                    semantic_dupes = 0
 
                     for source_obj, embedding in zip(zone_sources, embeddings):
+                        emb_arr = np.array(embedding)
                         source_obj.embedding = embedding
                         source_obj.frontier_zone_id = str(zone_id)
+
+                        # Semantic dedup: skip if too similar to an already-accepted source
+                        if all_embeddings:
+                            emb_norm = emb_arr / (np.linalg.norm(emb_arr) or 1.0)
+                            existing = np.array(all_embeddings)
+                            norms = np.linalg.norm(existing, axis=1, keepdims=True)
+                            norms[norms == 0] = 1.0
+                            existing_norm = existing / norms
+                            max_sim = float(np.max(existing_norm @ emb_norm))
+                            if max_sim > semantic_dedup_threshold:
+                                semantic_dupes += 1
+                                continue
 
                         # Score relevance
                         if self.relevance_analyzer:
                             source_obj.relevance_score = self.relevance_analyzer.compute_relevance_score(
-                                np.array(embedding)
+                                emb_arr
                             )
 
                         # Classify: frontier vs pending
@@ -244,6 +260,10 @@ class SourceDiscovery:
                             result.pending_sources.append(source_obj)
 
                         all_sources.append(source_obj)
+                        all_embeddings.append(emb_arr)
+
+                    if semantic_dupes:
+                        logger.info(f"Semantic dedup: skipped {semantic_dupes} near-duplicate sources")
 
                 except Exception as e:
                     logger.error(f"Embedding error: {e}")
