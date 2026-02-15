@@ -416,6 +416,56 @@ class FrontierService:
             "status": status,
         }
 
+    def evaluate_pending(self, threshold: float = 0.4) -> dict:
+        """
+        Re-evaluate pending sources against current Umbra content.
+
+        Loads all pending sources from the DB, re-scores them with a fresh
+        centroid, promotes those above threshold to 'frontier', and persists
+        the updates.
+
+        Returns:
+            Dict with promoted count and updated source IDs.
+        """
+        if not _init_components() or _source_db is None or _source_discovery is None:
+            return {"error": "Service not available"}
+
+        try:
+            pending = _source_db.get_sources(status='pending', limit=1000)
+            if not pending:
+                return {"promoted": 0, "still_pending": 0, "message": "No pending sources"}
+
+            _apply_feedback()
+
+            promoted, still_pending = _source_discovery.evaluate_pending_sources(
+                pending, threshold=threshold
+            )
+
+            # Persist status + score changes
+            promoted_ids = []
+            for s in promoted:
+                if s.id is not None:
+                    _source_db.update_source(s.id, 'frontier', s.relevance_score)
+                    promoted_ids.append(s.id)
+
+            for s in still_pending:
+                if s.id is not None:
+                    _source_db.update_source(s.id, 'pending', s.relevance_score)
+
+            logger.info(f"Evaluated {len(pending)} pending sources: "
+                       f"{len(promoted)} promoted to frontier")
+
+            return {
+                "promoted": len(promoted),
+                "still_pending": len(still_pending),
+                "promoted_ids": promoted_ids,
+                "threshold": threshold,
+            }
+
+        except Exception as e:
+            logger.error(f"Error evaluating pending sources: {e}")
+            return {"error": str(e)}
+
     def get_persisted_sources(
         self,
         status: Optional[str] = None,

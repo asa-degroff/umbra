@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - No input validation in SourceDiscovery constructor (#12)
 
 ### Fixed
+- evaluate_pending_sources is never called anywhere (#53)
+- rounds_completed off-by-one in discovery loop (#45)
+- _apply_feedback accumulates duplicate negative exemplars on every call (#44)
 - Semantic Scholar 429 handler drops query without retry (#41)
 - Semantic Scholar null abstract filtering drops all results (#40)
 - Fallback keyword filter drops short meaningful terms (#24)

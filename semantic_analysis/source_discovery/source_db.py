@@ -165,6 +165,15 @@ class SourceDB:
             )
             self.conn.commit()
 
+    def update_source(self, source_id: int, status: str, relevance_score: float):
+        """Update status and relevance score of a source."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE discovered_sources SET status = ?, relevance_score = ? WHERE id = ?",
+                (status, relevance_score, source_id),
+            )
+            self.conn.commit()
+
     def get_by_url(self, url: str) -> list[DiscoveredSource]:
         """Check if a URL has already been discovered."""
         rows = self.conn.execute(

@@ -453,6 +453,24 @@ async def rate_source(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/frontier/sources/evaluate")
+async def evaluate_pending_sources(
+    threshold: float = Query(0.4, ge=0.0, le=1.0),
+):
+    """
+    Re-evaluate pending sources against current Umbra content.
+
+    Recomputes relevance scores with a fresh centroid and promotes
+    sources above the threshold to 'frontier' status.
+    """
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        return frontier_service.evaluate_pending(threshold=threshold)
+    except Exception as e:
+        logger.error(f"Error evaluating pending sources: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/frontier/stats")
 async def get_frontier_stats():
     """Get frontier service statistics."""

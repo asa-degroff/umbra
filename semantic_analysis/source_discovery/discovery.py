@@ -133,10 +133,10 @@ class SourceDiscovery:
         
         logger.info(f"Detected {len(current_zones)} initial frontier zones")
         
-        round_num = -1
+        rounds_completed = 0
         for round_num in range(max_rounds):
             logger.info(f"=== Round {round_num + 1}/{max_rounds} ===")
-            
+
             # Check total source cap
             if len(all_sources) >= max_total_sources:
                 logger.info(f"Reached max_total_sources cap ({max_total_sources})")
@@ -264,7 +264,9 @@ class SourceDiscovery:
             if zones_this_round == 0:
                 logger.info("No new zones explored this round")
                 break
-            
+
+            rounds_completed += 1
+
             # Re-detect frontiers for next round (if not last round)
             if round_num < max_rounds - 1 and len(all_sources) < max_total_sources:
                 try:
@@ -306,7 +308,7 @@ class SourceDiscovery:
                     result.errors.append(f"Re-detection: {e}")
                     break
         
-        result.rounds_completed = round_num + 1
+        result.rounds_completed = rounds_completed
         result.total_sources_found = len(all_sources)
         
         logger.info(f"Discovery complete: {len(result.frontier_sources)} frontier, "
