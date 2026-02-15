@@ -110,6 +110,11 @@ class SourceProvider(ABC):
         chunked_sources = []
 
         for source in sources:
+            # Skip chunking when full text fits in a single chunk
+            if len(source.full_text) <= chunk_size:
+                chunked_sources.append(source)
+                continue
+
             chunks = self.chunk_text(source.full_text, chunk_size)
 
             for i, chunk in enumerate(chunks):

@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - No input validation in SourceDiscovery constructor (#12)
 
 ### Fixed
+- ArxivProvider and SemanticScholarProvider missing from top-level exports (#57)
+- SourceDB read operations lack locking while writes use _lock (#51)
+- temporal_weight allows weights > 1.0 for future timestamps (#52)
 - UMAP cache key based on only 3 sampled rows is fragile (#50)
 - _seed_objects with full embeddings leaked into API-facing cache dict (#49)
 - arXiv API called over plain HTTP (#47)
@@ -39,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Constraint filter math off-by-2x (#4)
 
 ### Changed
+- Chunking overhead wasted on academic providers with short abstracts (#58)
 - Density scoring logic duplicated between seeded and unseeded paths (#48)
 - WikipediaProvider.search_with_chunks duplicates base class (#43)
 - Query generator prompt biased toward Wikipedia queries (#42)

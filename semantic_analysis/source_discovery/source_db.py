@@ -153,7 +153,8 @@ class SourceDB:
         query += " ORDER BY discovered_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
-        rows = self.conn.execute(query, params).fetchall()
+        with self._lock:
+            rows = self.conn.execute(query, params).fetchall()
         return [self._row_to_source(row) for row in rows]
 
     def update_status(self, source_id: int, status: str):
@@ -176,17 +177,19 @@ class SourceDB:
 
     def get_by_url(self, url: str) -> list[DiscoveredSource]:
         """Check if a URL has already been discovered."""
-        rows = self.conn.execute(
-            "SELECT * FROM discovered_sources WHERE url = ? ORDER BY chunk_index",
-            (url,),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM discovered_sources WHERE url = ? ORDER BY chunk_index",
+                (url,),
+            ).fetchall()
         return [self._row_to_source(row) for row in rows]
 
     def get_stats(self) -> dict:
         """Get counts by status."""
-        rows = self.conn.execute(
-            "SELECT status, COUNT(*) as cnt FROM discovered_sources GROUP BY status"
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM discovered_sources GROUP BY status"
+            ).fetchall()
         stats = {row['status']: row['cnt'] for row in rows}
         total = sum(stats.values())
         stats['total'] = total
@@ -226,10 +229,11 @@ class SourceDB:
         Args:
             rating: -1, 0, or 1
         """
-        rows = self.conn.execute(
-            "SELECT * FROM discovered_sources WHERE user_rating = ? ORDER BY rated_at DESC",
-            (rating,),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM discovered_sources WHERE user_rating = ? ORDER BY rated_at DESC",
+                (rating,),
+            ).fetchall()
         return [self._row_to_source(row) for row in rows]
 
     def _row_to_source(self, row: sqlite3.Row) -> DiscoveredSource:

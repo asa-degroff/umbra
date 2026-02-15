@@ -125,10 +125,10 @@ def temporal_weight(created_at: str, half_life_days: float = 7.0) -> float:
         else:
             dt = created_at
         
-        # Calculate age in days
+        # Calculate age in days (clamp to 0 for future timestamps)
         now = datetime.now(timezone.utc)
-        age_days = (now - dt).total_seconds() / 86400
-        
+        age_days = max(0, (now - dt).total_seconds() / 86400)
+
         # Exponential decay
         decay_rate = math.log(2) / half_life_days
         return math.exp(-decay_rate * age_days)

@@ -20,6 +20,8 @@ from .source_discovery import (
     DiscoveredSource,
     DiscoveryResult,
     WikipediaProvider,
+    ArxivProvider,
+    SemanticScholarProvider,
     QueryGenerator,
     SourceDB,
 )
@@ -44,6 +46,8 @@ __all__ = [
     'DiscoveredSource',
     'DiscoveryResult',
     'WikipediaProvider',
+    'ArxivProvider',
+    'SemanticScholarProvider',
     'QueryGenerator',
     'SourceDB',
     'InterestSeed',
