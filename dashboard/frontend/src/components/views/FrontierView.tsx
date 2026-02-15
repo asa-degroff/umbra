@@ -2,8 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import {
   Compass, Map, Globe, Zap, BookOpen, Sprout, Sparkles,
-  ChevronLeft, ChevronRight, ExternalLink, X,
-  Loader2, Play, AlertCircle, ThumbsUp, ThumbsDown,
+  ChevronLeft, ChevronRight, ExternalLink, X, Check,
+  Loader2, Play, AlertCircle, ThumbsUp, ThumbsDown, Focus,
 } from 'lucide-react'
 import {
   ScatterChart, Scatter, XAxis, YAxis,
@@ -132,6 +132,8 @@ interface DiscoveryResponse {
   errors: string[]
   discovered_at?: string
   error?: string
+  focused?: boolean
+  focused_seeds?: string[]
 }
 
 // --- Helpers ---
@@ -305,6 +307,7 @@ export default function FrontierView() {
   const [selectedSource, setSelectedSource] = useState<DiscoveredSourceItem | null>(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [page, setPage] = useState(0)
+  const [selectedSeedIds, setSelectedSeedIds] = useState<Set<string>>(new Set())
 
   // Discover params
   const [discoverRounds, setDiscoverRounds] = useState('2')
@@ -365,6 +368,42 @@ export default function FrontierView() {
       )
     },
   })
+
+  const focusedDiscoveryMutation = useMutation<DiscoveryResponse>({
+    mutationFn: () => fetch(
+      `${API_BASE}/semantic/frontier/discover/focused`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seed_ids: Array.from(selectedSeedIds),
+          max_rounds: Number(discoverRounds),
+          max_sources: Number(discoverMaxSources),
+          initial_zones: Number(discoverZones),
+          days,
+          source,
+        }),
+      },
+    ).then(r => r.json()),
+    onSuccess: (data) => {
+      if (!data.error) {
+        queryClient.invalidateQueries({ queryKey: ['frontierSources'] })
+        setActiveTab('discover')
+        setSelectedSeedIds(new Set())
+      }
+    },
+  })
+
+  // --- Seed selection helpers ---
+
+  const toggleSeed = (seedId: string) => {
+    setSelectedSeedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(seedId)) next.delete(seedId)
+      else next.add(seedId)
+      return next
+    })
+  }
 
   // --- Derived data ---
 
@@ -528,6 +567,41 @@ export default function FrontierView() {
             </Card>
           ) : (
             <>
+              {/* Seed Selection Action Bar */}
+              {selectedSeedIds.size > 0 && (
+                <div className="flex items-center gap-3 p-3 bg-primary/10 border border-primary/20 rounded-lg">
+                  <Badge variant="secondary" className="text-sm">
+                    {selectedSeedIds.size} seed{selectedSeedIds.size > 1 ? 's' : ''} selected
+                  </Badge>
+                  <div className="flex-1" />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedSeedIds(new Set())}
+                  >
+                    Clear Selection
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => focusedDiscoveryMutation.mutate()}
+                    disabled={focusedDiscoveryMutation.isPending}
+                  >
+                    {focusedDiscoveryMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Discovering...
+                      </>
+                    ) : (
+                      <>
+                        <Focus className="w-4 h-4" />
+                        Run Focused Discovery
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
+
               {/* Cluster Seeds */}
               {seedsData.seeds.filter(s => s.seed_type === 'cluster').length > 0 && (
                 <Card>
@@ -537,38 +611,54 @@ export default function FrontierView() {
                       Topic Clusters
                     </CardTitle>
                     <CardDescription>
-                      Main content areas — centroids of Umbra's topic clusters
+                      Main content areas — click to select seeds for focused discovery
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {seedsData.seeds.filter(s => s.seed_type === 'cluster').map((seed, i) => (
-                        <div
-                          key={seed.seed_id}
-                          className="p-4 bg-secondary rounded-lg border-l-4"
-                          style={{ borderLeftColor: SEED_COLORS[i % SEED_COLORS.length] }}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-medium text-sm">{seed.label}</span>
-                            <Badge variant="outline" className="text-xs">
-                              {seed.post_count} posts
-                            </Badge>
+                      {seedsData.seeds.filter(s => s.seed_type === 'cluster').map((seed, i) => {
+                        const isSelected = selectedSeedIds.has(seed.seed_id)
+                        return (
+                          <div
+                            key={seed.seed_id}
+                            className={cn(
+                              "p-4 bg-secondary rounded-lg border-l-4 cursor-pointer transition-all",
+                              isSelected
+                                ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                                : "hover:ring-1 hover:ring-muted-foreground/30"
+                            )}
+                            style={{ borderLeftColor: SEED_COLORS[i % SEED_COLORS.length] }}
+                            onClick={() => toggleSeed(seed.seed_id)}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-medium text-sm">{seed.label}</span>
+                              <div className="flex items-center gap-1">
+                                {isSelected && (
+                                  <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                                    <Check className="w-3 h-3 text-primary-foreground" />
+                                  </div>
+                                )}
+                                <Badge variant="outline" className="text-xs">
+                                  {seed.post_count} posts
+                                </Badge>
+                              </div>
+                            </div>
+                            <div className="flex gap-2 mb-3">
+                              <Badge variant="secondary" className="text-xs">
+                                Weight: {(seed.weight * 100).toFixed(0)}%
+                              </Badge>
+                              <Badge variant="secondary" className="text-xs">
+                                Recency: {(seed.recency_weight * 100).toFixed(0)}%
+                              </Badge>
+                            </div>
+                            {seed.representative_texts?.[0] && (
+                              <p className="text-xs text-muted-foreground line-clamp-3">
+                                {seed.representative_texts[0]}
+                              </p>
+                            )}
                           </div>
-                          <div className="flex gap-2 mb-3">
-                            <Badge variant="secondary" className="text-xs">
-                              Weight: {(seed.weight * 100).toFixed(0)}%
-                            </Badge>
-                            <Badge variant="secondary" className="text-xs">
-                              Recency: {(seed.recency_weight * 100).toFixed(0)}%
-                            </Badge>
-                          </div>
-                          {seed.representative_texts?.[0] && (
-                            <p className="text-xs text-muted-foreground line-clamp-3">
-                              {seed.representative_texts[0]}
-                            </p>
-                          )}
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </CardContent>
                 </Card>
@@ -583,24 +673,38 @@ export default function FrontierView() {
                       Creative Outliers
                     </CardTitle>
                     <CardDescription>
-                      Intentional diversifications — recent posts far from main topic clusters
+                      Intentional diversifications — click to select seeds for focused discovery
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {seedsData.seeds.filter(s => s.seed_type === 'outlier').map((seed, i) => {
+                      {seedsData.seeds.filter(s => s.seed_type === 'outlier').map((seed) => {
                         const colorIdx = seedsData.seeds.findIndex(s => s.seed_id === seed.seed_id)
+                        const isSelected = selectedSeedIds.has(seed.seed_id)
                         return (
                           <div
                             key={seed.seed_id}
-                            className="p-4 bg-secondary rounded-lg border-l-4"
+                            className={cn(
+                              "p-4 bg-secondary rounded-lg border-l-4 cursor-pointer transition-all",
+                              isSelected
+                                ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                                : "hover:ring-1 hover:ring-muted-foreground/30"
+                            )}
                             style={{ borderLeftColor: SEED_COLORS[colorIdx % SEED_COLORS.length] }}
+                            onClick={() => toggleSeed(seed.seed_id)}
                           >
                             <div className="flex items-center justify-between mb-2">
                               <span className="font-medium text-sm">{seed.label}</span>
-                              <Badge variant="secondary" className="text-xs">
-                                Dist: {(seed.avg_distance_to_global_centroid * 100).toFixed(0)}%
-                              </Badge>
+                              <div className="flex items-center gap-1">
+                                {isSelected && (
+                                  <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                                    <Check className="w-3 h-3 text-primary-foreground" />
+                                  </div>
+                                )}
+                                <Badge variant="secondary" className="text-xs">
+                                  Dist: {(seed.avg_distance_to_global_centroid * 100).toFixed(0)}%
+                                </Badge>
+                              </div>
                             </div>
                             <div className="flex gap-2 mb-3">
                               <Badge variant="secondary" className="text-xs">
@@ -994,6 +1098,123 @@ export default function FrontierView() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Focused Discovery Results */}
+          {focusedDiscoveryMutation.data && !focusedDiscoveryMutation.data.error && focusedDiscoveryMutation.data.focused && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Focus className="w-5 h-5 text-primary" />
+                  Focused Discovery Results
+                </CardTitle>
+                <CardDescription>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>
+                      {focusedDiscoveryMutation.data.discovered_at
+                        ? `Completed at ${new Date(focusedDiscoveryMutation.data.discovered_at).toLocaleTimeString()}`
+                        : 'Completed'
+                      }
+                      {' — focused on:'}
+                    </span>
+                    {focusedDiscoveryMutation.data.focused_seeds?.map(label => (
+                      <Badge key={label} variant="outline" className="text-xs">
+                        {label}
+                      </Badge>
+                    ))}
+                  </div>
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {/* Stats */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="p-3 bg-secondary rounded-lg text-center">
+                    <div className="text-xl font-bold text-green-400">
+                      {focusedDiscoveryMutation.data.frontier_sources.length}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Frontier Sources</div>
+                  </div>
+                  <div className="p-3 bg-secondary rounded-lg text-center">
+                    <div className="text-xl font-bold text-amber-400">
+                      {focusedDiscoveryMutation.data.pending_sources.length}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Pending Sources</div>
+                  </div>
+                  <div className="p-3 bg-secondary rounded-lg text-center">
+                    <div className="text-xl font-bold">
+                      {focusedDiscoveryMutation.data.stats.zones_explored}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Zones Explored</div>
+                  </div>
+                  <div className="p-3 bg-secondary rounded-lg text-center">
+                    <div className="text-xl font-bold">
+                      {focusedDiscoveryMutation.data.stats.rounds_completed}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Rounds Completed</div>
+                  </div>
+                </div>
+
+                {focusedDiscoveryMutation.data.errors.length > 0 && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm mb-4">
+                    <div className="font-medium mb-1">Errors:</div>
+                    {focusedDiscoveryMutation.data.errors.map((err, i) => (
+                      <div key={i}>{err}</div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Frontier Sources List */}
+                {focusedDiscoveryMutation.data.frontier_sources.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-medium mb-2">Frontier Sources:</h3>
+                    <div className="space-y-2">
+                      {focusedDiscoveryMutation.data.frontier_sources.map((src, i) => (
+                        <div key={i} className="p-3 bg-secondary rounded-lg">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-medium text-sm">{src.title}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {(src.relevance_score * 100).toFixed(0)}%
+                            </Badge>
+                            <a
+                              href={src.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-muted-foreground hover:text-cyan-400"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
+                          <p className="text-xs text-muted-foreground line-clamp-2">{src.excerpt}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Focused Discovery Error */}
+          {focusedDiscoveryMutation.data?.error && (
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-2 text-destructive">
+                  <AlertCircle className="w-5 h-5" />
+                  <span>Focused discovery error: {focusedDiscoveryMutation.data.error}</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {focusedDiscoveryMutation.error && (
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-2 text-destructive">
+                  <AlertCircle className="w-5 h-5" />
+                  <span>Focused discovery request failed: {String(focusedDiscoveryMutation.error)}</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Discovery Results */}
           {discoverMutation.data && !discoverMutation.data.error && (

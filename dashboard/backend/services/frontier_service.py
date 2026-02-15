@@ -345,6 +345,82 @@ class FrontierService:
             "status": "complete",
         }
 
+    def discover_sources_focused(
+        self,
+        seed_ids: list[str],
+        max_rounds: int = 2,
+        max_sources_per_zone: int = 5,
+        max_total_sources: int = 25,
+        initial_zones: int = 3,
+        days: int = 30,
+        source: str = 'all',
+    ) -> dict:
+        """
+        Run source discovery focused on specific seeds.
+
+        Filters the full seed list to only the requested seed_ids,
+        then passes those to discover(). Results are NOT cached
+        (focused results are query-specific).
+
+        Args:
+            seed_ids: List of seed_id strings to focus on
+            max_rounds: Maximum expansion rounds
+            max_sources_per_zone: Sources per zone
+            max_total_sources: Total source cap
+            initial_zones: Starting zones
+            days: Lookback period
+            source: Content filter
+
+        Returns:
+            Dict with discovery results plus focused_seeds metadata
+        """
+        if not _init_components():
+            return {"error": "Service not available"}
+
+        if not seed_ids:
+            return {"error": "No seed_ids provided"}
+
+        # Get seed objects from cache or detect fresh
+        seed_objects = _cache.get('seed_objects')
+        if seed_objects is None and _seed_detector is not None:
+            try:
+                self.get_seeds(days=days)
+                seed_objects = _cache.get('seed_objects')
+            except Exception as e:
+                logger.warning(f"Seed detection for focused discovery failed: {e}")
+
+        if not seed_objects:
+            return {"error": "No seeds available — run seed detection first"}
+
+        # Filter to only the requested seeds
+        seed_id_set = set(seed_ids)
+        filtered_seeds = [s for s in seed_objects if s.seed_id in seed_id_set]
+
+        if not filtered_seeds:
+            return {"error": f"None of the requested seed_ids were found in detected seeds"}
+
+        matched_labels = [s.label for s in filtered_seeds]
+        logger.info(f"Running focused discovery on {len(filtered_seeds)} seeds: {matched_labels}")
+
+        _apply_feedback()
+        try:
+            result = _source_discovery.discover(
+                seeds=filtered_seeds,
+                max_rounds=max_rounds,
+                max_sources_per_zone=max_sources_per_zone,
+                max_total_sources=max_total_sources,
+                initial_zones=initial_zones,
+                days=days,
+                source=source,
+            )
+            response = self._format_discovery_result(result)
+            response['focused'] = True
+            response['focused_seeds'] = matched_labels
+            return response
+        except Exception as e:
+            logger.error(f"Error in focused source discovery: {e}")
+            return {"error": str(e), "status": "error"}
+
     def discover_sources(
         self,
         max_rounds: int = 2,
@@ -415,6 +491,20 @@ class FrontierService:
         """Execute discovery synchronously and cache the result."""
         _apply_feedback()
         try:
+            # Detect seeds and pass to discovery for seed-aware exploration
+            seed_objects = _cache.get('seed_objects')
+            if seed_objects is None and _seed_detector is not None:
+                try:
+                    days = kwargs.get('days', 30)
+                    self.get_seeds(days=days)  # Populates _cache['seed_objects']
+                    seed_objects = _cache.get('seed_objects')
+                except Exception as e:
+                    logger.warning(f"Seed detection for discovery failed: {e}")
+
+            if seed_objects:
+                kwargs['seeds'] = seed_objects
+                logger.info(f"Passing {len(seed_objects)} seeds to discovery")
+
             result = _source_discovery.discover(**kwargs)
             response = self._format_discovery_result(result)
             _cache['discovery_result'] = response

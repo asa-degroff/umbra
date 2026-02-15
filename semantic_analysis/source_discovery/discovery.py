@@ -88,10 +88,11 @@ class SourceDiscovery:
         chunk_sources: bool = True,
         chunk_size: int = 1500,
         frontier_threshold: float = 0.4,
+        seeds: Optional[list] = None,
     ) -> DiscoveryResult:
         """
         Run the source discovery loop.
-        
+
         Args:
             max_rounds: Maximum expansion rounds
             max_sources_per_zone: Sources to fetch per zone
@@ -103,7 +104,8 @@ class SourceDiscovery:
             chunk_sources: Whether to chunk long sources
             chunk_size: Characters per chunk
             frontier_threshold: Min relevance to count as "in frontier"
-            
+            seeds: Optional list of InterestSeed objects for seed-aware discovery
+
         Returns:
             DiscoveryResult with categorized sources
         """
@@ -116,13 +118,18 @@ class SourceDiscovery:
         semantic_dedup_threshold = 0.95  # Skip sources with cosine sim > this to any existing
         
         # Initial frontier detection
-        logger.info(f"Starting discovery: max_rounds={max_rounds}, max_sources={max_total_sources}")
-        
+        if seeds:
+            logger.info(f"Starting discovery (seed-aware, {len(seeds)} seeds): "
+                       f"max_rounds={max_rounds}, max_sources={max_total_sources}")
+        else:
+            logger.info(f"Starting discovery: max_rounds={max_rounds}, max_sources={max_total_sources}")
+
         try:
             current_zones = self.frontier_detector.detect_frontiers(
                 days=days,
                 top_n=initial_zones,
                 source=source,
+                seeds=seeds,
             )
         except Exception as e:
             logger.error(f"Initial frontier detection failed: {e}")
@@ -157,10 +164,20 @@ class SourceDiscovery:
                     result.capped = True
                     break
                 
-                # Generate queries for this zone
+                # Generate queries for this zone, enriched with seed context if available
+                seed_label = None
+                seed_texts = None
+                if seeds and zone.seed_id:
+                    matching = [s for s in seeds if s.seed_id == zone.seed_id]
+                    if matching:
+                        seed_label = matching[0].label
+                        seed_texts = matching[0].representative_texts
+
                 queries = self.query_generator.generate_queries(
                     zone.nearby_posts,
                     num_queries=queries_per_zone,
+                    seed_label=seed_label,
+                    seed_texts=seed_texts,
                 )
                 
                 if not queries:
@@ -312,6 +329,7 @@ class SourceDiscovery:
                         source=source,
                         extra_embeddings=extra_embeddings,
                         extra_records=extra_records,
+                        seeds=seeds,
                     )
 
                     # Filter to unexplored zones
@@ -328,9 +346,145 @@ class SourceDiscovery:
                     result.errors.append(f"Re-detection: {e}")
                     break
         
+        # === Outlier exploration phase ===
+        # Directly explore outlier seeds that may not have produced frontier zones
+        if seeds and len(all_sources) < max_total_sources:
+            outlier_seeds = [s for s in seeds if s.seed_type == "outlier"]
+            # Skip outliers that already had zones explored for them
+            explored_seed_ids = set()
+            for s_obj in all_sources:
+                if s_obj.frontier_zone_id:
+                    explored_seed_ids.add(s_obj.frontier_zone_id)
+
+            if outlier_seeds:
+                logger.info(f"Outlier exploration: {len(outlier_seeds)} outlier seeds to explore")
+
+            for outlier in outlier_seeds:
+                if len(all_sources) >= max_total_sources:
+                    result.capped = True
+                    break
+
+                logger.info(f"Exploring outlier seed: {outlier.label} ({outlier.seed_id})")
+
+                # Generate queries from outlier context
+                queries = self.query_generator.generate_queries(
+                    [],  # No nearby posts — use seed context only
+                    num_queries=queries_per_zone,
+                    seed_label=outlier.label,
+                    seed_texts=outlier.representative_texts,
+                )
+
+                if not queries:
+                    logger.debug(f"No queries generated for outlier {outlier.seed_id}")
+                    continue
+
+                # Fetch sources
+                outlier_sources: list[DiscoveredSource] = []
+                sources_remaining = max_sources_per_zone
+
+                for query in queries:
+                    if sources_remaining <= 0:
+                        break
+
+                    for provider in self.providers:
+                        try:
+                            if chunk_sources:
+                                sources = provider.search_with_chunks(
+                                    query,
+                                    limit=min(3, sources_remaining),
+                                    chunk_size=chunk_size,
+                                )
+                            else:
+                                sources = provider.search(
+                                    query,
+                                    limit=min(3, sources_remaining),
+                                )
+
+                            outlier_sources.extend(sources)
+                            sources_remaining -= len(sources)
+
+                        except Exception as e:
+                            logger.error(f"Provider {provider.source_type} error (outlier): {e}")
+                            result.errors.append(f"{provider.source_type} (outlier): {e}")
+
+                # Deduplicate against DB
+                if self.source_db and outlier_sources:
+                    unique = []
+                    for s in outlier_sources:
+                        if not self.source_db.get_by_url(s.url):
+                            unique.append(s)
+                    outlier_sources = unique
+
+                # Deduplicate within this run
+                if outlier_sources:
+                    deduped = []
+                    for s in outlier_sources:
+                        key = (s.url, s.chunk_index)
+                        if key not in seen_urls:
+                            seen_urls.add(key)
+                            deduped.append(s)
+                    outlier_sources = deduped
+
+                if not outlier_sources:
+                    continue
+
+                # Embed and classify
+                try:
+                    texts = [s.excerpt for s in outlier_sources]
+                    embeddings = self.embedder.embed_batch(texts)
+                    semantic_dupes = 0
+
+                    for source_obj, embedding in zip(outlier_sources, embeddings):
+                        emb_arr = np.array(embedding)
+                        source_obj.embedding = embedding
+                        source_obj.frontier_zone_id = f"outlier:{outlier.seed_id}"
+
+                        # Semantic dedup
+                        if all_embeddings:
+                            emb_norm = emb_arr / (np.linalg.norm(emb_arr) or 1.0)
+                            existing = np.array(all_embeddings)
+                            norms = np.linalg.norm(existing, axis=1, keepdims=True)
+                            norms[norms == 0] = 1.0
+                            existing_norm = existing / norms
+                            max_sim = float(np.max(existing_norm @ emb_norm))
+                            if max_sim > semantic_dedup_threshold:
+                                semantic_dupes += 1
+                                continue
+
+                        # Score relevance
+                        if self.relevance_analyzer:
+                            source_obj.relevance_score = self.relevance_analyzer.compute_relevance_score(
+                                emb_arr
+                            )
+
+                        # Classify
+                        if source_obj.relevance_score >= frontier_threshold:
+                            source_obj.status = 'frontier'
+                            result.frontier_sources.append(source_obj)
+                        else:
+                            source_obj.status = 'pending'
+                            result.pending_sources.append(source_obj)
+
+                        all_sources.append(source_obj)
+                        all_embeddings.append(emb_arr)
+
+                    if semantic_dupes:
+                        logger.info(f"Outlier semantic dedup: skipped {semantic_dupes} near-duplicates")
+
+                except Exception as e:
+                    logger.error(f"Embedding error (outlier): {e}")
+                    result.errors.append(f"Embedding (outlier): {e}")
+
+                # Persist
+                if self.source_db and outlier_sources:
+                    self.source_db.save_sources(outlier_sources)
+
+                logger.info(f"Outlier {outlier.label}: {len(outlier_sources)} sources "
+                           f"({sum(1 for s in outlier_sources if s.status == 'frontier')} frontier)")
+
         result.rounds_completed = rounds_completed
         result.total_sources_found = len(all_sources)
-        
+
         logger.info(f"Discovery complete: {len(result.frontier_sources)} frontier, "
                    f"{len(result.pending_sources)} pending, "
                    f"{result.zones_explored} zones, {result.rounds_completed} rounds")

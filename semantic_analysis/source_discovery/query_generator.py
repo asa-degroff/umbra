@@ -78,43 +78,58 @@ class QueryGenerator:
         nearby_posts: list[dict],
         num_queries: int = 3,
         focus_topics: Optional[list[str]] = None,
+        seed_label: Optional[str] = None,
+        seed_texts: Optional[list[str]] = None,
     ) -> list[str]:
         """
         Generate search queries based on frontier zone context.
-        
+
         Args:
             nearby_posts: Posts near the frontier zone (with 'text' field)
             num_queries: Number of queries to generate
             focus_topics: Optional topic hints to guide generation
-            
+            seed_label: Optional interest seed label for targeted queries
+            seed_texts: Optional representative texts from the seed
+
         Returns:
             List of search query strings
         """
-        if not nearby_posts:
+        if not nearby_posts and not seed_texts:
             return []
-        
+
         # Build context from nearby posts
         context_texts = []
         for post in nearby_posts[:5]:  # Use up to 5 posts
             text = post.get('text', '')[:300]  # Truncate long posts
             if text:
                 context_texts.append(f"- {text}")
-        
-        if not context_texts:
+
+        if not context_texts and not seed_texts:
             return []
-        
-        context = "\n".join(context_texts)
-        
+
+        context = "\n".join(context_texts) if context_texts else "(no nearby posts)"
+
+        # Build seed context hint
+        seed_hint = ""
+        if seed_label or seed_texts:
+            seed_hint = "\n"
+            if seed_label:
+                seed_hint += f"This zone is near the topic: {seed_label}\n"
+            if seed_texts:
+                seed_hint += "Related posts:\n"
+                for t in seed_texts[:3]:
+                    seed_hint += f"- {t[:300]}\n"
+
         # Build focus hint
         if focus_topics:
             focus_hint = f"\nFocus areas: {', '.join(focus_topics)}"
         else:
             focus_hint = "\nFocus areas: consciousness, AI systems, emergence, identity, protocols, cognition"
-        
+
         prompt = f"""You are helping explore the boundaries of a knowledge space. Given these existing posts that represent the edge of explored territory:
 
 {context}
-
+{seed_hint}
 Generate {num_queries} diverse search queries to find academic papers and reference articles that explore ADJACENT but UNEXPLORED topics. The queries should:
 1. Bridge from the existing content to new but related areas
 2. Be specific enough to find relevant results across Wikipedia, arXiv, and academic databases
@@ -157,7 +172,7 @@ Queries:"""
             logger.warning(f"LLM query generation failed ({e}), using keyword fallback")
 
         self.using_fallback = True
-        return self._fallback_queries(nearby_posts, num_queries)
+        return self._fallback_queries(nearby_posts, num_queries, seed_label=seed_label)
     
     def _parse_queries(self, response: str, expected: int) -> list[str]:
         """Parse LLM response to extract query strings."""
@@ -196,8 +211,22 @@ Queries:"""
 
         return queries[:expected]
     
-    def _fallback_queries(self, nearby_posts: list[dict], num_queries: int) -> list[str]:
+    def _fallback_queries(
+        self,
+        nearby_posts: list[dict],
+        num_queries: int,
+        seed_label: Optional[str] = None,
+    ) -> list[str]:
         """Generate simple fallback queries from post content."""
+        # If we have a seed label, use it directly as the first query
+        if seed_label:
+            queries = [seed_label]
+            if num_queries > 1:
+                queries.append(f"{seed_label} research")
+            if num_queries > 2:
+                queries.append(f"{seed_label} theory")
+            return queries[:num_queries]
+
         # Extract potential keywords from posts
         all_text = " ".join(p.get('text', '')[:200] for p in nearby_posts)
         

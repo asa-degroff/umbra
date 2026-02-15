@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 # Add parent directory for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -409,6 +410,39 @@ async def discover_sources(
         )
     except Exception as e:
         logger.error(f"Error in source discovery: {e}")
+        return {"error": str(e)}
+
+
+class FocusedDiscoveryRequest(BaseModel):
+    seed_ids: list[str] = Field(..., min_length=1, description="Seed IDs to focus discovery on")
+    max_rounds: int = Field(2, ge=1, le=5)
+    max_sources: int = Field(25, ge=5, le=100)
+    initial_zones: int = Field(3, ge=1, le=10)
+    days: int = Field(30, ge=7, le=90)
+    source: str = Field("all", pattern="^(umbra|network|all)$")
+
+
+@router.post("/frontier/discover/focused")
+async def discover_sources_focused(body: FocusedDiscoveryRequest):
+    """
+    Run source discovery focused on specific seeds.
+
+    Accepts a list of seed_ids and runs discovery only in zones
+    generated from those seeds, rather than all detected seeds.
+    """
+    try:
+        from dashboard.backend.services.frontier_service import frontier_service
+        return frontier_service.discover_sources_focused(
+            seed_ids=body.seed_ids,
+            max_rounds=body.max_rounds,
+            max_sources_per_zone=5,
+            max_total_sources=body.max_sources,
+            initial_zones=body.initial_zones,
+            days=body.days,
+            source=body.source,
+        )
+    except Exception as e:
+        logger.error(f"Error in focused source discovery: {e}")
         return {"error": str(e)}
 
 
