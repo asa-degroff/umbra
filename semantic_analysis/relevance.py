@@ -50,6 +50,7 @@ class RelevanceAnalyzer:
         
         # Cache for computed values
         self._umbra_centroid = None
+        self._base_umbra_centroid = None  # Unblended centroid for idempotent feedback
         self._umbra_embeddings = None
         self._negative_exemplars = []
         
@@ -89,8 +90,9 @@ class RelevanceAnalyzer:
         centroid = centroid / np.linalg.norm(centroid)
         
         self._umbra_centroid = centroid
+        self._base_umbra_centroid = centroid.copy()
         self._umbra_embeddings = embeddings_array
-        
+
         logger.info(f"Computed Umbra centroid from {len(embeddings)} posts")
         return centroid
     
@@ -137,28 +139,38 @@ class RelevanceAnalyzer:
         """
         Incorporate user feedback into the analyzer.
 
+        This method is idempotent: it clears previous user-feedback entries
+        before adding the new ones, so it can be called repeatedly with the
+        full set of rated sources without accumulating duplicates.
+
         Args:
             negative_embeddings: Embeddings from downranked sources — added as
                 negative exemplars so similar content is filtered out.
             positive_embeddings: Embeddings from upranked sources — blended into
                 the umbra centroid with small weight (~10% total influence).
         """
-        # Negatives → append to negative exemplars
+        # Clear previous user-feedback negative exemplars before re-adding
+        self._negative_exemplars = [
+            e for e in self._negative_exemplars
+            if e.get('text') != '[user-downranked]'
+        ]
+
         for emb in negative_embeddings:
             self._negative_exemplars.append({
                 'text': '[user-downranked]',
                 'embedding': np.array(emb),
             })
         if negative_embeddings:
-            logger.info(f"Added {len(negative_embeddings)} user-downranked negative exemplars")
+            logger.info(f"Applied {len(negative_embeddings)} user-downranked negative exemplars")
 
-        # Positives → blend into centroid
-        if positive_embeddings and self._umbra_centroid is not None and self._umbra_embeddings is not None:
+        # Positives → blend into the BASE centroid (not the already-blended one)
+        # to avoid compounding the shift on repeated calls
+        if positive_embeddings and self._base_umbra_centroid is not None and self._umbra_embeddings is not None:
             n_centroid = len(self._umbra_embeddings)
             m_positive = len(positive_embeddings)
             weight_each = 0.1 * n_centroid / m_positive  # total positive influence ~10%
 
-            weighted_sum = self._umbra_centroid * n_centroid
+            weighted_sum = self._base_umbra_centroid * n_centroid
             for emb in positive_embeddings:
                 weighted_sum = weighted_sum + np.array(emb) * weight_each
 
@@ -168,6 +180,9 @@ class RelevanceAnalyzer:
                 f"Blended {m_positive} user-upranked embeddings into centroid "
                 f"(weight_each={weight_each:.2f})"
             )
+        elif not positive_embeddings and self._base_umbra_centroid is not None:
+            # No positive feedback — restore unblended centroid
+            self._umbra_centroid = self._base_umbra_centroid.copy()
 
     def compute_relevance_score(self, embedding: np.ndarray) -> float:
         """
