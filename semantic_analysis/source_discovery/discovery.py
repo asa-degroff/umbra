@@ -11,6 +11,8 @@ import numpy as np
 
 from .base import DiscoveredSource, DiscoveryResult, SourceProvider
 from .wikipedia import WikipediaProvider
+from .arxiv import ArxivProvider
+from .semantic_scholar import SemanticScholarProvider
 from .query_generator import QueryGenerator
 from .source_db import SourceDB
 
@@ -67,7 +69,11 @@ class SourceDiscovery:
         self.relevance_analyzer = relevance_analyzer
         self.source_db = source_db
 
-        self.providers = providers or [WikipediaProvider()]
+        self.providers = providers or [
+            WikipediaProvider(),
+            ArxivProvider(),
+            SemanticScholarProvider(),
+        ]
         self.query_generator = query_generator or QueryGenerator(ollama_url)
     
     def discover(

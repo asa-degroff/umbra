@@ -1894,15 +1894,6 @@ def send_semantic_analysis_message(client: Letta, agent_id: str, atproto_client=
         
         if dry_run:
             logger.info("DRY RUN: Would update zeitgeist with guidance")
-            # Still send a message to agent for visibility
-            message = f"""🔍 **Semantic Diversity Analysis** (Dry Run)
-
-{summary}
-
-**Guidance:**
-{guidance}
-
-*(Dry run mode - zeitgeist not updated. Set dry_run: false in config to enable.)*"""
         else:
             # Update zeitgeist block directly
             try:
@@ -1938,23 +1929,26 @@ def send_semantic_analysis_message(client: Letta, agent_id: str, atproto_client=
 
 Your zeitgeist block has been updated with this guidance."""
         
-        # Send message to agent
-        message_stream = client.agents.messages.create_stream(
-            agent_id=agent_id,
-            messages=[{"role": "user", "content": message}],
-            stream_tokens=False,
-            max_steps=30
-        )
-        
-        # Process stream
-        for chunk in message_stream:
-            if hasattr(chunk, 'message_type'):
-                if chunk.message_type == 'assistant_message':
-                    logger.info(f"Agent response: {chunk.content[:200]}...")
-            if str(chunk) == 'done':
-                break
-        
-        logger.info("Semantic analysis message processed successfully")
+        if dry_run:
+            logger.info("DRY RUN: Skipping message to agent")
+        else:
+            # Send message to agent
+            message_stream = client.agents.messages.create_stream(
+                agent_id=agent_id,
+                messages=[{"role": "user", "content": message}],
+                stream_tokens=False,
+                max_steps=30
+            )
+
+            # Process stream
+            for chunk in message_stream:
+                if hasattr(chunk, 'message_type'):
+                    if chunk.message_type == 'assistant_message':
+                        logger.info(f"Agent response: {chunk.content[:200]}...")
+                if str(chunk) == 'done':
+                    break
+
+            logger.info("Semantic analysis message processed successfully")
         
     except Exception as e:
         logger.error(f"Error in semantic analysis: {e}")

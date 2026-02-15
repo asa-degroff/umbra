@@ -115,11 +115,12 @@ class QueryGenerator:
 
 {context}
 
-Generate {num_queries} diverse Wikipedia search queries to find content that explores ADJACENT but UNEXPLORED topics. The queries should:
+Generate {num_queries} diverse search queries to find academic papers and reference articles that explore ADJACENT but UNEXPLORED topics. The queries should:
 1. Bridge from the existing content to new but related areas
-2. Be specific enough to find relevant articles
+2. Be specific enough to find relevant results across Wikipedia, arXiv, and academic databases
 3. Avoid generic or overly broad terms
 4. Focus on concepts, theories, or phenomena (not news or current events)
+5. Mix encyclopedic and technical/academic phrasing for broad coverage
 {focus_hint}
 
 Return ONLY a JSON array of query strings, no explanation. Example:

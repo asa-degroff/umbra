@@ -180,30 +180,3 @@ class WikipediaProvider(SourceProvider):
     def get_article_by_title(self, title: str) -> Optional[DiscoveredSource]:
         """Fetch a specific article by exact title."""
         return self._fetch_article(title, query_used=f"direct:{title}")
-    
-    def search_with_chunks(self, query: str, limit: int = 5, chunk_size: int = 1500) -> list[DiscoveredSource]:
-        """
-        Search and return chunked sources for long articles.
-        
-        Each chunk becomes a separate DiscoveredSource for individual embedding.
-        """
-        sources = self.search(query, limit)
-        chunked_sources = []
-        
-        for source in sources:
-            chunks = self.chunk_text(source.full_text, chunk_size)
-            
-            for i, chunk in enumerate(chunks):
-                chunked = DiscoveredSource(
-                    title=source.title,
-                    url=source.url,
-                    excerpt=chunk,
-                    full_text=source.full_text,
-                    source_type=source.source_type,
-                    query_used=source.query_used,
-                    chunk_index=i,
-                    total_chunks=len(chunks),
-                )
-                chunked_sources.append(chunked)
-        
-        return chunked_sources

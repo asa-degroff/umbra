@@ -95,6 +95,34 @@ class SourceProvider(ABC):
         """
         pass
     
+    def search_with_chunks(self, query: str, limit: int = 5, chunk_size: int = 1500) -> list[DiscoveredSource]:
+        """
+        Search and return chunked sources for long articles.
+
+        Each chunk becomes a separate DiscoveredSource for individual embedding.
+        Subclasses can override for provider-specific chunking.
+        """
+        sources = self.search(query, limit)
+        chunked_sources = []
+
+        for source in sources:
+            chunks = self.chunk_text(source.full_text, chunk_size)
+
+            for i, chunk in enumerate(chunks):
+                chunked = DiscoveredSource(
+                    title=source.title,
+                    url=source.url,
+                    excerpt=chunk,
+                    full_text=source.full_text,
+                    source_type=source.source_type,
+                    query_used=source.query_used,
+                    chunk_index=i,
+                    total_chunks=len(chunks),
+                )
+                chunked_sources.append(chunked)
+
+        return chunked_sources
+
     def chunk_text(self, text: str, max_chars: int = 1500) -> list[str]:
         """
         Split long text into chunks for embedding.

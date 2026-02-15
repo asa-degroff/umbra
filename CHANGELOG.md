@@ -7,11 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Only Wikipedia provider implemented (#37)
 - Frontier dashboard view with zones scatter chart, sources table, and discovery controls
 - Ollama dependency not validated — silent degradation (#17)
 - No input validation in SourceDiscovery constructor (#12)
 
 ### Fixed
+- Semantic Scholar 429 handler drops query without retry (#41)
+- Semantic Scholar null abstract filtering drops all results (#40)
 - Fallback keyword filter drops short meaningful terms (#24)
 - NameError if max_rounds=0 — round_num undefined (#19)
 - Missing error handling in zone relevance computation (#18)
@@ -26,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Constraint filter math off-by-2x (#4)
 
 ### Changed
+- WikipediaProvider.search_with_chunks duplicates base class (#43)
+- Query generator prompt biased toward Wikipedia queries (#42)
 - Relevance filter operates in 2D space only (#14)
 - UMAP refitting on every detect_frontiers() call (#13)
 - Frontier classification uses relevance_score not zone membership (#9)
