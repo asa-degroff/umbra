@@ -38,6 +38,8 @@ class FrontierZone:
     relevance_score: float
     nearby_posts: list[dict] = field(default_factory=list)
     grid_cell: tuple[int, int] = (0, 0)
+    seed_id: str | None = None         # Which interest seed this zone is near
+    seed_label: str | None = None      # Human-readable label of that seed
 
 
 class FrontierDetector:
@@ -81,6 +83,7 @@ class FrontierDetector:
         source: str = 'all',
         extra_embeddings: list[list[float]] | None = None,
         extra_records: list[dict] | None = None,
+        seeds: list | None = None,
     ) -> list[FrontierZone]:
         """
         Detect frontier zones in embedding space.
@@ -92,6 +95,9 @@ class FrontierDetector:
             source: Filter content source - 'umbra', 'network', or 'all'
             extra_embeddings: Additional embeddings to merge (e.g. from discovered sources)
             extra_records: Additional records matching extra_embeddings
+            seeds: Optional list of InterestSeed objects. When provided,
+                   uses seeds as anchor points for adjacency scoring and
+                   constraint filtering instead of single centroid.
 
         Returns:
             List of FrontierZone objects sorted by frontier_score descending
@@ -115,29 +121,50 @@ class FrontierDetector:
         # Estimate density
         kde = self._estimate_density(coords_2d)
 
-        # Get cluster centroids in 2D
-        centroids_2d = self._get_cluster_centroids_2d(embeddings, coords_2d)
-
         # Build scoring grid
         grid_centers, grid_indices = self._build_grid(coords_2d)
 
-        # Score grid cells
-        density_scores, adjacency_scores, frontier_scores = self._score_grid_cells(
-            grid_centers, kde, centroids_2d
-        )
+        if seeds:
+            # Seed-aware mode: project seed centroids into 2D, use as anchors
+            seed_centroids_hd = np.array([s.centroid for s in seeds])
+            seed_weights = np.array([s.weight for s in seeds])
+            seed_centroids_2d = umap_model.transform(seed_centroids_hd)
 
-        # Filter by relevance constraints: 2D spatial gate + high-dim relevance
-        keep_mask = self._filter_by_constraints(
-            grid_centers, coords_2d, records, embeddings
-        )
+            logger.info(f"Seed-aware mode: {len(seeds)} seeds projected to 2D")
 
-        # Secondary high-dim relevance: for cells that pass the 2D gate,
-        # compute mean relevance of nearby real embeddings as a multiplier
+            # Adjacency: distance to nearest seed (weighted)
+            density_scores, adjacency_scores, frontier_scores = self._score_grid_cells_seeded(
+                grid_centers, kde, seed_centroids_2d, seed_weights
+            )
+
+            # Constraint: proximity to any seed in 2D
+            keep_mask = self._filter_by_seeds(
+                grid_centers, seed_centroids_2d, seed_weights
+            )
+
+            # Tag each grid cell with its nearest seed
+            seed_dist_matrix = cdist(grid_centers, seed_centroids_2d, metric='euclidean')
+            nearest_seed_idx = seed_dist_matrix.argmin(axis=1)
+        else:
+            # Legacy mode: use cluster centroids
+            centroids_2d = self._get_cluster_centroids_2d(embeddings, coords_2d)
+
+            density_scores, adjacency_scores, frontier_scores = self._score_grid_cells(
+                grid_centers, kde, centroids_2d
+            )
+
+            keep_mask = self._filter_by_constraints(
+                grid_centers, coords_2d, records, embeddings
+            )
+
+            nearest_seed_idx = None
+
+        # Secondary high-dim relevance mask (used in both modes)
         highd_mask = self._highd_relevance_mask(
             grid_centers, coords_2d, records, keep_mask
         )
 
-        # Apply both masks and select top-N
+        # Apply masks and select top-N
         masked_scores = frontier_scores * keep_mask * highd_mask
         top_indices = np.argsort(masked_scores)[::-1][:top_n]
         top_indices = [i for i in top_indices if masked_scores[i] > 0]
@@ -146,10 +173,7 @@ class FrontierDetector:
             logger.warning("No frontier zones passed constraint filtering")
             return []
 
-        # Inverse_transform gives approximate high-dim embeddings for the
-        # centroid. These are stored for reference but NOT used for nearby
-        # post lookup (unreliable — see issue #5). Nearby posts are found
-        # via 2D distance instead.
+        # Inverse_transform for approximate high-dim embeddings
         selected_2d = grid_centers[top_indices]
         high_dim_embeddings = umap_model.inverse_transform(selected_2d)
 
@@ -159,13 +183,10 @@ class FrontierDetector:
             embedding_hd = high_dim_embeddings[rank]
             center_2d = selected_2d[rank]
 
-            # Find nearby posts by 2D distance (reliable) instead of
-            # querying ChromaDB with inverse_transform embeddings (unreliable)
             nearby = self._find_nearby_posts_2d(
                 center_2d, coords_2d, records, nearby_k
             )
 
-            # Compute relevance from nearby posts' real embeddings
             rel_score = self._compute_zone_relevance(nearby)
 
             gi, gj = grid_indices[idx]
@@ -179,6 +200,13 @@ class FrontierDetector:
                 nearby_posts=nearby,
                 grid_cell=(int(gi), int(gj)),
             )
+
+            # Tag with nearest seed if available
+            if seeds and nearest_seed_idx is not None:
+                seed_idx = nearest_seed_idx[idx]
+                zone.seed_id = seeds[seed_idx].seed_id
+                zone.seed_label = seeds[seed_idx].label
+            
             zones.append(zone)
 
         logger.info(f"Detected {len(zones)} frontier zones (top scores: "
@@ -391,6 +419,130 @@ class FrontierDetector:
 
         frontier_scores = density_scores * adjacency_scores
         return density_scores, adjacency_scores, frontier_scores
+
+    def _score_grid_cells_seeded(
+        self,
+        grid_centers: np.ndarray,
+        kde,
+        seed_centroids_2d: np.ndarray,
+        seed_weights: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Score grid cells using interest seeds as anchor points.
+
+        Each cell's adjacency score is the weighted max across all seeds:
+        the cell only needs to be frontier-adjacent to ONE seed.
+
+        Args:
+            grid_centers: Grid cell positions in 2D
+            kde: Fitted KDE
+            seed_centroids_2d: Seed positions in 2D
+            seed_weights: Per-seed importance weights
+
+        Returns:
+            (density_scores, adjacency_scores, frontier_scores)
+        """
+        # Density scoring (same as unseeded)
+        raw_density = kde(grid_centers.T)
+        p5 = np.percentile(raw_density, 5)
+        p95 = np.percentile(raw_density, 95)
+        denom = p95 - p5
+        if denom < 1e-12:
+            normalized = np.zeros_like(raw_density)
+        else:
+            normalized = np.clip((raw_density - p5) / denom, 0, 1)
+        density_scores = 1.0 - normalized
+
+        if len(seed_centroids_2d) == 0:
+            return density_scores, np.zeros(len(grid_centers)), np.zeros(len(grid_centers))
+
+        # Distance from each grid cell to each seed
+        dist_matrix = cdist(grid_centers, seed_centroids_2d, metric='euclidean')
+
+        # Normalize by diagonal of the 2D coordinate range
+        coord_range = np.sqrt(
+            (grid_centers[:, 0].max() - grid_centers[:, 0].min())**2 +
+            (grid_centers[:, 1].max() - grid_centers[:, 1].min())**2
+        )
+        if coord_range < 1e-12:
+            coord_range = 1.0
+        norm_dist_matrix = dist_matrix / coord_range
+
+        # Adjacency: Gaussian bell per seed, then take weighted max
+        center = (self.adjacency_min + self.adjacency_max) / 2
+        width = (self.adjacency_max - self.adjacency_min) / 2
+        if width < 1e-12:
+            width = 0.1
+
+        # Shape: (n_grid_cells, n_seeds)
+        adjacency_per_seed = np.exp(-0.5 * ((norm_dist_matrix - center) / width) ** 2)
+
+        # Weight by seed importance and take max across seeds
+        weighted_adjacency = adjacency_per_seed * seed_weights[np.newaxis, :]
+        adjacency_scores = weighted_adjacency.max(axis=1)
+
+        frontier_scores = density_scores * adjacency_scores
+        return density_scores, adjacency_scores, frontier_scores
+
+    def _filter_by_seeds(
+        self,
+        grid_centers: np.ndarray,
+        seed_centroids_2d: np.ndarray,
+        seed_weights: np.ndarray,
+        base_radius_percentile: float = 15.0,
+    ) -> np.ndarray:
+        """
+        Filter grid cells by proximity to any interest seed in 2D.
+
+        Each seed defines a relevance region. A cell passes if it's
+        within range of at least one seed. Higher-weighted seeds get
+        a larger radius.
+
+        Args:
+            grid_centers: Grid cell positions in 2D
+            seed_centroids_2d: Seed positions in 2D
+            seed_weights: Per-seed importance weights
+            base_radius_percentile: Percentile of inter-seed distance
+                                    to use as base radius
+
+        Returns:
+            Float mask (0.0 = reject, 1.0 = keep)
+        """
+        if len(seed_centroids_2d) == 0:
+            return np.ones(len(grid_centers))
+
+        # Compute base radius from inter-seed spacing
+        if len(seed_centroids_2d) > 1:
+            inter_seed = cdist(seed_centroids_2d, seed_centroids_2d, metric='euclidean')
+            # Use median of non-zero inter-seed distances
+            nonzero = inter_seed[inter_seed > 0]
+            base_radius = float(np.percentile(nonzero, base_radius_percentile)) if len(nonzero) > 0 else 1.0
+        else:
+            # Single seed: use a fraction of the grid diagonal
+            coord_range = np.sqrt(
+                (grid_centers[:, 0].max() - grid_centers[:, 0].min())**2 +
+                (grid_centers[:, 1].max() - grid_centers[:, 1].min())**2
+            )
+            base_radius = coord_range * 0.3
+
+        # Distance from each grid cell to each seed
+        dist_matrix = cdist(grid_centers, seed_centroids_2d, metric='euclidean')
+
+        # Per-seed radius: base_radius scaled by sqrt(weight)
+        # Higher-weighted seeds get larger reach
+        seed_radii = base_radius * (0.5 + np.sqrt(seed_weights))
+
+        # Soft gate per seed: full pass within radius, linear falloff to 2x radius
+        # Shape: (n_grid, n_seeds)
+        gate_per_seed = np.clip(1.0 - (dist_matrix - seed_radii[np.newaxis, :]) / seed_radii[np.newaxis, :], 0, 1)
+
+        # Cell passes if it's within range of ANY seed (take max)
+        mask = gate_per_seed.max(axis=1)
+
+        kept = int((mask > 0).sum())
+        logger.info(f"Seed constraint filter: {kept}/{len(grid_centers)} cells passed "
+                    f"(base_radius={base_radius:.2f}, {len(seed_centroids_2d)} seeds)")
+        return mask
 
     def _filter_by_constraints(
         self,

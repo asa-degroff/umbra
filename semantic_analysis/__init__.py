@@ -23,6 +23,7 @@ from .source_discovery import (
     QueryGenerator,
     SourceDB,
 )
+from .seeds import InterestSeed, InterestSeedDetector, create_interest_seed_detector
 
 __all__ = [
     'ATProtoScraper',
@@ -45,6 +46,9 @@ __all__ = [
     'WikipediaProvider',
     'QueryGenerator',
     'SourceDB',
+    'InterestSeed',
+    'InterestSeedDetector',
+    'create_interest_seed_detector',
     'run_analysis',
     'run_network_analysis',
 ]
