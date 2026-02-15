@@ -23,7 +23,7 @@ router = APIRouter()
 
 # Initialize services
 sqlite_service = SQLiteService("./queue/notifications.db")
-chromadb_service = ChromaDBService("./data/chromadb")
+chromadb_service = ChromaDBService()
 
 OLLAMA_URL = "http://localhost:11434"
 

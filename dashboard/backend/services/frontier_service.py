@@ -51,7 +51,6 @@ def _init_components():
 
         try:
             from semantic_analysis import (
-                SemanticStorage,
                 EmbeddingGenerator,
                 create_relevance_analyzer,
                 create_frontier_detector,
@@ -59,8 +58,12 @@ def _init_components():
                 SourceDB,
             )
             from semantic_analysis.seeds import create_interest_seed_detector
+            from dashboard.backend.services.shared_storage import get_shared_storage
 
-            storage = SemanticStorage('/home/asa/umbra/data/chromadb')
+            storage = get_shared_storage()
+            if storage is None:
+                logger.error("Shared storage not available")
+                return False
             embedder = EmbeddingGenerator()
 
             _relevance_analyzer = create_relevance_analyzer(storage, embedder, use_default_negatives=True)

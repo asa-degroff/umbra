@@ -20,29 +20,33 @@ except ImportError:
 
 class ChromaDBService:
     """Service for accessing ChromaDB semantic data."""
-    
-    def __init__(self, db_path: str = "./data/chromadb"):
+
+    def __init__(self, storage=None):
         """
         Initialize the ChromaDB service.
-        
+
         Args:
-            db_path: Path to ChromaDB storage
+            storage: Optional SemanticStorage instance to reuse its client/collection.
+                     If not provided, attempts to get the shared storage singleton.
         """
-        self.db_path = Path(db_path)
         self.client = None
         self.collection = None
-        
-        if CHROMADB_AVAILABLE and self.db_path.exists():
+        self.db_path = None
+
+        if storage is not None:
+            self.client = storage.client
+            self.collection = storage.collection
+            self.db_path = storage.db_path
+            logger.info(f"ChromaDB service using shared storage: {self.collection.count()} records")
+        elif CHROMADB_AVAILABLE:
             try:
-                self.client = chromadb.PersistentClient(
-                    path=str(self.db_path),
-                    settings=Settings(anonymized_telemetry=False),
-                )
-                self.collection = self.client.get_or_create_collection(
-                    name="umbra_content",
-                    metadata={"hnsw:space": "cosine"},
-                )
-                logger.info(f"ChromaDB connected: {self.collection.count()} records")
+                from dashboard.backend.services.shared_storage import get_shared_storage
+                shared = get_shared_storage()
+                if shared is not None:
+                    self.client = shared.client
+                    self.collection = shared.collection
+                    self.db_path = shared.db_path
+                    logger.info(f"ChromaDB service using shared storage: {self.collection.count()} records")
             except Exception as e:
                 logger.warning(f"ChromaDB connection failed: {e}")
 

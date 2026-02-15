@@ -36,9 +36,13 @@ def _get_analyzer():
     
     if _analyzer is None:
         try:
-            from semantic_analysis import SemanticStorage, EmbeddingGenerator, create_relevance_analyzer
-            
-            storage = SemanticStorage('/home/asa/umbra/data/chromadb')
+            from semantic_analysis import EmbeddingGenerator, create_relevance_analyzer
+            from dashboard.backend.services.shared_storage import get_shared_storage
+
+            storage = get_shared_storage()
+            if storage is None:
+                logger.error("Shared storage not available")
+                return None
             embedder = EmbeddingGenerator()
             _analyzer = create_relevance_analyzer(storage, embedder, use_default_negatives=True)
             

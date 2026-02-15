@@ -16,14 +16,15 @@ from fastapi import APIRouter, HTTPException, Query
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from dashboard.backend.services.chromadb_service import ChromaDBService
+from dashboard.backend.services.shared_storage import get_shared_storage
 from config_loader import get_config
 
 logger = logging.getLogger('dashboard.api.semantic')
 
 router = APIRouter()
 
-# Initialize service
-chromadb_service = ChromaDBService("./data/chromadb")
+# Initialize service (uses shared storage singleton - no duplicate PersistentClient)
+chromadb_service = ChromaDBService()
 
 
 @router.get("/stats")
@@ -178,15 +179,17 @@ async def get_metrics():
     """Get current diversity metrics using ANN-based computation."""
     try:
         from semantic_analysis.analyzer import DiversityAnalyzer
-        from semantic_analysis.storage import SemanticStorage
-        
-        storage = SemanticStorage("./data/chromadb")
+
+        storage = get_shared_storage()
+        if storage is None:
+            return {"error": "Storage not available"}
+
         analyzer = DiversityAnalyzer(storage=storage)  # Pass storage for ANN
-        
+
         recent = storage.get_recent(days=7)
         if not recent:
             return {"error": "No recent records found"}
-        
+
         # Use ANN-based metrics for efficiency
         metrics = analyzer.calculate_metrics_ann(recent)
         return metrics
@@ -200,18 +203,20 @@ async def get_guidance():
     """Get latest diversity guidance."""
     try:
         from semantic_analysis.analyzer import DiversityAnalyzer
-        from semantic_analysis.storage import SemanticStorage
-        
-        storage = SemanticStorage("./data/chromadb")
+
+        storage = get_shared_storage()
+        if storage is None:
+            return {"guidance": "Storage not available."}
+
         analyzer = DiversityAnalyzer()
-        
+
         recent = storage.get_recent(days=7)
         if not recent:
             return {"guidance": "No recent records to analyze."}
-        
+
         metrics = analyzer.calculate_metrics(recent)
         guidance = analyzer.generate_guidance(metrics)
-        
+
         return {
             "guidance": guidance,
             "summary": analyzer.format_summary(metrics),
