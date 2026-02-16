@@ -448,6 +448,11 @@ class SourceDiscovery:
                     logger.debug(f"No queries generated for outlier {outlier.seed_id}")
                     continue
 
+                emit("discovery:llm_result", {
+                    "queries": queries,
+                    "is_fallback": getattr(self.query_generator, 'using_fallback', False),
+                })
+
                 # Fetch sources
                 outlier_sources: list[DiscoveredSource] = []
                 sources_remaining = max_sources_per_zone
@@ -458,6 +463,11 @@ class SourceDiscovery:
 
                     for provider in self.providers:
                         try:
+                            emit("discovery:provider_searching", {
+                                "provider": provider.source_type,
+                                "query": query,
+                            })
+
                             if chunk_sources:
                                 sources = provider.search_with_chunks(
                                     query,
@@ -470,12 +480,21 @@ class SourceDiscovery:
                                     limit=min(3, sources_remaining),
                                 )
 
+                            if sources:
+                                emit("discovery:provider_result", {
+                                    "provider": provider.source_type,
+                                    "query": query,
+                                    "count": len(sources),
+                                    "titles": [s.title for s in sources[:5]],
+                                })
+
                             outlier_sources.extend(sources)
                             sources_remaining -= len(sources)
 
                         except Exception as e:
                             logger.error(f"Provider {provider.source_type} error (outlier): {e}")
                             result.errors.append(f"{provider.source_type} (outlier): {e}")
+                            emit("discovery:error", {"message": f"{provider.source_type} (outlier): {e}"})
 
                 # Deduplicate against DB
                 if self.source_db and outlier_sources:
@@ -538,12 +557,20 @@ class SourceDiscovery:
                         all_sources.append(source_obj)
                         all_embeddings.append(emb_arr)
 
+                        emit("discovery:source_scored", {
+                            "title": source_obj.title,
+                            "relevance": round(source_obj.relevance_score, 3),
+                            "status": source_obj.status,
+                            "source_type": source_obj.source_type,
+                        })
+
                     if semantic_dupes:
                         logger.info(f"Outlier semantic dedup: skipped {semantic_dupes} near-duplicates")
 
                 except Exception as e:
                     logger.error(f"Embedding error (outlier): {e}")
                     result.errors.append(f"Embedding (outlier): {e}")
+                    emit("discovery:error", {"message": f"Embedding (outlier): {e}"})
 
                 # Persist
                 if self.source_db and outlier_sources:
