@@ -399,21 +399,22 @@ Be concrete and specific, not generic. The agent should be able to act on your g
 
         try:
             resp = self.session.post(
-                f"{self.ollama_url}/api/generate",
+                f"{self.ollama_url}/api/chat",
                 json={
                     "model": self.llm_model,
-                    "prompt": prompt,
+                    "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
+                    "keep_alive": "60m",
                     "options": {
                         "temperature": 0.7,
-                        "num_predict": 300,
+                        "num_predict": 4096,
                     },
                 },
                 timeout=120,
             )
             resp.raise_for_status()
             data = resp.json()
-            return data.get('response', '').strip()
+            return data.get('message', {}).get('content', '').strip()
             
         except requests.RequestException as e:
             logger.error(f"Guidance generation failed: {e}")

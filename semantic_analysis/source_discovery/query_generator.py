@@ -146,18 +146,22 @@ Queries:"""
         try:
             model = self._verify_model()
             response = requests.post(
-                f"{self.ollama_url}/api/generate",
+                f"{self.ollama_url}/api/chat",
                 json={
                     'model': model,
-                    'prompt': prompt,
-                    'temperature': self.temperature,
+                    'messages': [{'role': 'user', 'content': prompt}],
                     'stream': False,
+                    'keep_alive': '60m',
+                    'options': {
+                        'temperature': self.temperature,
+                        'num_predict': 4096,
+                    },
                 },
-                timeout=120,
+                timeout=180,
             )
             response.raise_for_status()
             
-            result = response.json().get('response', '')
+            result = response.json().get('message', {}).get('content', '')
             queries = self._parse_queries(result, num_queries)
 
             if queries:
@@ -172,7 +176,7 @@ Queries:"""
             logger.warning(f"LLM query generation failed ({e}), using keyword fallback")
 
         self.using_fallback = True
-        return self._fallback_queries(nearby_posts, num_queries, seed_label=seed_label)
+        return self._fallback_queries(nearby_posts, num_queries, seed_label=seed_label, seed_texts=seed_texts)
     
     def _parse_queries(self, response: str, expected: int) -> list[str]:
         """Parse LLM response to extract query strings."""
@@ -216,21 +220,22 @@ Queries:"""
         nearby_posts: list[dict],
         num_queries: int,
         seed_label: Optional[str] = None,
+        seed_texts: Optional[list[str]] = None,
     ) -> list[str]:
-        """Generate simple fallback queries from post content."""
-        # If we have a seed label, use it directly as the first query
-        if seed_label:
-            queries = [seed_label]
-            if num_queries > 1:
-                queries.append(f"{seed_label} research")
-            if num_queries > 2:
-                queries.append(f"{seed_label} theory")
-            return queries[:num_queries]
+        """Generate fallback queries from seed context and post content."""
+        queries = []
 
-        # Extract potential keywords from posts
-        all_text = " ".join(p.get('text', '')[:200] for p in nearby_posts)
-        
-        # Keyword extraction: keep words with 3+ chars, excluding stopwords
+        # Extract keywords from seed label + texts
+        source_text = ""
+        if seed_label:
+            source_text += seed_label + " "
+        if seed_texts:
+            source_text += " ".join(t[:300] for t in seed_texts[:3]) + " "
+        source_text += " ".join(p.get('text', '')[:200] for p in nearby_posts)
+
+        if not source_text.strip():
+            return ["emergence complex systems", "consciousness philosophy"]
+
         stopwords = {
             'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can',
             'has', 'her', 'was', 'one', 'our', 'out', 'had', 'hot', 'how',
@@ -240,24 +245,47 @@ Queries:"""
             'than', 'them', 'very', 'some', 'also', 'into', 'more', 'about',
             'would', 'there', 'their', 'which', 'could', 'other', 'these',
             'then', 'your', 'only', 'after', 'being', 'those', 'still',
+            'because', 'through', 'between', 'during', 'before', 'while',
+            'another', 'where', 'doesn', 'didn', 'isn', 'aren', 'won',
+            'february', 'january', 'march', 'april', 'june', 'july',
+            'august', 'september', 'october', 'november', 'december',
+            'utc', 'achieve', 'higher', 'lower', 'alone', 'suggests',
+            'enhance', 'search', 'precision', 'create', 'creating',
+            'created', 'something', 'different', 'respond', 'responded',
+            'rather', 'don', 'proves', 'purely', 'using', 'used',
         }
-        words = all_text.lower().split()
-        keywords = [w for w in words if len(w) > 2 and w.isalpha() and w not in stopwords]
-        
-        # Take unique keywords
-        seen = set()
-        unique = []
+
+        words = source_text.lower().split()
+        # Keep meaningful words (4+ chars, alpha, not stopwords)
+        keywords = [w for w in words if len(w) > 3 and w.isalpha() and w not in stopwords]
+
+        # Deduplicate preserving order
+        seen: set[str] = set()
+        unique: list[str] = []
         for w in keywords:
             if w not in seen:
                 seen.add(w)
                 unique.append(w)
-        
-        # Create simple queries
-        queries = []
-        for kw in unique[:num_queries]:
-            queries.append(f"{kw} theory")
-        
-        return queries if queries else ["emergence complex systems", "consciousness philosophy"]
+
+        # Build multi-word academic-style queries from keyword pairs/triples
+        if len(unique) >= 2:
+            # First query: pair of top keywords
+            queries.append(f"{unique[0]} {unique[1]}")
+        if len(unique) >= 4:
+            # Second query: different pair
+            queries.append(f"{unique[2]} {unique[3]}")
+        if len(unique) >= 3:
+            # Third query: triple
+            queries.append(f"{unique[0]} {unique[1]} {unique[2]}")
+
+        # Pad with single keyword + domain suffix
+        domain_suffixes = ["mechanism", "theory", "cognition", "biology"]
+        for i, kw in enumerate(unique):
+            if len(queries) >= num_queries:
+                break
+            queries.append(f"{kw} {domain_suffixes[i % len(domain_suffixes)]}")
+
+        return queries[:num_queries] if queries else ["emergence complex systems"]
 
 
 def create_query_generator(

@@ -404,6 +404,15 @@ class FrontierService:
 
         _apply_feedback()
         try:
+            # Attach event emitter for live WebSocket broadcasting
+            emitter = None
+            try:
+                from dashboard.backend.websocket import ws_manager
+                from dashboard.backend.services.discovery_emitter import DiscoveryEventEmitter
+                emitter = DiscoveryEventEmitter(ws_manager)
+            except Exception:
+                pass
+
             result = _source_discovery.discover(
                 seeds=filtered_seeds,
                 max_rounds=max_rounds,
@@ -412,6 +421,7 @@ class FrontierService:
                 initial_zones=initial_zones,
                 days=days,
                 source=source,
+                event_emitter=emitter,
             )
             response = self._format_discovery_result(result)
             response['focused'] = True
@@ -491,6 +501,14 @@ class FrontierService:
         """Execute discovery synchronously and cache the result."""
         _apply_feedback()
         try:
+            # Attach event emitter for live WebSocket broadcasting
+            try:
+                from dashboard.backend.websocket import ws_manager
+                from dashboard.backend.services.discovery_emitter import DiscoveryEventEmitter
+                kwargs['event_emitter'] = DiscoveryEventEmitter(ws_manager)
+            except Exception as e:
+                logger.debug(f"Could not attach event emitter: {e}")
+
             # Detect seeds and pass to discovery for seed-aware exploration
             seed_objects = _cache.get('seed_objects')
             if seed_objects is None and _seed_detector is not None:

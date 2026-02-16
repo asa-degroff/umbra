@@ -328,20 +328,21 @@ class InterestSeedDetector:
 
         try:
             resp = self.session.post(
-                f"{self.ollama_url}/api/generate",
+                f"{self.ollama_url}/api/chat",
                 json={
                     "model": self.llm_model,
-                    "prompt": prompt,
+                    "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
+                    "keep_alive": "60m",
                     "options": {
                         "temperature": 0.3,
-                        "num_predict": 20,
+                        "num_predict": 4096,
                     },
                 },
-                timeout=30,
+                timeout=60,
             )
             resp.raise_for_status()
-            raw = resp.json().get('response', '').strip()
+            raw = resp.json().get('message', {}).get('content', '').strip()
 
             # Validate: strip quotes, check word count
             label = raw.strip('"\'').strip()

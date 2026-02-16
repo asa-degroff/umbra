@@ -89,6 +89,7 @@ class SourceDiscovery:
         chunk_size: int = 1500,
         frontier_threshold: float = 0.4,
         seeds: Optional[list] = None,
+        event_emitter = None,
     ) -> DiscoveryResult:
         """
         Run the source discovery loop.
@@ -117,12 +118,28 @@ class SourceDiscovery:
         seen_urls: set[tuple[str, int]] = set()  # (url, chunk_index) dedup within run
         semantic_dedup_threshold = 0.95  # Skip sources with cosine sim > this to any existing
         
+        # Helper to emit events (no-op if no emitter)
+        def emit(event_type, data=None):
+            if event_emitter:
+                try:
+                    event_emitter.emit(event_type, data or {})
+                except Exception:
+                    pass  # Never crash discovery for a broadcast failure
+
         # Initial frontier detection
         if seeds:
             logger.info(f"Starting discovery (seed-aware, {len(seeds)} seeds): "
                        f"max_rounds={max_rounds}, max_sources={max_total_sources}")
         else:
             logger.info(f"Starting discovery: max_rounds={max_rounds}, max_sources={max_total_sources}")
+
+        emit("discovery:started", {
+            "params": {
+                "max_rounds": max_rounds,
+                "max_sources": max_total_sources,
+                "seeds": len(seeds) if seeds else 0,
+            },
+        })
 
         try:
             current_zones = self.frontier_detector.detect_frontiers(
@@ -173,6 +190,15 @@ class SourceDiscovery:
                         seed_label = matching[0].label
                         seed_texts = matching[0].representative_texts
 
+                emit("discovery:zone_exploring", {
+                    "zone_id": str(zone_id),
+                    "seed_label": seed_label,
+                })
+
+                emit("discovery:llm_generating", {
+                    "context_preview": seed_label or (zone.nearby_posts[0].get('text', '')[:100] if zone.nearby_posts else ''),
+                })
+
                 queries = self.query_generator.generate_queries(
                     zone.nearby_posts,
                     num_queries=queries_per_zone,
@@ -184,6 +210,11 @@ class SourceDiscovery:
                     logger.debug(f"No queries generated for zone {zone_id}")
                     explored_zone_ids.add(zone_id)
                     continue
+
+                emit("discovery:llm_result", {
+                    "queries": queries,
+                    "is_fallback": getattr(self.query_generator, 'using_fallback', False),
+                })
                 
                 # Fetch sources for each query
                 zone_sources: list[DiscoveredSource] = []
@@ -195,6 +226,11 @@ class SourceDiscovery:
                     
                     for provider in self.providers:
                         try:
+                            emit("discovery:provider_searching", {
+                                "provider": provider.source_type,
+                                "query": query,
+                            })
+
                             if chunk_sources:
                                 sources = provider.search_with_chunks(
                                     query,
@@ -207,12 +243,21 @@ class SourceDiscovery:
                                     limit=min(3, sources_remaining),
                                 )
                             
+                            if sources:
+                                emit("discovery:provider_result", {
+                                    "provider": provider.source_type,
+                                    "query": query,
+                                    "count": len(sources),
+                                    "titles": [s.title for s in sources[:5]],
+                                })
+
                             zone_sources.extend(sources)
                             sources_remaining -= len(sources)
                             
                         except Exception as e:
                             logger.error(f"Provider {provider.source_type} error: {e}")
                             result.errors.append(f"{provider.source_type}: {e}")
+                            emit("discovery:error", {"message": f"{provider.source_type}: {e}"})
                 
                 # Deduplicate against DB
                 if self.source_db and zone_sources:
@@ -279,12 +324,20 @@ class SourceDiscovery:
                         all_sources.append(source_obj)
                         all_embeddings.append(emb_arr)
 
+                        emit("discovery:source_scored", {
+                            "title": source_obj.title,
+                            "relevance": round(source_obj.relevance_score, 3),
+                            "status": source_obj.status,
+                            "source_type": source_obj.source_type,
+                        })
+
                     if semantic_dupes:
                         logger.info(f"Semantic dedup: skipped {semantic_dupes} near-duplicate sources")
 
                 except Exception as e:
                     logger.error(f"Embedding error: {e}")
                     result.errors.append(f"Embedding: {e}")
+                    emit("discovery:error", {"message": f"Embedding: {e}"})
 
                 # Persist to DB
                 if self.source_db and zone_sources:
@@ -303,6 +356,13 @@ class SourceDiscovery:
                 break
 
             rounds_completed += 1
+
+            emit("discovery:round_complete", {
+                "round": rounds_completed,
+                "total_rounds": max_rounds,
+                "sources_so_far": len(all_sources),
+                "zones_explored": len(explored_zone_ids),
+            })
 
             # Re-detect frontiers for next round (if not last round)
             if round_num < max_rounds - 1 and len(all_sources) < max_total_sources:
@@ -365,6 +425,16 @@ class SourceDiscovery:
                     break
 
                 logger.info(f"Exploring outlier seed: {outlier.label} ({outlier.seed_id})")
+
+                emit("discovery:seed_exploring", {
+                    "seed_id": outlier.seed_id,
+                    "seed_label": outlier.label,
+                    "seed_type": "outlier",
+                })
+
+                emit("discovery:llm_generating", {
+                    "context_preview": outlier.label,
+                })
 
                 # Generate queries from outlier context
                 queries = self.query_generator.generate_queries(
@@ -488,7 +558,15 @@ class SourceDiscovery:
         logger.info(f"Discovery complete: {len(result.frontier_sources)} frontier, "
                    f"{len(result.pending_sources)} pending, "
                    f"{result.zones_explored} zones, {result.rounds_completed} rounds")
-        
+
+        emit("discovery:complete", {
+            "frontier_count": len(result.frontier_sources),
+            "pending_count": len(result.pending_sources),
+            "total": result.total_sources_found,
+            "zones_explored": result.zones_explored,
+            "rounds_completed": result.rounds_completed,
+        })
+
         return result
     
     def evaluate_pending_sources(

@@ -524,6 +524,90 @@ async def cleanup_old_sources(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/frontier/models")
+async def get_model_status():
+    """
+    Get status of Ollama models (LLM and embedding).
+
+    Returns loaded models with VRAM usage, expiry, and active/idle status.
+    """
+    import requests as req
+    from datetime import datetime, timezone
+
+    ollama_url = "http://localhost:11434"
+    result = {"models": [], "error": None}
+
+    try:
+        resp = req.get(f"{ollama_url}/api/ps", timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+
+        now = datetime.now(timezone.utc)
+
+        for m in data.get("models", []):
+            expires_str = m.get("expires_at", "")
+            expires_at = None
+            seconds_remaining = None
+            if expires_str:
+                try:
+                    expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+                    seconds_remaining = max(0, (expires_at - now).total_seconds())
+                except (ValueError, TypeError):
+                    pass
+
+            size_vram_gb = round(m.get("size_vram", 0) / 1e9, 1)
+            size_total_gb = round(m.get("size", 0) / 1e9, 1)
+
+            model_info = {
+                "name": m.get("name", "unknown"),
+                "family": m.get("details", {}).get("family", ""),
+                "parameter_size": m.get("details", {}).get("parameter_size", ""),
+                "quantization": m.get("details", {}).get("quantization_level", ""),
+                "size_vram_gb": size_vram_gb,
+                "size_total_gb": size_total_gb,
+                "context_length": m.get("context_length", 0),
+                "expires_at": expires_str,
+                "seconds_remaining": int(seconds_remaining) if seconds_remaining is not None else None,
+                "status": "active" if seconds_remaining and seconds_remaining > 60 else "idle",
+            }
+            result["models"].append(model_info)
+
+    except req.ConnectionError:
+        result["error"] = "Ollama not reachable"
+    except Exception as e:
+        result["error"] = str(e)
+
+    # Also check GPU VRAM if possible
+    try:
+        import subprocess
+        proc = subprocess.run(
+            ["rocm-smi", "--showmeminfo", "vram"],
+            capture_output=True, text=True, timeout=5,
+            env={**__import__("os").environ, "HSA_OVERRIDE_GFX_VERSION": "10.3.0"},
+        )
+        if proc.returncode == 0:
+            lines = proc.stdout.strip().split("\n")
+            gpu_info = []
+            for line in lines:
+                if "Total Memory" in line and "Used" not in line:
+                    parts = line.split(":")
+                    if len(parts) >= 2:
+                        gpu_id = parts[0].strip()
+                        total_bytes = int(parts[1].strip())
+                        gpu_info.append({"gpu": gpu_id, "total_gb": round(total_bytes / 1e9, 1)})
+                elif "Used Memory" in line:
+                    parts = line.split(":")
+                    if len(parts) >= 2 and gpu_info:
+                        used_bytes = int(parts[1].strip())
+                        gpu_info[-1]["used_gb"] = round(used_bytes / 1e9, 1)
+                        gpu_info[-1]["pct"] = round(used_bytes / (gpu_info[-1]["total_gb"] * 1e9) * 100, 1) if gpu_info[-1]["total_gb"] > 0 else 0
+            result["gpu"] = gpu_info
+    except Exception:
+        pass  # GPU info is optional
+
+    return result
+
+
 @router.get("/frontier/stats")
 async def get_frontier_stats():
     """Get frontier service statistics."""
