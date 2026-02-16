@@ -10,7 +10,7 @@ import requests
 
 logger = logging.getLogger('umbra.semantic_analysis')
 
-DEFAULT_MODEL = "qwen3-embedding:8b"
+DEFAULT_MODEL = "qwen3-embedding:4b"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 

@@ -108,8 +108,29 @@ def _apply_feedback():
         downranked = _source_db.get_rated_sources(rating=-1)
         upranked = _source_db.get_rated_sources(rating=1)
 
-        neg_embeddings = [np.array(s.embedding) for s in downranked if s.embedding]
-        pos_embeddings = [np.array(s.embedding) for s in upranked if s.embedding]
+        # Filter to matching embedding dimension (old sources may have stale dims)
+        expected_dim = _relevance_analyzer._umbra_centroid.shape[0] if _relevance_analyzer._umbra_centroid is not None else None
+
+        neg_embeddings = []
+        pos_embeddings = []
+        skipped = 0
+        for s in downranked:
+            if s.embedding:
+                arr = np.array(s.embedding)
+                if expected_dim is None or arr.shape[0] == expected_dim:
+                    neg_embeddings.append(arr)
+                else:
+                    skipped += 1
+        for s in upranked:
+            if s.embedding:
+                arr = np.array(s.embedding)
+                if expected_dim is None or arr.shape[0] == expected_dim:
+                    pos_embeddings.append(arr)
+                else:
+                    skipped += 1
+
+        if skipped:
+            logger.warning(f"Skipped {skipped} feedback sources with stale embedding dimension")
 
         if neg_embeddings or pos_embeddings:
             _relevance_analyzer.add_feedback_exemplars(neg_embeddings, pos_embeddings)
