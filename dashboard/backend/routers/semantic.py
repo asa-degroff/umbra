@@ -342,9 +342,10 @@ async def get_interest_seeds(
     Seeds are anchor points in embedding space: cluster centroids (main topics)
     and outlier posts (intentional creative diversifications).
     """
+    import asyncio
     try:
         from dashboard.backend.services.frontier_service import frontier_service
-        result = frontier_service.get_seeds(days=days, force_refresh=refresh)
+        result = await asyncio.to_thread(frontier_service.get_seeds, days=days, force_refresh=refresh)
         # Strip internal _seed_objects before sending to client
         result.pop('_seed_objects', None)
         return result
@@ -367,9 +368,11 @@ async def get_frontier_zones(
     Frontier zones are unexplored regions in embedding space
     adjacent to existing content clusters or interest seeds.
     """
+    import asyncio
     try:
         from dashboard.backend.services.frontier_service import frontier_service
-        return frontier_service.get_zones(
+        return await asyncio.to_thread(
+            frontier_service.get_zones,
             days=days,
             top_n=top_n,
             source=source,
@@ -399,6 +402,7 @@ async def discover_sources(
     """
     try:
         from dashboard.backend.services.frontier_service import frontier_service
+        # Always run discovery in background to avoid blocking the event loop
         return frontier_service.discover_sources(
             max_rounds=max_rounds,
             max_total_sources=max_sources,
@@ -406,7 +410,7 @@ async def discover_sources(
             days=days,
             source=source,
             force_refresh=refresh,
-            background=background,
+            background=True,
         )
     except Exception as e:
         logger.error(f"Error in source discovery: {e}")
@@ -430,9 +434,12 @@ async def discover_sources_focused(body: FocusedDiscoveryRequest):
     Accepts a list of seed_ids and runs discovery only in zones
     generated from those seeds, rather than all detected seeds.
     """
+    import asyncio
     try:
         from dashboard.backend.services.frontier_service import frontier_service
-        return frontier_service.discover_sources_focused(
+        # Run in thread to avoid blocking the event loop
+        return await asyncio.to_thread(
+            frontier_service.discover_sources_focused,
             seed_ids=body.seed_ids,
             max_rounds=body.max_rounds,
             max_sources_per_zone=5,

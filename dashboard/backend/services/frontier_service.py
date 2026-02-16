@@ -38,6 +38,24 @@ _cache_ttl = 300  # 5 minutes
 _init_lock = threading.Lock()
 _discovery_lock = threading.Lock()
 _discovery_running = False
+_init_started = False
+_init_done = threading.Event()
+
+
+def start_background_init():
+    """Start component initialization in a background thread so the server stays responsive."""
+    global _init_started
+    if _init_started:
+        return
+    _init_started = True
+
+    def _bg():
+        _init_components()
+        _init_done.set()
+
+    thread = threading.Thread(target=_bg, daemon=True)
+    thread.start()
+    logger.info("Frontier service background initialization started")
 
 
 def _init_components():
@@ -142,6 +160,14 @@ def _apply_feedback():
         logger.error(f"Error applying feedback: {e}")
 
 
+def _ensure_ready() -> bool:
+    """Non-blocking check if components are initialized. Starts background init if needed."""
+    if _frontier_detector is not None:
+        return True
+    start_background_init()
+    return False
+
+
 def _cache_valid(key: str) -> bool:
     """Check if cache entry is valid."""
     time_key = f"{key}_time"
@@ -157,8 +183,12 @@ class FrontierService:
     
     @property
     def is_available(self) -> bool:
-        """Check if service is available."""
-        return _init_components()
+        """Check if service is available (non-blocking)."""
+        if _frontier_detector is not None:
+            return True
+        # Kick off background init if not started
+        start_background_init()
+        return False
     
     def get_seeds(
         self,
@@ -175,8 +205,8 @@ class FrontierService:
         Returns:
             Dict with seeds list and metadata
         """
-        if not _init_components() or _seed_detector is None:
-            return {"seeds": [], "error": "Service not available"}
+        if not _ensure_ready() or _seed_detector is None:
+            return {"seeds": [], "error": "Service initializing, please wait..."}
 
         cache_key = f"seeds_{days}"
 
@@ -241,8 +271,8 @@ class FrontierService:
         Returns:
             Dict with zones list and metadata
         """
-        if not _init_components():
-            return {"zones": [], "error": "Service not available"}
+        if not _ensure_ready():
+            return {"zones": [], "error": "Service initializing, please wait..."}
         
         cache_key = f"zones_{days}_{top_n}_{source}_{use_seeds}"
         
@@ -395,8 +425,8 @@ class FrontierService:
         Returns:
             Dict with discovery results plus focused_seeds metadata
         """
-        if not _init_components():
-            return {"error": "Service not available"}
+        if not _ensure_ready():
+            return {"error": "Service initializing, please wait..."}
 
         if not seed_ids:
             return {"error": "No seed_ids provided"}
@@ -481,8 +511,8 @@ class FrontierService:
         """
         global _discovery_running
 
-        if not _init_components():
-            return {"error": "Service not available"}
+        if not _ensure_ready():
+            return {"error": "Service initializing, please wait..."}
 
         if not force_refresh and _cache_valid('discovery_result'):
             return _cache['discovery_result']
@@ -566,8 +596,8 @@ class FrontierService:
     
     def rate_source(self, source_id: int, rating: int) -> dict:
         """Rate a source and apply feedback to the relevance analyzer."""
-        if not _init_components() or _source_db is None:
-            raise RuntimeError("Service not available")
+        if not _ensure_ready() or _source_db is None:
+            raise RuntimeError("Service initializing, please wait...")
 
         updated = _source_db.rate_source(source_id, rating)
         if not updated:
@@ -600,8 +630,8 @@ class FrontierService:
         Returns:
             Dict with promoted count and updated source IDs.
         """
-        if not _init_components() or _source_db is None or _source_discovery is None:
-            return {"error": "Service not available"}
+        if not _ensure_ready() or _source_db is None or _source_discovery is None:
+            return {"error": "Service initializing, please wait..."}
 
         try:
             pending = _source_db.get_sources(status='pending', limit=1000)
@@ -646,8 +676,8 @@ class FrontierService:
         offset: int = 0,
     ) -> dict:
         """Get sources from the persistence DB (not just cache)."""
-        if not _init_components() or _source_db is None:
-            return {"sources": [], "error": "Service not available"}
+        if not _ensure_ready() or _source_db is None:
+            return {"sources": [], "error": "Service initializing, please wait..."}
 
         try:
             sources = _source_db.get_sources(status=status, limit=limit, offset=offset)
@@ -679,8 +709,8 @@ class FrontierService:
 
     def cleanup_sources(self, max_age_days: int = 90) -> dict:
         """Delete old sources from the DB, preserving user-rated ones."""
-        if not _init_components() or _source_db is None:
-            return {"error": "Service not available"}
+        if not _ensure_ready() or _source_db is None:
+            return {"error": "Service initializing, please wait..."}
         try:
             deleted = _source_db.cleanup_old(max_age_days=max_age_days, protect_rated=True)
             return {"deleted": deleted, "max_age_days": max_age_days}

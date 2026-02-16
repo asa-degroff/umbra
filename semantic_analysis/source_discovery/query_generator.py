@@ -12,7 +12,7 @@ from typing import Optional
 logger = logging.getLogger('umbra.source_discovery.query_generator')
 
 DEFAULT_MODEL = "qwen3:14b-q4_K_M"
-FALLBACK_MODEL = "qwen2.5:7b"
+FALLBACK_MODEL = "qwen3:8b"
 
 
 class QueryGenerator:

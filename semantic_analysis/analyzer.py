@@ -28,7 +28,7 @@ def _sanitize_for_prompt(text: str, max_length: int = 200) -> str:
         text = text[:max_length] + "..."
     return text
 
-DEFAULT_LLM_MODEL = "qwen2.5:7b"
+DEFAULT_LLM_MODEL = "qwen3:8b"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 

@@ -58,7 +58,14 @@ async def lifespan(app: FastAPI):
     # Start listener in background task
     listener_task = asyncio.create_task(event_listener.start())
     logger.info(f"Starting event listener on {EVENT_LISTENER_HOST}:{EVENT_LISTENER_PORT}")
-    
+
+    # Start frontier service initialization in background (non-blocking)
+    try:
+        from dashboard.backend.services.frontier_service import start_background_init
+        start_background_init()
+    except Exception as e:
+        logger.warning(f"Could not start frontier background init: {e}")
+
     yield
     
     # Shutdown
