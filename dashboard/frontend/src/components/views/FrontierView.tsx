@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import {
   Compass, Map, Globe, Zap, BookOpen, Sprout, Sparkles,
   ChevronLeft, ChevronRight, ExternalLink, X, Check,
   Loader2, Play, AlertCircle, ThumbsUp, ThumbsDown, Focus,
+  Radio,
 } from 'lucide-react'
 import {
   ScatterChart, Scatter, XAxis, YAxis,
@@ -18,6 +19,7 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { API_BASE } from '@/lib/config'
+import DiscoveryMonitor from '@/components/frontier/DiscoveryMonitor'
 
 // --- Types ---
 
@@ -300,6 +302,9 @@ type TabId = 'seeds' | 'zones' | 'sources' | 'discover'
 
 export default function FrontierView() {
   const queryClient = useQueryClient()
+  const [monitorOpen, setMonitorOpen] = useState(false)
+  const [isDiscoveryActive, setIsDiscoveryActive] = useState(false)
+  const handleActivityChange = useCallback((active: boolean) => setIsDiscoveryActive(active), [])
   const [days, setDays] = useState(30)
   const [source, setSource] = useState('all')
   const [activeTab, setActiveTab] = useState<TabId>('zones')
@@ -1327,6 +1332,25 @@ export default function FrontierView() {
           )}
         </div>
       )}
+
+      {/* ==================== DISCOVERY MONITOR ==================== */}
+      <button
+        onClick={() => setMonitorOpen(o => !o)}
+        className={cn(
+          'fixed bottom-6 right-6 z-30 p-3 rounded-full shadow-lg transition-all',
+          'bg-primary text-primary-foreground hover:bg-primary/90',
+          isDiscoveryActive && 'ring-2 ring-primary/50 ring-offset-2 ring-offset-background',
+        )}
+        title="Discovery Monitor"
+      >
+        <Radio className={cn('w-5 h-5', isDiscoveryActive && 'animate-pulse')} />
+      </button>
+
+      <DiscoveryMonitor
+        isOpen={monitorOpen}
+        onClose={() => setMonitorOpen(false)}
+        onActivityChange={handleActivityChange}
+      />
 
       {/* ==================== SOURCE DETAIL MODAL ==================== */}
       {selectedSource && (
