@@ -22,7 +22,7 @@ class EmbeddingGenerator:
         ollama_url: str = DEFAULT_OLLAMA_URL,
         model: str = DEFAULT_MODEL,
         batch_size: int = 32,
-        timeout: int = 120,
+        timeout: int = 300,
     ):
         """
         Initialize the embedding generator.
@@ -65,6 +65,7 @@ class EmbeddingGenerator:
                 json={
                     "model": self.model,
                     "input": text,
+                    "keep_alive": "30m",
                 },
                 timeout=self.timeout,
             )
@@ -121,6 +122,7 @@ class EmbeddingGenerator:
                 json={
                     "model": self.model,
                     "input": texts,
+                    "keep_alive": "30m",
                 },
                 timeout=self.timeout,
             )

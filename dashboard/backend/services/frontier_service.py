@@ -50,8 +50,12 @@ def start_background_init():
     _init_started = True
 
     def _bg():
-        _init_components()
-        _init_done.set()
+        try:
+            _init_components()
+        except Exception as e:
+            logger.error(f"Background init failed: {e}", exc_info=True)
+        finally:
+            _init_done.set()
 
     thread = threading.Thread(target=_bg, daemon=True)
     thread.start()
@@ -81,17 +85,23 @@ def _init_components():
             from semantic_analysis.seeds import create_interest_seed_detector
             from dashboard.backend.services.shared_storage import get_shared_storage
 
+            logger.info("Init: getting shared storage...")
             storage = get_shared_storage()
             if storage is None:
                 logger.error("Shared storage not available")
                 return False
+            logger.info("Init: creating embedder...")
             embedder = EmbeddingGenerator()
 
+            logger.info("Init: creating relevance analyzer...")
             _relevance_analyzer = create_relevance_analyzer(storage, embedder, use_default_negatives=True)
+            logger.info("Init: computing umbra centroid...")
             _relevance_analyzer.compute_umbra_centroid(days=30)
+            logger.info("Init: centroid done, creating frontier detector...")
 
             _frontier_detector = create_frontier_detector(storage, relevance_analyzer=_relevance_analyzer)
 
+            logger.info("Init: creating seed detector...")
             _seed_detector = create_interest_seed_detector(storage)
 
             _source_db = SourceDB('/home/asa/umbra/data/source_discovery.db')

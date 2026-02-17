@@ -47,7 +47,12 @@ async def handle_event(event: dict) -> None:
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     global event_listener
-    
+
+    # Set a larger thread pool so background init doesn't starve API handlers
+    import concurrent.futures
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=8))
+
     # Start event listener
     event_listener = EventListener(
         host=EVENT_LISTENER_HOST,

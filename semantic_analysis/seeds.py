@@ -339,7 +339,7 @@ class InterestSeedDetector:
                         "num_predict": 4096,
                     },
                 },
-                timeout=60,
+                timeout=300,
             )
             resp.raise_for_status()
             raw = resp.json().get('message', {}).get('content', '').strip()

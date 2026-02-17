@@ -538,6 +538,11 @@ async def get_model_status():
 
     Returns loaded models with VRAM usage, expiry, and active/idle status.
     """
+    import asyncio
+    return await asyncio.to_thread(_get_model_status_sync)
+
+
+def _get_model_status_sync():
     import requests as req
     from datetime import datetime, timezone
 
