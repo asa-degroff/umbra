@@ -34,12 +34,72 @@ _cache = {
     'discovery_result': None,
     'discovery_time': None,
 }
-_cache_ttl = 300  # 5 minutes
+_cache_ttl = 3600  # 1 hour — scheduled refresh handles freshness
 _init_lock = threading.Lock()
 _discovery_lock = threading.Lock()
 _discovery_running = False
 _init_started = False
 _init_done = threading.Event()
+_refresh_timer = None
+_REFRESH_INTERVAL = 4 * 3600  # 4 hours between scheduled refreshes
+_DISK_CACHE_MAX_AGE = 24 * 3600  # Consider disk cache stale after 24 hours
+
+
+def _load_disk_cache():
+    """Load seeds and zones from disk cache into memory. Called before components are ready."""
+    try:
+        from dashboard.backend.services.disk_cache import disk_cache, get_config_hash
+        config_hash = get_config_hash()
+
+        # Load seeds
+        seeds_wrapper = disk_cache.get("seeds")
+        if seeds_wrapper and seeds_wrapper.get("config_hash") == config_hash:
+            _cache['seeds'] = seeds_wrapper['data']
+            _cache['seeds_time'] = datetime.fromisoformat(seeds_wrapper['cached_at'])
+            logger.info(f"Loaded seeds from disk cache ({seeds_wrapper['cached_at'][:19]})")
+
+        # Load zones
+        zones_wrapper = disk_cache.get("zones")
+        if zones_wrapper and zones_wrapper.get("config_hash") == config_hash:
+            _cache['zones'] = zones_wrapper['data']
+            _cache['zones_time'] = datetime.fromisoformat(zones_wrapper['cached_at'])
+            logger.info(f"Loaded zones from disk cache ({zones_wrapper['cached_at'][:19]})")
+
+    except Exception as e:
+        logger.warning(f"Disk cache load failed (non-fatal): {e}")
+
+
+def _schedule_refresh():
+    """Start a repeating timer that refreshes seeds and zones in the background."""
+    global _refresh_timer
+
+    def _do_refresh():
+        global _refresh_timer
+        if _frontier_detector is None:
+            # Components not ready yet, retry in 60s
+            _refresh_timer = threading.Timer(60, _do_refresh)
+            _refresh_timer.daemon = True
+            _refresh_timer.start()
+            return
+
+        logger.info("Scheduled refresh: regenerating seeds and zones...")
+        try:
+            frontier_service.get_seeds(days=30, force_refresh=True)
+            frontier_service.get_zones(days=30, force_refresh=True)
+            logger.info("Scheduled refresh complete")
+        except Exception as e:
+            logger.error(f"Scheduled refresh failed: {e}")
+
+        # Schedule next refresh
+        _refresh_timer = threading.Timer(_REFRESH_INTERVAL, _do_refresh)
+        _refresh_timer.daemon = True
+        _refresh_timer.start()
+
+    # First refresh after init completes (give it 30s to settle)
+    _refresh_timer = threading.Timer(30, _do_refresh)
+    _refresh_timer.daemon = True
+    _refresh_timer.start()
+    logger.info(f"Scheduled refresh timer started (every {_REFRESH_INTERVAL // 3600}h)")
 
 
 def start_background_init():
@@ -49,6 +109,9 @@ def start_background_init():
         return
     _init_started = True
 
+    # Load disk cache immediately (no components needed)
+    _load_disk_cache()
+
     def _bg():
         try:
             _init_components()
@@ -56,6 +119,8 @@ def start_background_init():
             logger.error(f"Background init failed: {e}", exc_info=True)
         finally:
             _init_done.set()
+            # Start scheduled refresh after init completes
+            _schedule_refresh()
 
     thread = threading.Thread(target=_bg, daemon=True)
     thread.start()
@@ -178,6 +243,11 @@ def _ensure_ready() -> bool:
     return False
 
 
+def _has_disk_cache(key: str) -> bool:
+    """Check if we have disk-cached data for this key in memory."""
+    return _cache.get(key) is not None
+
+
 def _cache_valid(key: str) -> bool:
     """Check if cache entry is valid."""
     time_key = f"{key}_time"
@@ -216,6 +286,11 @@ class FrontierService:
             Dict with seeds list and metadata
         """
         if not _ensure_ready() or _seed_detector is None:
+            # Serve disk-cached data if available
+            if _has_disk_cache('seeds'):
+                cached = _cache['seeds']
+                cached['from_cache'] = True
+                return cached
             return {"seeds": [], "error": "Service initializing, please wait..."}
 
         cache_key = f"seeds_{days}"
@@ -255,10 +330,22 @@ class FrontierService:
             _cache['seeds_time'] = datetime.now(timezone.utc)
             _cache['seed_objects'] = seeds
 
+            # Persist to disk
+            try:
+                from dashboard.backend.services.disk_cache import disk_cache, get_config_hash
+                disk_cache.put("seeds", result, config_hash=get_config_hash())
+            except Exception as e:
+                logger.warning(f"Disk cache write (seeds) failed: {e}")
+
             return result
 
         except Exception as e:
             logger.error(f"Error detecting seeds: {e}")
+            # Fall back to disk cache on error
+            if _has_disk_cache('seeds'):
+                cached = _cache['seeds']
+                cached['from_cache'] = True
+                return cached
             return {"seeds": [], "error": str(e)}
 
     def get_zones(
@@ -282,6 +369,11 @@ class FrontierService:
             Dict with zones list and metadata
         """
         if not _ensure_ready():
+            # Serve disk-cached data if available
+            if _has_disk_cache('zones'):
+                cached = _cache['zones']
+                cached['from_cache'] = True
+                return cached
             return {"zones": [], "error": "Service initializing, please wait..."}
         
         cache_key = f"zones_{days}_{top_n}_{source}_{use_seeds}"
@@ -360,11 +452,23 @@ class FrontierService:
             
             _cache['zones'] = result
             _cache['zones_time'] = datetime.now(timezone.utc)
-            
+
+            # Persist to disk
+            try:
+                from dashboard.backend.services.disk_cache import disk_cache, get_config_hash
+                disk_cache.put("zones", result, config_hash=get_config_hash())
+            except Exception as e:
+                logger.warning(f"Disk cache write (zones) failed: {e}")
+
             return result
             
         except Exception as e:
             logger.error(f"Error detecting frontiers: {e}")
+            # Fall back to disk cache on error
+            if _has_disk_cache('zones'):
+                cached = _cache['zones']
+                cached['from_cache'] = True
+                return cached
             return {"zones": [], "error": str(e)}
     
     @staticmethod
@@ -733,10 +837,25 @@ class FrontierService:
         stats = {
             "available": _frontier_detector is not None,
             "zones_cached": _cache.get('zones') is not None,
+            "seeds_cached": _cache.get('seeds') is not None,
             "discovery_cached": _cache.get('discovery_result') is not None,
             "cache_ttl": _cache_ttl,
+            "refresh_interval": _REFRESH_INTERVAL,
             "detection_interval": _detection_interval,
         }
+
+        # Disk cache info
+        try:
+            from dashboard.backend.services.disk_cache import disk_cache
+            seeds_on_disk = disk_cache.get("seeds")
+            zones_on_disk = disk_cache.get("zones")
+            stats["disk_cache"] = {
+                "seeds": seeds_on_disk['cached_at'][:19] if seeds_on_disk else None,
+                "zones": zones_on_disk['cached_at'][:19] if zones_on_disk else None,
+            }
+        except Exception:
+            stats["disk_cache"] = None
+
         if _source_db is not None:
             try:
                 stats["source_db"] = _source_db.get_stats()
