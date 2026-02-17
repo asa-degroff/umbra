@@ -301,7 +301,17 @@ class FrontierService:
                 return cached
 
         try:
-            seeds = _seed_detector.detect_seeds(days=days, label_seeds=True)
+            # Get discovery counts for saturation weighting
+            discovery_counts = {}
+            if _source_db:
+                try:
+                    discovery_counts = _source_db.count_by_seed()
+                except Exception as e:
+                    logger.warning(f"Could not load discovery counts: {e}")
+
+            seeds = _seed_detector.detect_seeds(
+                days=days, label_seeds=True, discovery_counts=discovery_counts
+            )
 
             result = {
                 "seeds": [
@@ -314,6 +324,8 @@ class FrontierService:
                         "recency_weight": round(s.recency_weight, 3),
                         "rarity_weight": round(s.rarity_weight, 3),
                         "avg_distance_to_global_centroid": round(s.avg_distance_to_global_centroid, 3),
+                        "discovery_count": s.discovery_count,
+                        "saturation": round(s.saturation, 3),
                         "representative_texts": [t[:200] for t in s.representative_texts[:3]],
                     }
                     for s in seeds

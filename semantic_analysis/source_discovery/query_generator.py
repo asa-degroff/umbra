@@ -145,13 +145,16 @@ Queries:"""
 
         try:
             model = self._verify_model()
+            from semantic_analysis.ollama_manager import ollama_manager
+            ollama_manager.ensure_model("llm")
+
             response = requests.post(
                 f"{self.ollama_url}/api/chat",
                 json={
                     'model': model,
                     'messages': [{'role': 'user', 'content': prompt}],
                     'stream': False,
-                    'keep_alive': '60m',
+                    'keep_alive': '5m',
                     'options': {
                         'temperature': self.temperature,
                         'num_predict': 4096,

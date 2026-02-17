@@ -90,6 +90,7 @@ class SourceDiscovery:
         frontier_threshold: float = 0.4,
         seeds: Optional[list] = None,
         event_emitter = None,
+        max_sources_per_seed: int = 50,
     ) -> DiscoveryResult:
         """
         Run the source discovery loop.
@@ -117,7 +118,17 @@ class SourceDiscovery:
         explored_zone_ids: set[tuple] = set()  # Track by grid cell
         seen_urls: set[tuple[str, int]] = set()  # (url, chunk_index) dedup within run
         semantic_dedup_threshold = 0.95  # Skip sources with cosine sim > this to any existing
-        
+
+        # Load existing source counts per seed for saturation cap
+        seed_source_counts: dict[str, int] = {}
+        if self.source_db:
+            try:
+                seed_source_counts = self.source_db.count_by_seed()
+                if seed_source_counts:
+                    logger.info(f"Existing sources per seed: {seed_source_counts}")
+            except Exception as e:
+                logger.warning(f"Could not load seed source counts: {e}")
+
         # Helper to emit events (no-op if no emitter)
         def emit(event_type, data=None):
             if event_emitter:
@@ -180,7 +191,18 @@ class SourceDiscovery:
                 if len(all_sources) >= max_total_sources:
                     result.capped = True
                     break
-                
+
+                # Per-seed saturation cap: skip zones from seeds that have too many sources
+                if zone.seed_id and self.source_db:
+                    existing_count = seed_source_counts.get(zone.seed_id, 0)
+                    if existing_count >= max_sources_per_seed:
+                        logger.info(
+                            f"Skipping zone {zone_id} — seed {zone.seed_label or zone.seed_id} "
+                            f"saturated ({existing_count}/{max_sources_per_seed} sources)"
+                        )
+                        explored_zone_ids.add(zone_id)
+                        continue
+
                 # Generate queries for this zone, enriched with seed context if available
                 seed_label = None
                 seed_texts = None
@@ -294,6 +316,7 @@ class SourceDiscovery:
                         emb_arr = np.array(embedding)
                         source_obj.embedding = embedding
                         source_obj.frontier_zone_id = str(zone_id)
+                        source_obj.seed_id = zone.seed_id
 
                         # Semantic dedup: skip if too similar to an already-accepted source
                         if all_embeddings:
@@ -323,6 +346,13 @@ class SourceDiscovery:
 
                         all_sources.append(source_obj)
                         all_embeddings.append(emb_arr)
+
+                        if source_obj.seed_id:
+                            seed_source_counts[source_obj.seed_id] = seed_source_counts.get(source_obj.seed_id, 0) + 1
+
+                        # Track source count per seed for saturation cap
+                        if source_obj.seed_id:
+                            seed_source_counts[source_obj.seed_id] = seed_source_counts.get(source_obj.seed_id, 0) + 1
 
                         emit("discovery:source_scored", {
                             "title": source_obj.title,
@@ -527,6 +557,7 @@ class SourceDiscovery:
                         emb_arr = np.array(embedding)
                         source_obj.embedding = embedding
                         source_obj.frontier_zone_id = f"outlier:{outlier.seed_id}"
+                        source_obj.seed_id = outlier.seed_id
 
                         # Semantic dedup
                         if all_embeddings:

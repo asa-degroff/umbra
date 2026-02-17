@@ -398,13 +398,16 @@ Based on this analysis, provide 2-3 sentences of specific, actionable guidance f
 Be concrete and specific, not generic. The agent should be able to act on your guidance immediately."""
 
         try:
+            from semantic_analysis.ollama_manager import ollama_manager
+            ollama_manager.ensure_model("llm")
+
             resp = self.session.post(
                 f"{self.ollama_url}/api/chat",
                 json={
                     "model": self.llm_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "keep_alive": "60m",
+                    "keep_alive": "5m",
                     "options": {
                         "temperature": 0.7,
                         "num_predict": 4096,

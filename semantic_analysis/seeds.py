@@ -47,6 +47,8 @@ class InterestSeed:
     rarity_weight: float                    # Inverse-log of cluster size
     avg_distance_to_global_centroid: float  # Diagnostic: how far from the blob center
     created_at: str                         # ISO timestamp
+    discovery_count: int = 0                # Sources already discovered for this seed
+    saturation: float = 1.0                 # 1.0 = unexplored, lower = more saturated
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
@@ -63,6 +65,8 @@ class InterestSeed:
             'rarity_weight': self.rarity_weight,
             'avg_distance_to_global_centroid': self.avg_distance_to_global_centroid,
             'created_at': self.created_at,
+            'discovery_count': self.discovery_count,
+            'saturation': self.saturation,
         }
 
 
@@ -97,6 +101,7 @@ class InterestSeedDetector:
         self,
         days: int = 30,
         label_seeds: bool = True,
+        discovery_counts: dict[str, int] | None = None,
     ) -> list['InterestSeed']:
         """
         Detect interest seeds from Umbra's recent content.
@@ -208,14 +213,21 @@ class InterestSeedDetector:
             # Rarity weight: inverse-log of cluster size
             cluster_rarity = 1.0 / (1.0 + math.log(1 + size))
 
-            # Combined weight: geometric mean
-            combined = math.sqrt(cluster_recency * cluster_rarity)
+            # Saturation penalty: penalize seeds that already have many discovered sources
+            seed_id = f"cluster_{k}"
+            disc_count = discovery_counts.get(seed_id, 0) if discovery_counts else 0
+            saturation = 1.0 / (1.0 + math.log(1 + disc_count * 0.5)) if disc_count > 0 else 1.0
+            if disc_count > 0:
+                logger.info(f"Seed {seed_id}: {disc_count} existing sources, saturation={saturation:.3f}")
+
+            # Combined weight: geometric mean with saturation
+            combined = math.sqrt(cluster_recency * cluster_rarity * saturation)
 
             # Distance to global centroid
             avg_dist = float(1.0 - cosine_similarity(centroid, global_centroid))
 
             seeds.append(InterestSeed(
-                seed_id=f"cluster_{k}",
+                seed_id=seed_id,
                 seed_type="cluster",
                 label="",
                 centroid=centroid.tolist(),
@@ -227,6 +239,8 @@ class InterestSeedDetector:
                 rarity_weight=cluster_rarity,
                 avg_distance_to_global_centroid=avg_dist,
                 created_at=now_iso,
+                discovery_count=disc_count,
+                saturation=saturation,
             ))
 
         # 5. Confirm outliers: must be far from ALL cluster centroids
@@ -264,11 +278,17 @@ class InterestSeedDetector:
 
             outlier_recency = float(weights_arr[i])
             outlier_rarity = 1.0  # Maximum rarity for single-post outliers
-            combined = math.sqrt(outlier_recency * outlier_rarity)
+
+            # Saturation penalty for outliers too
+            outlier_seed_id = f"outlier_{j}"
+            outlier_disc_count = discovery_counts.get(outlier_seed_id, 0) if discovery_counts else 0
+            outlier_saturation = 1.0 / (1.0 + math.log(1 + outlier_disc_count * 0.5)) if outlier_disc_count > 0 else 1.0
+
+            combined = math.sqrt(outlier_recency * outlier_rarity * outlier_saturation)
             avg_dist = float(1.0 - cosine_similarity(emb, global_centroid))
 
             seeds.append(InterestSeed(
-                seed_id=f"outlier_{j}",
+                seed_id=outlier_seed_id,
                 seed_type="outlier",
                 label="",
                 centroid=centroid,
@@ -280,6 +300,8 @@ class InterestSeedDetector:
                 rarity_weight=outlier_rarity,
                 avg_distance_to_global_centroid=avg_dist,
                 created_at=now_iso,
+                discovery_count=outlier_disc_count,
+                saturation=outlier_saturation,
             ))
 
         # 7. Reserve slots for both types: clusters always get representation
@@ -327,13 +349,16 @@ class InterestSeedDetector:
         )
 
         try:
+            from semantic_analysis.ollama_manager import ollama_manager
+            ollama_manager.ensure_model("llm")
+
             resp = self.session.post(
                 f"{self.ollama_url}/api/chat",
                 json={
                     "model": self.llm_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "keep_alive": "60m",
+                    "keep_alive": "5m",
                     "options": {
                         "temperature": 0.3,
                         "num_predict": 4096,

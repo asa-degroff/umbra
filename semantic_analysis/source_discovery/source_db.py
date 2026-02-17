@@ -72,6 +72,12 @@ class SourceDB:
             ON discovered_sources(url, chunk_index)
         """)
 
+        # Migration: add seed_id column
+        try:
+            self.conn.execute("ALTER TABLE discovered_sources ADD COLUMN seed_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         # Migration: add user_rating and rated_at columns
         try:
             self.conn.execute("ALTER TABLE discovered_sources ADD COLUMN user_rating INTEGER DEFAULT 0")
@@ -101,14 +107,14 @@ class SourceDB:
                     cursor = self.conn.execute("""
                         INSERT OR IGNORE INTO discovered_sources
                         (title, url, excerpt, full_text, source_type, relevance_score,
-                         frontier_zone_id, embedding, discovered_at, status,
+                         frontier_zone_id, seed_id, embedding, discovered_at, status,
                          query_used, chunk_index, total_chunks)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         source.title, source.url, source.excerpt, source.full_text,
                         source.source_type, source.relevance_score,
-                        source.frontier_zone_id, embedding_json, discovered_at,
-                        source.status, source.query_used,
+                        source.frontier_zone_id, source.seed_id, embedding_json,
+                        discovered_at, source.status, source.query_used,
                         source.chunk_index, source.total_chunks,
                     ))
                     if cursor.rowcount > 0:
@@ -245,6 +251,8 @@ class SourceDB:
         rated_at = datetime.fromisoformat(rated_at_raw) if rated_at_raw else None
         user_rating = row['user_rating'] if 'user_rating' in row.keys() else 0
 
+        seed_id = row['seed_id'] if 'seed_id' in row.keys() else None
+
         source = DiscoveredSource(
             title=row['title'],
             url=row['url'],
@@ -253,6 +261,7 @@ class SourceDB:
             source_type=row['source_type'],
             relevance_score=row['relevance_score'],
             frontier_zone_id=row['frontier_zone_id'],
+            seed_id=seed_id,
             embedding=embedding,
             discovered_at=discovered_at,
             status=row['status'],
@@ -264,6 +273,21 @@ class SourceDB:
         )
         source.id = row['id']
         return source
+
+    def count_by_seed(self) -> dict[str, int]:
+        """
+        Count discovered sources per seed_id.
+
+        Returns:
+            Dict mapping seed_id to source count (excludes rejected).
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT seed_id, COUNT(*) as cnt FROM discovered_sources "
+                "WHERE seed_id IS NOT NULL AND status != 'rejected' "
+                "GROUP BY seed_id"
+            ).fetchall()
+        return {row['seed_id']: row['cnt'] for row in rows}
 
     def cleanup_old(self, max_age_days: int = 90, protect_rated: bool = True) -> int:
         """

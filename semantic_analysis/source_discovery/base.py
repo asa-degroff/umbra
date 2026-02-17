@@ -24,6 +24,7 @@ class DiscoveredSource:
     source_type: str = "unknown"          # 'wikipedia', 'arxiv', etc.
     relevance_score: float = 0.0
     frontier_zone_id: Optional[str] = None  # None if pending
+    seed_id: Optional[str] = None            # Which seed generated this source
     embedding: list[float] = field(default_factory=list)
     discovered_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = "pending"               # 'frontier', 'pending', 'used', 'rejected'
@@ -50,6 +51,7 @@ class DiscoveredSource:
             'source_type': self.source_type,
             'relevance_score': self.relevance_score,
             'frontier_zone_id': self.frontier_zone_id,
+            'seed_id': self.seed_id,
             'embedding': self.embedding,
             'discovered_at': self.discovered_at.isoformat(),
             'status': self.status,

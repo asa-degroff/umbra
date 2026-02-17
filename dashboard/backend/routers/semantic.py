@@ -400,17 +400,19 @@ async def discover_sources(
     Searches Wikipedia, arXiv, and Semantic Scholar for content in detected frontiers.
     Set background=true to run asynchronously and poll for results.
     """
+    import asyncio
     try:
         from dashboard.backend.services.frontier_service import frontier_service
-        # Always run discovery in background to avoid blocking the event loop
-        return frontier_service.discover_sources(
+        # Run in thread to avoid blocking the event loop
+        return await asyncio.to_thread(
+            frontier_service.discover_sources,
             max_rounds=max_rounds,
             max_total_sources=max_sources,
             initial_zones=initial_zones,
             days=days,
             source=source,
             force_refresh=refresh,
-            background=True,
+            background=background,
         )
     except Exception as e:
         logger.error(f"Error in source discovery: {e}")

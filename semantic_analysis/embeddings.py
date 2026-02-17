@@ -60,12 +60,15 @@ class EmbeddingGenerator:
             Embedding vector as list of floats
         """
         try:
+            from semantic_analysis.ollama_manager import ollama_manager
+            ollama_manager.ensure_model("embed")
+
             resp = self.session.post(
                 f"{self.ollama_url}/api/embed",
                 json={
                     "model": self.model,
                     "input": text,
-                    "keep_alive": "30m",
+                    "keep_alive": "5m",
                 },
                 timeout=self.timeout,
             )
@@ -117,12 +120,15 @@ class EmbeddingGenerator:
         Ollama's /api/embed supports batch input.
         """
         try:
+            from semantic_analysis.ollama_manager import ollama_manager
+            ollama_manager.ensure_model("embed")
+
             resp = self.session.post(
                 f"{self.ollama_url}/api/embed",
                 json={
                     "model": self.model,
                     "input": texts,
-                    "keep_alive": "30m",
+                    "keep_alive": "5m",
                 },
                 timeout=self.timeout,
             )
