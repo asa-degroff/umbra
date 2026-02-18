@@ -1250,6 +1250,7 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
             # Process response stream (message-based pattern) with timeout detection
             all_messages = []
             pending_generated_image = None  # Track image generation for follow-up
+            agent_error_message = None  # Track LLM errors in the stream
             last_meaningful_chunk_time = time.time()
             consecutive_ping_count = 0
             STREAMING_TIMEOUT_SECONDS = 300  # 5 minutes without meaningful content = timeout
@@ -1290,8 +1291,10 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                         )
                         if error_content:
                             logger.error(f"⚡ Agent error: {error_content}")
+                            agent_error_message = error_content
                         else:
                             logger.error(f"⚡ Agent error (full object): {chunk}")
+                            agent_error_message = str(chunk)
                     elif chunk.message_type == 'ping':
                         # Handle ping messages - track but don't log verbosely
                         consecutive_ping_count += 1
@@ -1315,6 +1318,10 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                 all_messages.append(chunk)
                 if str(chunk) == 'done':
                     break
+
+            # Check if the agent encountered an LLM error during streaming
+            if agent_error_message:
+                raise Exception(f"LLM error during high-traffic batch: {agent_error_message}")
 
             # If an image was generated, send it back to the agent for review
             if pending_generated_image:
@@ -3637,6 +3644,12 @@ def load_and_process_queued_notifications(umbra_agent, atproto_client, testing_m
                     logger.error(f"Error checking for new notifications: {e}")
             
             priority_label = " [PRIORITY]" if is_priority else ""
+
+            # Skip files that were already deleted (e.g., by high-traffic batch processing)
+            if not filepath.exists():
+                logger.debug(f"Skipping already-deleted queue file: {filepath.name}")
+                continue
+
             logger.info(f"Processing queue file {i}/{len(queue_files)}{priority_label}: {filepath.name}")
             try:
                 # Load notification data
