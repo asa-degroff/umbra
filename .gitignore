@@ -21,5 +21,4 @@ generated_images/
 # Database files and test data
 *.db
 *.sqlite3
-data/chromadb/
-data/chromadb_test/
+data/
