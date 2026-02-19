@@ -93,12 +93,13 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
 
     replicate_client = replicate.Client(api_token=api_token)
 
-    # Seedream 4.5 aspect ratio → (width, height) at 2K resolution
+    # Seedream 4.5 aspect ratio → (width, height)
+    # Minimum 3,686,400 pixels required by Seedream 4.5, dimensions aligned to 8px
     seedream_dims = {
-        "1:1":  (2048, 2048), "16:9": (2048, 1152), "9:16": (1152, 2048),
-        "4:3":  (2048, 1536), "3:4":  (1536, 2048), "3:2":  (2048, 1365),
-        "2:3":  (1365, 2048), "4:5":  (1638, 2048), "5:4":  (2048, 1638),
-        "2:1":  (2048, 1024), "1:2":  (1024, 2048),
+        "1:1":  (1920, 1920), "16:9": (2560, 1440), "9:16": (1440, 2560),
+        "4:3":  (2224, 1664), "3:4":  (1664, 2224), "3:2":  (2352, 1568),
+        "2:3":  (1568, 2352), "4:5":  (1720, 2152), "5:4":  (2152, 1720),
+        "2:1":  (2720, 1360), "1:2":  (1360, 2720),
     }
 
     # --- Model runner closures (not named functions, to avoid Letta name detection) ---
