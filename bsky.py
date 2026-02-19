@@ -2061,12 +2061,18 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                                 elif tool_name == 'update_block':
                                     log_with_panel("Memory block updated", f"Tool result: {tool_name} ✓", "green")
                                 elif tool_name == 'generate_image':
-                                    # Check for IMAGE_GENERATED signal using shared parser
+                                    # Check for IMAGE_GENERATED / IMAGES_GENERATED signal
                                     parsed_image = parse_any_image_signal(result_str)
                                     if parsed_image:
                                         pending_generated_image = parsed_image
-                                        logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
-                                        log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated ✓", "magenta")
+                                        gen_time = parsed_image.generation_time
+                                        if isinstance(parsed_image, GeneratedImagePair):
+                                            count = parsed_image.available_count
+                                            logger.info(f"🎨 {count} image(s) generated in {gen_time}s - will show to agent for review")
+                                            log_with_panel(f"Generated {count} image(s) ready for review", "Images Generated ✓", "magenta")
+                                        else:
+                                            logger.info(f"🎨 Image generated in {gen_time}s - will show to agent for review")
+                                            log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated ✓", "magenta")
                                     else:
                                         log_with_panel(result_str[:100], f"Tool result: {tool_name} ✓", "green")
                                 else:

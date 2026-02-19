@@ -490,13 +490,12 @@ def send_image_review_message(
                                 image_posted = True
                                 logger.info(f"🎨 Agent posted with generated image via {tool_name}")
                             elif tool_name == 'generate_image':
-                                # Parse the new IMAGE_GENERATED signal
+                                # Parse image signal (supports both single and dual model)
                                 tool_return_str = str(tool_return)
-                                if 'IMAGE_GENERATED|' in tool_return_str:
-                                    parsed = parse_image_generated_signal(tool_return_str)
-                                    if parsed:
-                                        new_generated_image = parsed
-                                        logger.info(f"🎨 Agent regenerated image - will show new image for review")
+                                parsed = parse_any_image_signal(tool_return_str)
+                                if parsed:
+                                    new_generated_image = parsed
+                                    logger.info(f"🎨 Agent regenerated image(s) - will show for review")
                         elif status == 'error':
                             error_msg = str(tool_return)[:100]
                             print(f"\n✗ {tool_name}")
