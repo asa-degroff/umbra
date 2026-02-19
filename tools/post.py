@@ -24,6 +24,18 @@ class PostArgs(BaseModel):
         default="1:1",
         description="Aspect ratio of the image (e.g., '1:1', '16:9', '9:16', '4:3'). Used for proper preview display."
     )
+    image_url_2: Optional[str] = Field(
+        default=None,
+        description="URL of a second image to attach. Used when posting both Lucid Origin and Seedream 4.5 results."
+    )
+    image_alt_2: Optional[str] = Field(
+        default=None,
+        description="Alt text for the second image."
+    )
+    image_aspect_ratio_2: Optional[str] = Field(
+        default=None,
+        description="Aspect ratio of the second image. Defaults to matching the first image's ratio."
+    )
 
     @validator('text')
     def validate_text_list(cls, v):
@@ -37,7 +49,10 @@ def create_new_bluesky_post(
     lang: str = "en-US",
     image_url: Optional[str] = None,
     image_alt: Optional[str] = None,
-    image_aspect_ratio: Optional[str] = "1:1"
+    image_aspect_ratio: Optional[str] = "1:1",
+    image_url_2: Optional[str] = None,
+    image_alt_2: Optional[str] = None,
+    image_aspect_ratio_2: Optional[str] = None
 ) -> str:
     """
     Create a NEW standalone post on Bluesky. This tool creates independent posts that
@@ -101,98 +116,21 @@ def create_new_bluesky_post(
         if not access_token or not user_did:
             raise Exception("Failed to get access token or DID from session")
 
-        # Handle image upload if provided
+        # Handle image upload(s) if provided
         image_embed = None
         if image_url:
             try:
-                # Download image from URL
-                img_response = requests.get(image_url, timeout=30)
-                img_response.raise_for_status()
-                image_bytes = img_response.content
-
-                # Check image size (Bluesky limit is 1MB = 1,000,000 bytes)
-                if len(image_bytes) > 1_000_000:
-                    # Try to resize using Pillow
-                    try:
-                        from PIL import Image
-                        import io
-
-                        img = Image.open(io.BytesIO(image_bytes))
-                        # Convert to RGB if necessary (for JPEG)
-                        if img.mode in ('RGBA', 'P'):
-                            img = img.convert('RGB')
-
-                        # Resize to fit under 1MB while maintaining aspect ratio
-                        quality = 85
-                        while len(image_bytes) > 1_000_000 and quality > 20:
-                            output = io.BytesIO()
-                            # Reduce dimensions if quality reduction isn't enough
-                            if quality < 50:
-                                new_size = (int(img.width * 0.8), int(img.height * 0.8))
-                                img = img.resize(new_size, Image.Resampling.LANCZOS)
-                            img.save(output, format='JPEG', quality=quality, optimize=True)
-                            image_bytes = output.getvalue()
-                            quality -= 10
-
-                        if len(image_bytes) > 1_000_000:
-                            raise Exception("Image is too large and could not be compressed under 1MB")
-
-                    except ImportError:
-                        raise Exception(
-                            f"Image is too large ({len(image_bytes)} bytes, max 1MB) and Pillow is not installed for resizing. "
-                            "Install with: uv pip install Pillow"
-                        )
-
-                # Detect content type
-                content_type = img_response.headers.get('content-type', 'image/jpeg')
-                if 'png' in content_type.lower():
-                    content_type = 'image/png'
-                elif 'webp' in content_type.lower():
-                    content_type = 'image/webp'
-                elif 'gif' in content_type.lower():
-                    content_type = 'image/gif'
-                else:
-                    content_type = 'image/jpeg'
-
-                # Upload blob to Bluesky
-                upload_url = f"{pds_host}/xrpc/com.atproto.repo.uploadBlob"
-                upload_headers = {
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": content_type
-                }
-                upload_response = requests.post(
-                    upload_url,
-                    headers=upload_headers,
-                    data=image_bytes,
-                    timeout=30
+                from tools.bsky_image_upload import build_image_embed
+                image_embed = build_image_embed(
+                    pds_host=pds_host,
+                    access_token=access_token,
+                    image_url=image_url,
+                    image_alt=image_alt,
+                    image_aspect_ratio=image_aspect_ratio,
+                    image_url_2=image_url_2,
+                    image_alt_2=image_alt_2,
+                    image_aspect_ratio_2=image_aspect_ratio_2,
                 )
-                upload_response.raise_for_status()
-                blob_data = upload_response.json()
-
-                # Build embed structure
-                blob_ref = blob_data.get("blob")
-                if not blob_ref:
-                    raise Exception("Failed to get blob reference from upload response")
-
-                # Parse aspect ratio for the embed
-                aspect_width, aspect_height = 1, 1
-                if image_aspect_ratio and ":" in image_aspect_ratio:
-                    try:
-                        parts = image_aspect_ratio.split(":")
-                        aspect_width = int(parts[0])
-                        aspect_height = int(parts[1])
-                    except (ValueError, IndexError):
-                        aspect_width, aspect_height = 1, 1  # Fallback to 1:1
-
-                image_embed = {
-                    "$type": "app.bsky.embed.images",
-                    "images": [{
-                        "image": blob_ref,
-                        "alt": image_alt or "AI-generated image",
-                        "aspectRatio": {"width": aspect_width, "height": aspect_height}
-                    }]
-                }
-
             except requests.exceptions.RequestException as e:
                 raise Exception(f"Failed to download or upload image: {str(e)}")
             except Exception as e:

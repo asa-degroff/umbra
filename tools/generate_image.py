@@ -1,13 +1,33 @@
 """
 Image Generation Tool
 
-Generate images using AI via the Replicate API with Leonardo AI's Lucid Origin model.
-The generated image URL is returned in a signal format that bsky.py detects to
-auto-include the image in the agent's next message for visual review.
+Generate images using two AI models via the Replicate API:
+  - Leonardo AI Lucid Origin (abstract/artistic)
+  - ByteDance Seedream 4.5 (text/diagrams/photorealistic)
+
+Both models are run concurrently and both URLs are returned in a signal format
+that bsky.py detects to auto-include the images for visual review.
 """
 
 from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator
+
+
+# Aspect ratio → (width, height) at 2K resolution for Seedream 4.5
+# Seedream uses size="custom" with explicit dimensions for aspect ratio control
+SEEDREAM_DIMENSIONS = {
+    "1:1":  (2048, 2048),
+    "16:9": (2048, 1152),
+    "9:16": (1152, 2048),
+    "4:3":  (2048, 1536),
+    "3:4":  (1536, 2048),
+    "3:2":  (2048, 1365),
+    "2:3":  (1365, 2048),
+    "4:5":  (1638, 2048),
+    "5:4":  (2048, 1638),
+    "2:1":  (2048, 1024),
+    "1:2":  (1024, 2048),
+}
 
 
 class GenerateImageArgs(BaseModel):
@@ -28,7 +48,6 @@ class GenerateImageArgs(BaseModel):
         """Validate that prompt is not empty or too long."""
         if not v or not v.strip():
             raise ValueError("Prompt cannot be empty")
-        # Replicate doesn't have a strict limit, but keep reasonable
         if len(v) > 2000:
             raise ValueError("Prompt is too long (max 2000 characters)")
         return v.strip()
@@ -43,14 +62,65 @@ class GenerateImageArgs(BaseModel):
         return v
 
 
+def _run_lucid_origin(replicate_client, prompt: str, aspect_ratio: str) -> dict:
+    """Run Leonardo AI Lucid Origin model. Returns dict with url, model, error."""
+    try:
+        output = replicate_client.run(
+            "leonardoai/lucid-origin",
+            input={
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "num_images": 1,
+                "style": "none",
+                "contrast": "medium",
+                "generation_mode": "standard",
+                "prompt_enhance": True,
+            }
+        )
+        if not output:
+            return {"model": "lucid_origin", "url": None, "error": "Empty response"}
+        url = str(output[0]) if hasattr(output[0], '__str__') else output[0]
+        if not url or not url.startswith("http"):
+            return {"model": "lucid_origin", "url": None, "error": f"Invalid URL: {url}"}
+        return {"model": "lucid_origin", "url": url, "error": None}
+    except Exception as e:
+        return {"model": "lucid_origin", "url": None, "error": str(e)}
+
+
+def _run_seedream(replicate_client, prompt: str, aspect_ratio: str) -> dict:
+    """Run ByteDance Seedream 4.5 model. Returns dict with url, model, error."""
+    try:
+        width, height = SEEDREAM_DIMENSIONS.get(aspect_ratio, (2048, 2048))
+        output = replicate_client.run(
+            "bytedance/seedream-4.5",
+            input={
+                "prompt": prompt,
+                "size": "custom",
+                "width": width,
+                "height": height,
+                "max_images": 1,
+                "sequential_image_generation": "disabled",
+            }
+        )
+        if not output:
+            return {"model": "seedream", "url": None, "error": "Empty response"}
+        url = str(output[0]) if hasattr(output[0], '__str__') else output[0]
+        if not url or not url.startswith("http"):
+            return {"model": "seedream", "url": None, "error": f"Invalid URL: {url}"}
+        return {"model": "seedream", "url": url, "error": None}
+    except Exception as e:
+        return {"model": "seedream", "url": None, "error": str(e)}
+
+
 def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
     """
-    Generate an AI image using Leonardo AI's Lucid Origin model via Replicate.
+    Generate AI images using two models concurrently: Lucid Origin and Seedream 4.5.
 
-    The generated image will be automatically shown to you in your next message
-    so you can review it before deciding to use it in a post or reply.
+    Both images will be automatically shown to you for review. You can then choose
+    to post your favorite, post both, or regenerate with either model.
 
-    Use visually descriptive language. You can specify visual styles, colors, vibe, as well as more detailed scene descriptions.
+    Lucid Origin excels at abstract and artistic imagery.
+    Seedream 4.5 excels at text rendering, diagrams, and photorealistic scenes.
 
     Args:
         prompt: Detailed description of the image to generate. This will also be
@@ -59,14 +129,15 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
                       Options: '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'
 
     Returns:
-        Signal string containing the image URL and metadata, which triggers
-        auto-display of the image in your next message.
+        Signal string containing image URLs and metadata, which triggers
+        auto-display of both images for review.
 
     Raises:
         Exception: If the API call fails or credentials are missing.
     """
     import os
     import time
+    import concurrent.futures
 
     # Validate inputs
     if not prompt or not prompt.strip():
@@ -89,78 +160,75 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
     try:
         import replicate
 
-        # Set the API token
         replicate_client = replicate.Client(api_token=api_token)
 
         start_time = time.time()
 
-        # Run the model
-        # Leonardo AI Lucid Origin model
-        output = replicate_client.run(
-            "leonardoai/lucid-origin",
-            input={
-                "prompt": prompt,
-                "aspect_ratio": aspect_ratio,
-                "num_images": 1,
-                "style": "none",  # Let the prompt control style
-                "contrast": "medium",
-                "generation_mode": "standard",
-                "prompt_enhance": True
-            }
-        )
+        # Run both models concurrently
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            lucid_future = executor.submit(_run_lucid_origin, replicate_client, prompt, aspect_ratio)
+            seedream_future = executor.submit(_run_seedream, replicate_client, prompt, aspect_ratio)
+
+            lucid_result = lucid_future.result(timeout=300)
+            seedream_result = seedream_future.result(timeout=300)
 
         generation_time = time.time() - start_time
 
-        # Extract image URL from output
-        # Output is a list of FileOutput objects
-        if not output:
-            raise Exception("No image was generated. The model returned an empty response.")
+        # Check results
+        lucid_url = lucid_result.get("url")
+        seedream_url = seedream_result.get("url")
 
-        # Get the URL - FileOutput can be converted to URL string
-        image_url = str(output[0]) if hasattr(output[0], '__str__') else output[0]
+        if not lucid_url and not seedream_url:
+            errors = []
+            if lucid_result.get("error"):
+                errors.append(f"Lucid Origin: {lucid_result['error']}")
+            if seedream_result.get("error"):
+                errors.append(f"Seedream 4.5: {seedream_result['error']}")
+            raise Exception(f"Both models failed. {'; '.join(errors)}")
 
-        if not image_url or not image_url.startswith("http"):
-            raise Exception(f"Invalid image URL returned: {image_url}")
-
-        # Return the signal format that bsky.py will detect
-        # Format: IMAGE_GENERATED|url|prompt|aspect_ratio|generation_time
-        # Sanitize prompt for signal line:
-        # - Replace newlines with spaces to keep signal on one line
-        # - Replace pipe characters to prevent parsing issues
+        # Build signal — new format: IMAGES_GENERATED|lucid_url|seedream_url|prompt|aspect_ratio|time
+        # Use "NONE" for URLs that failed
         signal_prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('|', '-')
-        signal = f"IMAGE_GENERATED|{image_url}|{signal_prompt}|{aspect_ratio}|{generation_time:.1f}"
-
-        # Add human-readable instructions for the agent
-        # The signal must be on the first line for bsky.py detection
-        instructions = (
-            f"\n\n---\n"
-            f"Image generated successfully in {generation_time:.1f}s!\n\n"
-            f"To attach this image to your reply, use reply_to_bluesky_post with:\n"
-            f"- image_url: {image_url}\n"
-            f"- image_alt: {prompt}\n\n"
-            f"Or use create_new_bluesky_post with the same image_url and image_alt parameters.\n\n"
-            f"For GreenGale blog posts, use upload_blog_image with this image_url to get\n"
-            f"a markdown reference and blob metadata, then pass the blob metadata to\n"
-            f"create_greengale_blog_post's blobs parameter."
+        signal = (
+            f"IMAGES_GENERATED"
+            f"|{lucid_url or 'NONE'}"
+            f"|{seedream_url or 'NONE'}"
+            f"|{signal_prompt}"
+            f"|{aspect_ratio}"
+            f"|{generation_time:.1f}"
         )
 
-        return signal + instructions
+        # Build human-readable instructions
+        lines = [f"\n\n---\nImages generated in {generation_time:.1f}s!\n"]
+
+        if lucid_url:
+            lines.append(f"**Lucid Origin** (abstract/artistic): {lucid_url}")
+        else:
+            lines.append(f"**Lucid Origin**: Failed — {lucid_result.get('error', 'unknown error')}")
+
+        if seedream_url:
+            lines.append(f"**Seedream 4.5** (text/diagrams/realistic): {seedream_url}")
+        else:
+            lines.append(f"**Seedream 4.5**: Failed — {seedream_result.get('error', 'unknown error')}")
+
+        lines.append("")
+        lines.append("To post your favorite, use reply_to_bluesky_post or create_new_bluesky_post with:")
+        lines.append("- image_url: <chosen URL>")
+        lines.append("- image_alt: <prompt>")
+        lines.append("")
+        lines.append("To post BOTH images in one post, use:")
+        lines.append("- image_url: <first URL>")
+        lines.append("- image_url_2: <second URL>")
+        lines.append("- image_alt / image_alt_2: alt text for each")
+
+        return signal + "\n".join(lines)
 
     except ImportError:
         raise Exception(
             "The 'replicate' package is not installed. "
             "Please install it with: uv pip install replicate"
         )
-    except replicate.exceptions.ReplicateError as e:
-        error_msg = str(e)
-        if "rate limit" in error_msg.lower():
-            raise Exception(f"Rate limited by Replicate API. Please wait a moment and try again. Details: {error_msg}")
-        elif "authentication" in error_msg.lower() or "unauthorized" in error_msg.lower():
-            raise Exception(f"Replicate API authentication failed. Check your API token. Details: {error_msg}")
-        else:
-            raise Exception(f"Replicate API error: {error_msg}")
     except Exception as e:
-        if "IMAGE_GENERATED|" in str(e):
-            # This is actually our success signal being raised, shouldn't happen but handle it
+        if "IMAGES_GENERATED|" in str(e) or "IMAGE_GENERATED|" in str(e):
             raise
-        raise Exception(f"Failed to generate image: {str(e)}")
+        raise Exception(f"Failed to generate images: {str(e)}")

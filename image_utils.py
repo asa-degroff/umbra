@@ -32,6 +32,34 @@ class GeneratedImage:
     prompt: str
     aspect_ratio: str
     generation_time: str
+    model: str = "unknown"  # "lucid_origin", "seedream", or "unknown"
+
+
+@dataclass
+class GeneratedImagePair:
+    """Container for dual-model image generation results."""
+    lucid_url: Optional[str]     # Lucid Origin result (may be None if failed)
+    seedream_url: Optional[str]  # Seedream 4.5 result (may be None if failed)
+    prompt: str
+    aspect_ratio: str
+    generation_time: str
+
+    @property
+    def has_both(self) -> bool:
+        return bool(self.lucid_url) and bool(self.seedream_url)
+
+    @property
+    def available_count(self) -> int:
+        return sum(1 for u in [self.lucid_url, self.seedream_url] if u)
+
+    def as_single(self) -> GeneratedImage:
+        """Convert to single GeneratedImage using whichever URL is available."""
+        url = self.lucid_url or self.seedream_url or ""
+        model = "lucid_origin" if self.lucid_url else "seedream"
+        return GeneratedImage(
+            url=url, prompt=self.prompt, aspect_ratio=self.aspect_ratio,
+            generation_time=self.generation_time, model=model
+        )
 
 
 def download_image_as_base64(url: str, timeout: int = 30) -> tuple[str, str] | None:
@@ -231,7 +259,7 @@ def download_and_save_image(
 
 
 def parse_image_generated_signal(result_str: str) -> GeneratedImage | None:
-    """Parse an IMAGE_GENERATED signal from generate_image tool return.
+    """Parse an IMAGE_GENERATED signal from generate_image tool return (legacy single-model).
 
     The signal format is: IMAGE_GENERATED|url|prompt|aspect_ratio|generation_time
 
@@ -261,6 +289,55 @@ def parse_image_generated_signal(result_str: str) -> GeneratedImage | None:
         aspect_ratio=parts[3],
         generation_time=parts[4] if len(parts) > 4 else "unknown"
     )
+
+
+def parse_images_generated_signal(result_str: str) -> GeneratedImagePair | None:
+    """Parse an IMAGES_GENERATED signal from dual-model generate_image tool return.
+
+    The signal format is: IMAGES_GENERATED|lucid_url|seedream_url|prompt|aspect_ratio|generation_time
+    URLs may be "NONE" if that model failed.
+
+    Args:
+        result_str: The tool return string to parse
+
+    Returns:
+        GeneratedImagePair dataclass if signal found, None otherwise
+    """
+    if not result_str:
+        return None
+
+    first_line = result_str.split('\n')[0]
+
+    if not first_line.startswith('IMAGES_GENERATED|'):
+        return None
+
+    parts = first_line.split('|')
+    if len(parts) < 5:
+        logger.warning(f"IMAGES_GENERATED signal has insufficient parts: {len(parts)}")
+        return None
+
+    lucid_url = parts[1] if parts[1] != "NONE" else None
+    seedream_url = parts[2] if parts[2] != "NONE" else None
+
+    return GeneratedImagePair(
+        lucid_url=lucid_url,
+        seedream_url=seedream_url,
+        prompt=parts[3],
+        aspect_ratio=parts[4],
+        generation_time=parts[5] if len(parts) > 5 else "unknown"
+    )
+
+
+def parse_any_image_signal(result_str: str) -> GeneratedImagePair | GeneratedImage | None:
+    """Parse either IMAGES_GENERATED (dual) or IMAGE_GENERATED (single) signal.
+
+    Returns:
+        GeneratedImagePair, GeneratedImage, or None
+    """
+    pair = parse_images_generated_signal(result_str)
+    if pair:
+        return pair
+    return parse_image_generated_signal(result_str)
 
 
 def send_image_review_message(
@@ -451,4 +528,235 @@ def send_image_review_message(
 
     except Exception as e:
         logger.error(f"Error sending generated image to agent: {e}")
+        return False
+
+
+def send_dual_image_review_message(
+    client: Letta,
+    agent_id: str,
+    image_pair: GeneratedImagePair,
+    context_prompt: str,
+    show_reasoning: bool = False,
+    max_steps: int = 50,
+    max_regenerations: int = 5
+) -> bool:
+    """Send a follow-up multimodal message with BOTH generated images for review.
+
+    Downloads both images (Lucid Origin + Seedream 4.5), converts to base64,
+    and sends them to the agent side-by-side with labels.
+
+    Args:
+        client: Letta client instance
+        agent_id: Agent ID to send message to
+        image_pair: GeneratedImagePair with both image URLs
+        context_prompt: Additional context for the review
+        show_reasoning: Whether to display reasoning output
+        max_steps: Maximum agent steps for the follow-up
+        max_regenerations: Maximum number of regeneration attempts
+
+    Returns:
+        True if images were successfully sent and agent responded
+    """
+    try:
+        current_pair = image_pair
+        regeneration_count = 0
+
+        while regeneration_count <= max_regenerations:
+            model_count = current_pair.available_count
+            logger.info(
+                f"🖼️ Sending {model_count} generated image(s) to agent for review "
+                f"(attempt {regeneration_count + 1})..."
+            )
+
+            # Build multimodal content with both images
+            image_content = []
+
+            # Text description
+            review_lines = [
+                f"Here are the generated images for your review.\n",
+                f"{context_prompt}\n",
+                f"Prompt: {current_pair.prompt}",
+                f"Aspect ratio: {current_pair.aspect_ratio}",
+                f"Generation time: {current_pair.generation_time}s\n",
+            ]
+
+            if current_pair.lucid_url:
+                review_lines.append(f"**Image 1 — Lucid Origin** (abstract/artistic): {current_pair.lucid_url}")
+            if current_pair.seedream_url:
+                review_lines.append(f"**Image 2 — Seedream 4.5** (text/diagrams/realistic): {current_pair.seedream_url}")
+
+            review_lines.append("")
+            review_lines.append("You can:")
+            review_lines.append("- Post your favorite using image_url with the chosen URL")
+            review_lines.append("- Post BOTH using image_url + image_url_2")
+            review_lines.append("- Regenerate with a revised prompt")
+
+            image_content.append({"type": "text", "text": "\n".join(review_lines)})
+
+            # Download and add Lucid Origin image
+            if current_pair.lucid_url:
+                lucid_result = download_and_save_image(
+                    url=current_pair.lucid_url,
+                    prompt=f"lucid_origin_{current_pair.prompt}",
+                    aspect_ratio=current_pair.aspect_ratio
+                )
+                if lucid_result:
+                    b64, media_type, _ = lucid_result
+                    image_content.append({"type": "text", "text": "Image 1 — Lucid Origin:"})
+                    image_content.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": b64}
+                    })
+                else:
+                    image_content.append({"type": "text", "text": "⚠️ Lucid Origin image failed to download"})
+
+            # Download and add Seedream image
+            if current_pair.seedream_url:
+                seedream_result = download_and_save_image(
+                    url=current_pair.seedream_url,
+                    prompt=f"seedream_{current_pair.prompt}",
+                    aspect_ratio=current_pair.aspect_ratio
+                )
+                if seedream_result:
+                    b64, media_type, _ = seedream_result
+                    image_content.append({"type": "text", "text": "Image 2 — Seedream 4.5:"})
+                    image_content.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": b64}
+                    })
+                else:
+                    image_content.append({"type": "text", "text": "⚠️ Seedream 4.5 image failed to download"})
+
+            # Small delay to ensure agent state is ready
+            time.sleep(1)
+
+            # Send follow-up with images for review
+            followup_stream = client.agents.messages.create_stream(
+                agent_id=agent_id,
+                messages=[{"role": "user", "content": image_content}],
+                stream_tokens=False,
+                max_steps=max_steps
+            )
+
+            # Process follow-up response
+            print(f"\n🖼️ Dual Image Review" + (f" (regeneration {regeneration_count})" if regeneration_count > 0 else ""))
+            print(f"  ────────────────")
+            image_posted = False
+            new_image_pair = None
+            new_single_image = None
+
+            for chunk in followup_stream:
+                msg_type = getattr(chunk, 'message_type', None)
+                if msg_type == 'error_message':
+                    error_msg = getattr(chunk, 'message', None)
+                    error_detail = getattr(chunk, 'detail', None)
+                    logger.error(f"❌ Image review error: {error_msg} - {error_detail}")
+                    print(f"\n❌ Image Review Error: {error_msg or error_detail or 'Unknown error'}")
+
+                if hasattr(chunk, 'message_type'):
+                    if chunk.message_type == 'reasoning_message':
+                        if show_reasoning:
+                            reasoning = getattr(chunk, 'reasoning', '')
+                            if reasoning:
+                                print(f"\n◆ Image Review Reasoning")
+                                print(f"  ─────────────────────")
+                                for line in reasoning.split('\n'):
+                                    print(f"  {line}")
+
+                    elif chunk.message_type == 'assistant_message':
+                        content = getattr(chunk, 'content', '')
+                        if content:
+                            print(f"\n▶ Agent Response (Image Review)")
+                            print(f"  ──────────────────────────────")
+                            for line in content.split('\n'):
+                                print(f"  {line}")
+
+                    elif chunk.message_type == 'tool_call_message':
+                        tool_call = getattr(chunk, 'tool_call', None)
+                        if tool_call:
+                            tool_name = tool_call.name
+                            print(f"\n⚙ Tool call: {tool_name}")
+                            try:
+                                args = json.loads(tool_call.arguments)
+                                if tool_name in ['reply_to_bluesky_post', 'create_new_bluesky_post']:
+                                    texts = args.get('text', [])
+                                    if texts:
+                                        print(f"  ─────────────")
+                                        for i, text in enumerate(texts, 1):
+                                            print(f"  [{i}] {text}")
+                                    if args.get('image_url'):
+                                        print(f"  📎 Image 1 attached")
+                                    if args.get('image_url_2'):
+                                        print(f"  📎 Image 2 attached")
+                                elif tool_name == 'generate_image':
+                                    print(f"  🔄 Regenerating images...")
+                            except:
+                                pass
+
+                    elif chunk.message_type == 'tool_return_message':
+                        status = getattr(chunk, 'status', '')
+                        tool_name = getattr(chunk, 'name', 'unknown')
+                        tool_return = getattr(chunk, 'tool_return', '')
+
+                        if status == 'success':
+                            print(f"\n✓ {tool_name}")
+                            print(f"  Success")
+                            if tool_name in ['create_new_bluesky_post', 'reply_to_bluesky_post']:
+                                image_posted = True
+                                logger.info(f"🎨 Agent posted with generated image via {tool_name}")
+                            elif tool_name == 'generate_image':
+                                tool_return_str = str(tool_return)
+                                # Try new dual-model signal first
+                                pair = parse_images_generated_signal(tool_return_str)
+                                if pair:
+                                    new_image_pair = pair
+                                    logger.info(f"🎨 Agent regenerated images (dual) — will show for review")
+                                else:
+                                    # Fall back to legacy single signal
+                                    single = parse_image_generated_signal(tool_return_str)
+                                    if single:
+                                        new_single_image = single
+                                        logger.info(f"🎨 Agent regenerated image (single) — will show for review")
+                        elif status == 'error':
+                            error_msg = str(tool_return)[:100]
+                            print(f"\n✗ {tool_name}")
+                            print(f"  Error: {error_msg}")
+
+                    elif chunk.message_type not in ['ping', 'usage_statistics', 'stop_reason']:
+                        logger.debug(f"Unhandled message type in image review: {chunk.message_type}")
+
+                if str(chunk) == 'done':
+                    break
+
+            # Check if we should loop for regeneration
+            if new_image_pair:
+                regeneration_count += 1
+                if regeneration_count > max_regenerations:
+                    logger.warning(f"🎨 Max regenerations ({max_regenerations}) reached")
+                    print(f"\n⚠️ Max regenerations reached")
+                    break
+                current_pair = new_image_pair
+                continue
+
+            if new_single_image:
+                # Agent regenerated with single model — wrap in a pair for consistency
+                regeneration_count += 1
+                if regeneration_count > max_regenerations:
+                    break
+                current_pair = GeneratedImagePair(
+                    lucid_url=new_single_image.url if new_single_image.model == "lucid_origin" else None,
+                    seedream_url=new_single_image.url if new_single_image.model == "seedream" else new_single_image.url,
+                    prompt=new_single_image.prompt,
+                    aspect_ratio=new_single_image.aspect_ratio,
+                    generation_time=new_single_image.generation_time
+                )
+                continue
+
+            logger.info(f"✓ Dual image review completed (posted: {image_posted}, regenerations: {regeneration_count})")
+            return True
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Error sending dual images to agent: {e}")
         return False

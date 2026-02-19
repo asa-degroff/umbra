@@ -40,7 +40,12 @@ from scheduled_prompts import (
     initialize_all_scheduled_tasks,
     reschedule_task_after_execution,
 )
-from image_utils import download_image_as_base64, download_and_save_image, parse_image_generated_signal
+from image_utils import (
+    download_image_as_base64, download_and_save_image,
+    parse_image_generated_signal, parse_images_generated_signal, parse_any_image_signal,
+    send_image_review_message, send_dual_image_review_message,
+    GeneratedImage, GeneratedImagePair,
+)
 from event_emitter import get_emitter, EventEmitter
 # umbriel_bridge import removed - now using R2 queue pattern via umbriel_poller.py
 
@@ -1249,7 +1254,7 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
 
             # Process response stream (message-based pattern) with timeout detection
             all_messages = []
-            pending_generated_image = None  # Track image generation for follow-up
+            pending_generated_image = None  # Track image generation for follow-up (single or pair)
             agent_error_message = None  # Track LLM errors in the stream
             last_meaningful_chunk_time = time.time()
             consecutive_ping_count = 0
@@ -1273,13 +1278,17 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                         tool_name = chunk.name
                         logger.debug(f"⚡ Tool result: {tool_name} - {chunk.status}")
 
-                        # Check for image generation result
+                        # Check for image generation result (dual or single model)
                         if tool_name == 'generate_image' and hasattr(chunk, 'tool_return') and chunk.tool_return:
                             result_str = str(chunk.tool_return)
-                            parsed_image = parse_image_generated_signal(result_str)
-                            if parsed_image:
-                                pending_generated_image = parsed_image
-                                logger.info(f"⚡ 🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
+                            parsed = parse_any_image_signal(result_str)
+                            if parsed:
+                                pending_generated_image = parsed
+                                gen_time = parsed.generation_time
+                                if isinstance(parsed, GeneratedImagePair):
+                                    logger.info(f"⚡ 🎨 Dual images generated in {gen_time}s - will show to agent for review")
+                                else:
+                                    logger.info(f"⚡ 🎨 Image generated in {gen_time}s - will show to agent for review")
                     elif chunk.message_type == 'assistant_message':
                         logger.info(f"⚡ Assistant: {chunk.content[:100]}...")
                     elif chunk.message_type == 'error_message':
@@ -1326,104 +1335,21 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
             # If an image was generated, send it back to the agent for review
             if pending_generated_image:
                 try:
-                    # Track current image and regeneration count for the review loop
-                    current_image = pending_generated_image
-                    regeneration_count = 0
-                    max_regenerations = 5
-
-                    while regeneration_count <= max_regenerations:
-                        logger.info(f"⚡ 🖼️ Sending generated image to agent for visual review (attempt {regeneration_count + 1})...")
-
-                        image_url = current_image.url
-                        image_prompt = current_image.prompt
-                        image_aspect_ratio = current_image.aspect_ratio
-
-                        # Download, save to local storage, and encode image to base64
-                        download_result = download_and_save_image(
-                            url=image_url,
-                            prompt=image_prompt,
-                            aspect_ratio=image_aspect_ratio
+                    context = "Image generated during high-traffic batch processing."
+                    if isinstance(pending_generated_image, GeneratedImagePair):
+                        send_dual_image_review_message(
+                            client=CLIENT, agent_id=umbra_agent.id,
+                            image_pair=pending_generated_image,
+                            context_prompt=context, max_steps=100
                         )
-                        if not download_result:
-                            logger.error(f"⚡ ❌ Failed to download image for review")
-                            break
-                        base64_data, media_type, saved_path = download_result
-
-                        # Create review prompt for high-traffic batch context
-                        image_review_prompt = f"""Here's the generated image for your review.
-
-**Image prompt used:** {image_prompt}
-**Aspect ratio:** {image_aspect_ratio}
-
-Please review the image. If you're satisfied with it, you can post it as a reply using `reply_to_bluesky_post` with the `image_url`, `image_alt`, and `image_aspect_ratio` parameters.
-
-If you're not satisfied, call `generate_image` again with a revised prompt.
-
-Image URL: {image_url}
-"""
-
-                        # Create multimodal content with base64 image
-                        image_content = [
-                            {"type": "text", "text": image_review_prompt},
-                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}
-                        ]
-
-                        # Sleep 1 second to ensure agent state is ready
-                        import time as time_module
-                        time_module.sleep(1)
-
-                        # Send follow-up stream with the image
-                        followup_stream = CLIENT.agents.messages.create_stream(
-                            agent_id=umbra_agent.id,
-                            messages=[{"role": "user", "content": image_content}],
-                            stream_tokens=False,
-                            max_steps=100
+                    else:
+                        send_image_review_message(
+                            client=CLIENT, agent_id=umbra_agent.id,
+                            generated_image=pending_generated_image,
+                            context_prompt=context, max_steps=100
                         )
-
-                        followup_messages = []
-                        new_generated_image = None
-                        for followup_chunk in followup_stream:
-                            followup_messages.append(followup_chunk)
-
-                            # Check for tool calls
-                            if hasattr(followup_chunk, 'tool_call') and followup_chunk.tool_call:
-                                if followup_chunk.tool_call.name == 'reply_to_bluesky_post':
-                                    logger.info(f"⚡ 🎨 Agent posted reply with generated image")
-                                elif followup_chunk.tool_call.name == 'create_new_bluesky_post':
-                                    logger.info(f"⚡ 🎨 Agent posted new post with generated image")
-                                elif followup_chunk.tool_call.name == 'generate_image':
-                                    logger.info(f"⚡ 🔄 Agent requested image regeneration")
-
-                            # Check for tool return with IMAGE_GENERATED signal
-                            if hasattr(followup_chunk, 'message_type') and followup_chunk.message_type == 'tool_return_message':
-                                tool_name = getattr(followup_chunk, 'name', '')
-                                tool_return = getattr(followup_chunk, 'tool_return', '')
-                                if tool_name == 'generate_image' and tool_return:
-                                    tool_return_str = str(tool_return)
-                                    if 'IMAGE_GENERATED|' in tool_return_str:
-                                        parsed = parse_image_generated_signal(tool_return_str)
-                                        if parsed:
-                                            new_generated_image = parsed
-                                            logger.info(f"⚡ 🎨 Agent regenerated image - will show new image for review")
-
-                        logger.info(f"⚡ ✓ Image sent to agent for review ({len(followup_messages)} response messages)")
-
-                        # Check if we should loop for a regenerated image
-                        if new_generated_image:
-                            regeneration_count += 1
-                            if regeneration_count > max_regenerations:
-                                logger.warning(f"⚡ 🎨 Max regenerations ({max_regenerations}) reached, stopping image review loop")
-                                break
-                            current_image = new_generated_image
-                            logger.info(f"⚡ 🎨 Looping back to show regenerated image (attempt {regeneration_count + 1}/{max_regenerations + 1})")
-                            continue
-
-                        # No regeneration requested, we're done with the review loop
-                        break
-
                 except Exception as e:
                     logger.error(f"⚡ Error sending generated image to agent: {e}")
-                    # Continue processing even if follow-up fails
 
             # Detach user blocks
             if attached_handles:
@@ -2136,7 +2062,7 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                                     log_with_panel("Memory block updated", f"Tool result: {tool_name} ✓", "green")
                                 elif tool_name == 'generate_image':
                                     # Check for IMAGE_GENERATED signal using shared parser
-                                    parsed_image = parse_image_generated_signal(result_str)
+                                    parsed_image = parse_any_image_signal(result_str)
                                     if parsed_image:
                                         pending_generated_image = parsed_image
                                         logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
@@ -2364,12 +2290,12 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
                         # Check for generate_image in tool_returns array
                         if tool_return_value:
                             tool_return_str = str(tool_return_value)
-                            if 'IMAGE_GENERATED|' in tool_return_str:
-                                logger.info(f"🎨 Found IMAGE_GENERATED in tool_returns array: {tool_return_str[:200]}...")
-                                parsed_image = parse_image_generated_signal(tool_return_str)
+                            if 'IMAGE_GENERATED|' in tool_return_str or 'IMAGES_GENERATED|' in tool_return_str:
+                                logger.info(f"🎨 Found image signal in tool_returns array: {tool_return_str[:200]}...")
+                                parsed_image = parse_any_image_signal(tool_return_str)
                                 if parsed_image:
                                     pending_generated_image = parsed_image
-                                    logger.info(f"🎨 Image generated successfully - showing to agent for review")
+                                    logger.info(f"🎨 Image(s) generated successfully - showing to agent for review")
 
             # Check for tool return messages by name (simplified detection)
             if hasattr(message, 'name') and hasattr(message, 'tool_return'):
@@ -2378,12 +2304,13 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
 
                 if tool_name == 'generate_image':
                     logger.info(f"🎨 Found generate_image tool return: {tool_return_str[:200]}...")
-                    parsed_image = parse_image_generated_signal(tool_return_str)
+                    parsed_image = parse_any_image_signal(tool_return_str)
                     if parsed_image:
                         pending_generated_image = parsed_image
-                        logger.info(f"🎨 Image generated successfully in {parsed_image.generation_time}s - showing to agent for review")
+                        gen_time = parsed_image.generation_time
+                        logger.info(f"🎨 Image(s) generated successfully in {gen_time}s - showing to agent for review")
                     else:
-                        logger.warning(f"🎨 generate_image tool return doesn't contain valid IMAGE_GENERATED signal: {tool_return_str[:100]}")
+                        logger.warning(f"🎨 generate_image tool return doesn't contain valid image signal: {tool_return_str[:100]}")
 
                 elif tool_name == 'ignore_notification':
                     if 'IGNORED_NOTIFICATION::' in tool_return_str:
@@ -2600,174 +2527,27 @@ COMIND MEMORY: you may record any meaningful moments to the comind network using
         # Send follow-up multimodal message if an image was generated
         if pending_generated_image:
             try:
-                # Build multimodal content with the generated image
-                # Include original notification context so agent can properly continue
                 original_uri = notification_data.get('uri', '')
                 original_cid = notification_data.get('cid', '')
-                original_author = notification_data.get('author', {})
-                original_handle = original_author.get('handle', 'unknown')
-                original_record = notification_data.get('record', {})
-
-                # Track current image and regeneration count for the review loop
-                current_image = pending_generated_image
-                regeneration_count = 0
-                max_regenerations = 5
-
-                while regeneration_count <= max_regenerations:
-                    logger.info(f"🖼️ Sending generated image to agent for visual review (attempt {regeneration_count + 1})...")
-
-                    # Simple, direct prompt following Letta's recommended pattern
-                    image_aspect_ratio = current_image.aspect_ratio
-                    image_review_prompt = (
-                        f"Here's the generated image for your review.\n\n"
-                        f"Review this image and decide:\n"
-                        f"- If satisfied: call reply_to_bluesky_post with uri=\"{original_uri}\", cid=\"{original_cid}\", "
-                        f"image_url=\"{current_image.url}\", image_alt=\"{current_image.prompt}\", "
-                        f"image_aspect_ratio=\"{image_aspect_ratio}\"\n"
-                        f"- If not satisfied: call generate_image again with a revised prompt"
+                context = (
+                    f"Review and decide:\n"
+                    f"- If satisfied: post using uri=\"{original_uri}\", cid=\"{original_cid}\"\n"
+                    f"- If not satisfied: call generate_image again with a revised prompt"
+                )
+                if isinstance(pending_generated_image, GeneratedImagePair):
+                    send_dual_image_review_message(
+                        client=CLIENT, agent_id=umbra_agent.id,
+                        image_pair=pending_generated_image,
+                        context_prompt=context, show_reasoning=True, max_steps=100
                     )
-
-                    # Download, save to local storage, and convert to base64
-                    # This is necessary because Replicate URLs may have .png extension but serve JPEG
-                    download_result = download_and_save_image(
-                        url=current_image.url,
-                        prompt=current_image.prompt,
-                        aspect_ratio=image_aspect_ratio
+                else:
+                    send_image_review_message(
+                        client=CLIENT, agent_id=umbra_agent.id,
+                        generated_image=pending_generated_image,
+                        context_prompt=context, show_reasoning=True, max_steps=100
                     )
-                    if not download_result:
-                        logger.error(f"❌ Failed to download image for review")
-                        print(f"\n❌ Failed to download generated image for review")
-                        raise Exception("Failed to download image for agent review")
-
-                    base64_data, media_type, saved_path = download_result
-                    logger.info(f"🖼️ Prepared image for review ({media_type})")
-
-                    # Create multimodal content with base64 image and correct media type
-                    image_content = [
-                        {"type": "text", "text": image_review_prompt},
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": base64_data
-                            }
-                        }
-                    ]
-
-                    # Small delay to ensure agent state is ready after TerminalToolRule exit
-                    import time as time_module
-                    time_module.sleep(1)
-
-                    # Use streaming to avoid 502/timeout errors (same pattern as notification processing)
-                    followup_stream = CLIENT.agents.messages.create_stream(
-                        agent_id=umbra_agent.id,
-                        messages=[{"role": "user", "content": image_content}],
-                        stream_tokens=False,
-                        max_steps=100
-                    )
-
-                    # Collect streaming response and display it
-                    followup_messages = []
-                    new_generated_image = None
-                    print(f"\n🖼️ Image Review" + (f" (regeneration {regeneration_count})" if regeneration_count > 0 else ""))
-                    print(f"  ─────────────")
-                    for chunk in followup_stream:
-                        msg_type = getattr(chunk, 'message_type', 'NO_TYPE')
-
-                        # Handle error messages
-                        if msg_type == 'error_message':
-                            error_msg = getattr(chunk, 'message', None)
-                            error_detail = getattr(chunk, 'detail', None)
-                            logger.error(f"❌ Image review error: {error_msg} - {error_detail}")
-                            print(f"\n❌ Image Review Error: {error_msg or error_detail or 'Unknown error'}")
-                        if hasattr(chunk, 'message_type'):
-                            if chunk.message_type == 'reasoning_message':
-                                reasoning = getattr(chunk, 'reasoning', '')
-                                if reasoning:
-                                    print(f"\n◆ Image Review Reasoning")
-                                    print(f"  ─────────────────────")
-                                    for line in reasoning.split('\n'):
-                                        print(f"  {line}")
-                            elif chunk.message_type == 'assistant_message':
-                                content = getattr(chunk, 'content', '')
-                                if content:
-                                    print(f"\n▶ Agent Response (Image Review)")
-                                    print(f"  ──────────────────────────────")
-                                    for line in content.split('\n'):
-                                        print(f"  {line}")
-                            elif chunk.message_type == 'tool_call_message':
-                                tool_call = getattr(chunk, 'tool_call', None)
-                                if tool_call:
-                                    tool_name = tool_call.name
-                                    print(f"\n⚙ Tool call: {tool_name}")
-                                    try:
-                                        args = json.loads(tool_call.arguments)
-                                        if tool_name in ['reply_to_bluesky_post', 'create_new_bluesky_post']:
-                                            texts = args.get('text', [])
-                                            if texts:
-                                                print(f"  ─────────────")
-                                                for i, text in enumerate(texts, 1):
-                                                    print(f"  [{i}] {text}")
-                                            if args.get('image_url'):
-                                                print(f"  📎 Image attached: {args.get('image_url', '')[:50]}...")
-                                        elif tool_name == 'generate_image':
-                                            print(f"  🔄 Regenerating image...")
-                                    except:
-                                        pass
-                            elif chunk.message_type == 'tool_return_message':
-                                status = getattr(chunk, 'status', '')
-                                tool_name = getattr(chunk, 'name', 'unknown')
-                                tool_return = getattr(chunk, 'tool_return', '')
-                                if status == 'success':
-                                    log_with_panel("Success", f"Tool result: {tool_name} ✓", "green")
-                                    # Check for generate_image tool return with new IMAGE_GENERATED signal
-                                    if tool_name == 'generate_image':
-                                        tool_return_str = str(tool_return)
-                                        if 'IMAGE_GENERATED|' in tool_return_str:
-                                            parsed = parse_image_generated_signal(tool_return_str)
-                                            if parsed:
-                                                new_generated_image = parsed
-                                                logger.info(f"🎨 Agent regenerated image - will show new image for review")
-                                elif status == 'error':
-                                    error_msg = str(tool_return)[:100]
-                                    log_with_panel(f"Error: {error_msg}", f"Tool result: {tool_name} ✗", "red")
-                            followup_messages.append(chunk)
-
-                        # Check for 'done' signal (like main streaming loop)
-                        if str(chunk) == 'done':
-                            break
-
-                    logger.info(f"✓ Image sent to agent for review ({len(followup_messages)} response messages)")
-
-                    # Process the follow-up response for any tool calls
-                    for followup_message in followup_messages:
-                        # Check for reply_to_bluesky_post with the image
-                        if hasattr(followup_message, 'tool_call') and followup_message.tool_call:
-                            if followup_message.tool_call.name == 'reply_to_bluesky_post':
-                                direct_reply_posted = True
-                                logger.info(f"🎨 Agent posted reply with generated image")
-                            elif followup_message.tool_call.name == 'create_new_bluesky_post':
-                                direct_reply_posted = True
-                                logger.info(f"🎨 Agent posted new post with generated image")
-
-                    # Check if we should loop for a regenerated image
-                    if new_generated_image:
-                        regeneration_count += 1
-                        if regeneration_count > max_regenerations:
-                            logger.warning(f"🎨 Max regenerations ({max_regenerations}) reached, stopping image review loop")
-                            print(f"\n⚠️ Max regenerations reached")
-                            break
-                        current_image = new_generated_image
-                        logger.info(f"🎨 Looping back to show regenerated image (attempt {regeneration_count + 1}/{max_regenerations + 1})")
-                        continue
-
-                    # No regeneration requested, we're done with the review loop
-                    break
-
             except Exception as e:
                 logger.error(f"Error sending generated image to agent: {e}")
-                # Continue processing even if follow-up fails
 
         # Mark all notifications in the consecutive chain as processed to prevent duplicates
         # This handles the case where multiple notifications point to the same chain
