@@ -72,7 +72,7 @@ class EmbeddingGenerator:
                     json={
                         "model": self.model,
                         "input": text,
-                        "keep_alive": "5m",
+                        "keep_alive": "30s",
                     },
                     timeout=self.timeout,
                 )
@@ -143,7 +143,7 @@ class EmbeddingGenerator:
                     json={
                         "model": self.model,
                         "input": texts,
-                        "keep_alive": "5m",
+                        "keep_alive": "30s",
                     },
                     timeout=self.timeout,
                 )

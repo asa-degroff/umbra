@@ -154,7 +154,7 @@ Queries:"""
                     'model': model,
                     'messages': [{'role': 'user', 'content': prompt}],
                     'stream': False,
-                    'keep_alive': '5m',
+                    'keep_alive': '30s',
                     'options': {
                         'temperature': self.temperature,
                         'num_predict': 4096,

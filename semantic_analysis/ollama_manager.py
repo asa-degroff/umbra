@@ -181,6 +181,18 @@ class OllamaModelManager:
         except requests.RequestException as e:
             logger.warning(f"Unload {model_name} failed: {e}")
 
+    def release(self) -> None:
+        """Immediately unload whatever model is currently active.
+        
+        Call this when Umbra is done with Ollama to free VRAM for other programs.
+        """
+        with self._lock:
+            if self._active_type is not None:
+                model = self._model_name(self._active_type)
+                self._unload(model)
+                logger.info(f"Released {self._active_type} model ({model}) — VRAM freed")
+                self._active_type = None
+
     @property
     def active_type(self) -> str | None:
         return self._active_type

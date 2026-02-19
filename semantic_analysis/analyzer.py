@@ -407,7 +407,7 @@ Be concrete and specific, not generic. The agent should be able to act on your g
                     "model": self.llm_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "keep_alive": "5m",
+                    "keep_alive": "30s",
                     "options": {
                         "temperature": 0.7,
                         "num_predict": 4096,

@@ -708,6 +708,12 @@ class FrontierService:
         except Exception as e:
             logger.error(f"Error in source discovery: {e}")
             return {"error": str(e), "status": "error"}
+        finally:
+            try:
+                from semantic_analysis.ollama_manager import ollama_manager
+                ollama_manager.release()
+            except Exception:
+                pass
 
     def _run_discovery_background(self, **kwargs):
         """Execute discovery in a background thread."""
@@ -719,6 +725,12 @@ class FrontierService:
         finally:
             with _discovery_lock:
                 _discovery_running = False
+            # Release Ollama model to free VRAM for other programs
+            try:
+                from semantic_analysis.ollama_manager import ollama_manager
+                ollama_manager.release()
+            except Exception:
+                pass
     
     def rate_source(self, source_id: int, rating: int) -> dict:
         """Rate a source and apply feedback to the relevance analyzer."""

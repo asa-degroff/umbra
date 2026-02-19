@@ -358,7 +358,7 @@ class InterestSeedDetector:
                     "model": self.llm_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "keep_alive": "5m",
+                    "keep_alive": "30s",
                     "options": {
                         "temperature": 0.3,
                         "num_predict": 4096,

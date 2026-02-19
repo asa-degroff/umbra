@@ -1954,5 +1954,12 @@ Your zeitgeist block has been updated with this guidance."""
         logger.error(f"Error in semantic analysis: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        # Release Ollama model immediately to free VRAM for other programs (e.g., vision bot)
+        try:
+            from semantic_analysis.ollama_manager import ollama_manager
+            ollama_manager.release()
+        except Exception:
+            pass
 
 
