@@ -595,6 +595,7 @@ class NotificationDB:
             SELECT MAX(indexed_at) as latest
             FROM notifications
             WHERE status IN ('processed', 'ignored', 'no_reply', 'error')
+            AND (auto_debounced IS NULL OR auto_debounced = 0)
         """)
         row = cursor.fetchone()
         return row['latest'] if row and row['latest'] else None
