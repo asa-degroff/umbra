@@ -59,32 +59,43 @@ class EmbeddingGenerator:
         Returns:
             Embedding vector as list of floats
         """
-        try:
-            from semantic_analysis.ollama_manager import ollama_manager
-            ollama_manager.ensure_model("embed")
+        import time as _time
+        from semantic_analysis.ollama_manager import ollama_manager
 
-            resp = self.session.post(
-                f"{self.ollama_url}/api/embed",
-                json={
-                    "model": self.model,
-                    "input": text,
-                    "keep_alive": "5m",
-                },
-                timeout=self.timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            
-            # Ollama returns embeddings in 'embeddings' key as list of lists
-            embeddings = data.get('embeddings', [])
-            if embeddings and len(embeddings) > 0:
-                return embeddings[0]
-            
-            raise ValueError(f"No embeddings returned: {data}")
-            
-        except requests.RequestException as e:
-            logger.error(f"Embedding request failed: {e}")
-            raise
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                ollama_manager.ensure_model("embed")
+
+                resp = self.session.post(
+                    f"{self.ollama_url}/api/embed",
+                    json={
+                        "model": self.model,
+                        "input": text,
+                        "keep_alive": "5m",
+                    },
+                    timeout=self.timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                # Ollama returns embeddings in 'embeddings' key as list of lists
+                embeddings = data.get('embeddings', [])
+                if embeddings and len(embeddings) > 0:
+                    return embeddings[0]
+
+                raise ValueError(f"No embeddings returned: {data}")
+
+            except requests.RequestException as e:
+                if attempt < max_retries - 1:
+                    wait = 5 * (attempt + 1)
+                    logger.warning(f"Embedding request failed (attempt {attempt + 1}/{max_retries}), retrying in {wait}s: {e}")
+                    _time.sleep(wait)
+                    # Reset active type so ensure_model re-checks
+                    ollama_manager._active_type = None
+                else:
+                    logger.error(f"Embedding request failed after {max_retries} attempts: {e}")
+                    raise
     
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """
@@ -117,37 +128,47 @@ class EmbeddingGenerator:
         """
         Internal batch embedding (single API call).
         
-        Ollama's /api/embed supports batch input.
+        Ollama's /api/embed supports batch input. Retries on transient failures.
         """
-        try:
-            from semantic_analysis.ollama_manager import ollama_manager
-            ollama_manager.ensure_model("embed")
+        import time as _time
+        from semantic_analysis.ollama_manager import ollama_manager
 
-            resp = self.session.post(
-                f"{self.ollama_url}/api/embed",
-                json={
-                    "model": self.model,
-                    "input": texts,
-                    "keep_alive": "5m",
-                },
-                timeout=self.timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            
-            embeddings = data.get('embeddings', [])
-            if len(embeddings) != len(texts):
-                raise ValueError(
-                    f"Embedding count mismatch: got {len(embeddings)}, expected {len(texts)}"
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                ollama_manager.ensure_model("embed")
+
+                resp = self.session.post(
+                    f"{self.ollama_url}/api/embed",
+                    json={
+                        "model": self.model,
+                        "input": texts,
+                        "keep_alive": "5m",
+                    },
+                    timeout=self.timeout,
                 )
+                resp.raise_for_status()
+                data = resp.json()
 
-            return embeddings
-            
-        except requests.RequestException as e:
-            logger.error(f"Batch embedding request failed: {e}")
-            # Fall back to individual requests
-            logger.info("Falling back to individual embedding requests")
-            return [self.embed_single(t) for t in texts]
+                embeddings = data.get('embeddings', [])
+                if len(embeddings) != len(texts):
+                    raise ValueError(
+                        f"Embedding count mismatch: got {len(embeddings)}, expected {len(texts)}"
+                    )
+
+                return embeddings
+
+            except requests.RequestException as e:
+                if attempt < max_retries - 1:
+                    wait = 5 * (attempt + 1)
+                    logger.warning(f"Batch embedding failed (attempt {attempt + 1}/{max_retries}), retrying in {wait}s: {e}")
+                    _time.sleep(wait)
+                    ollama_manager._active_type = None
+                else:
+                    logger.error(f"Batch embedding failed after {max_retries} attempts: {e}")
+                    # Fall back to individual requests
+                    logger.info("Falling back to individual embedding requests")
+                    return [self.embed_single(t) for t in texts]
     
     def is_available(self) -> bool:
         """Check if the Ollama server and model are available."""
