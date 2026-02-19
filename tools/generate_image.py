@@ -13,23 +13,6 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-# Aspect ratio → (width, height) at 2K resolution for Seedream 4.5
-# Seedream uses size="custom" with explicit dimensions for aspect ratio control
-SEEDREAM_DIMENSIONS = {
-    "1:1":  (2048, 2048),
-    "16:9": (2048, 1152),
-    "9:16": (1152, 2048),
-    "4:3":  (2048, 1536),
-    "3:4":  (1536, 2048),
-    "3:2":  (2048, 1365),
-    "2:3":  (1365, 2048),
-    "4:5":  (1638, 2048),
-    "5:4":  (2048, 1638),
-    "2:1":  (2048, 1024),
-    "1:2":  (1024, 2048),
-}
-
-
 class GenerateImageArgs(BaseModel):
     """Arguments for generating an AI image."""
 
@@ -62,56 +45,6 @@ class GenerateImageArgs(BaseModel):
         return v
 
 
-def _run_lucid_origin(replicate_client, prompt: str, aspect_ratio: str) -> dict:
-    """Run Leonardo AI Lucid Origin model. Returns dict with url, model, error."""
-    try:
-        output = replicate_client.run(
-            "leonardoai/lucid-origin",
-            input={
-                "prompt": prompt,
-                "aspect_ratio": aspect_ratio,
-                "num_images": 1,
-                "style": "none",
-                "contrast": "medium",
-                "generation_mode": "standard",
-                "prompt_enhance": True,
-            }
-        )
-        if not output:
-            return {"model": "lucid_origin", "url": None, "error": "Empty response"}
-        url = str(output[0]) if hasattr(output[0], '__str__') else output[0]
-        if not url or not url.startswith("http"):
-            return {"model": "lucid_origin", "url": None, "error": f"Invalid URL: {url}"}
-        return {"model": "lucid_origin", "url": url, "error": None}
-    except Exception as e:
-        return {"model": "lucid_origin", "url": None, "error": str(e)}
-
-
-def _run_seedream(replicate_client, prompt: str, aspect_ratio: str) -> dict:
-    """Run ByteDance Seedream 4.5 model. Returns dict with url, model, error."""
-    try:
-        width, height = SEEDREAM_DIMENSIONS.get(aspect_ratio, (2048, 2048))
-        output = replicate_client.run(
-            "bytedance/seedream-4.5",
-            input={
-                "prompt": prompt,
-                "size": "custom",
-                "width": width,
-                "height": height,
-                "max_images": 1,
-                "sequential_image_generation": "disabled",
-            }
-        )
-        if not output:
-            return {"model": "seedream", "url": None, "error": "Empty response"}
-        url = str(output[0]) if hasattr(output[0], '__str__') else output[0]
-        if not url or not url.startswith("http"):
-            return {"model": "seedream", "url": None, "error": f"Invalid URL: {url}"}
-        return {"model": "seedream", "url": url, "error": None}
-    except Exception as e:
-        return {"model": "seedream", "url": None, "error": str(e)}
-
-
 def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
     """
     Generate AI images using two models concurrently: Lucid Origin and Seedream 4.5.
@@ -138,6 +71,7 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
     import os
     import time
     import concurrent.futures
+    import replicate
 
     # Validate inputs
     if not prompt or not prompt.strip():
@@ -157,78 +91,123 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
             "Please add your Replicate API token to config.yaml under image_generation.replicate_api_token"
         )
 
+    replicate_client = replicate.Client(api_token=api_token)
+
+    # Seedream 4.5 aspect ratio → (width, height) at 2K resolution
+    seedream_dims = {
+        "1:1":  (2048, 2048), "16:9": (2048, 1152), "9:16": (1152, 2048),
+        "4:3":  (2048, 1536), "3:4":  (1536, 2048), "3:2":  (2048, 1365),
+        "2:3":  (1365, 2048), "4:5":  (1638, 2048), "5:4":  (2048, 1638),
+        "2:1":  (2048, 1024), "1:2":  (1024, 2048),
+    }
+
+    # --- Model runner closures (not named functions, to avoid Letta name detection) ---
+    run_lucid = lambda: None  # placeholder
+    run_seedream = lambda: None  # placeholder
+
+    # Lucid Origin runner
+    lucid_result = {"model": "lucid_origin", "url": None, "error": None}
+    seedream_result = {"model": "seedream", "url": None, "error": None}
+
+    start_time = time.time()
+
+    # Run Lucid Origin
     try:
-        import replicate
-
-        replicate_client = replicate.Client(api_token=api_token)
-
-        start_time = time.time()
-
-        # Run both models concurrently
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            lucid_future = executor.submit(_run_lucid_origin, replicate_client, prompt, aspect_ratio)
-            seedream_future = executor.submit(_run_seedream, replicate_client, prompt, aspect_ratio)
-
-            lucid_result = lucid_future.result(timeout=300)
-            seedream_result = seedream_future.result(timeout=300)
-
-        generation_time = time.time() - start_time
-
-        # Check results
-        lucid_url = lucid_result.get("url")
-        seedream_url = seedream_result.get("url")
-
-        if not lucid_url and not seedream_url:
-            errors = []
-            if lucid_result.get("error"):
-                errors.append(f"Lucid Origin: {lucid_result['error']}")
-            if seedream_result.get("error"):
-                errors.append(f"Seedream 4.5: {seedream_result['error']}")
-            raise Exception(f"Both models failed. {'; '.join(errors)}")
-
-        # Build signal — new format: IMAGES_GENERATED|lucid_url|seedream_url|prompt|aspect_ratio|time
-        # Use "NONE" for URLs that failed
-        signal_prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('|', '-')
-        signal = (
-            f"IMAGES_GENERATED"
-            f"|{lucid_url or 'NONE'}"
-            f"|{seedream_url or 'NONE'}"
-            f"|{signal_prompt}"
-            f"|{aspect_ratio}"
-            f"|{generation_time:.1f}"
+        lucid_output = replicate_client.run(
+            "leonardoai/lucid-origin",
+            input={
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "num_images": 1,
+                "style": "none",
+                "contrast": "medium",
+                "generation_mode": "standard",
+                "prompt_enhance": True,
+            }
         )
-
-        # Build human-readable instructions
-        lines = [f"\n\n---\nImages generated in {generation_time:.1f}s!\n"]
-
-        if lucid_url:
-            lines.append(f"**Lucid Origin** (abstract/artistic): {lucid_url}")
+        if lucid_output:
+            url = str(lucid_output[0])
+            if url and url.startswith("http"):
+                lucid_result["url"] = url
+            else:
+                lucid_result["error"] = f"Invalid URL: {url}"
         else:
-            lines.append(f"**Lucid Origin**: Failed — {lucid_result.get('error', 'unknown error')}")
-
-        if seedream_url:
-            lines.append(f"**Seedream 4.5** (text/diagrams/realistic): {seedream_url}")
-        else:
-            lines.append(f"**Seedream 4.5**: Failed — {seedream_result.get('error', 'unknown error')}")
-
-        lines.append("")
-        lines.append("To post your favorite, use reply_to_bluesky_post or create_new_bluesky_post with:")
-        lines.append("- image_url: <chosen URL>")
-        lines.append("- image_alt: <prompt>")
-        lines.append("")
-        lines.append("To post BOTH images in one post, use:")
-        lines.append("- image_url: <first URL>")
-        lines.append("- image_url_2: <second URL>")
-        lines.append("- image_alt / image_alt_2: alt text for each")
-
-        return signal + "\n".join(lines)
-
-    except ImportError:
-        raise Exception(
-            "The 'replicate' package is not installed. "
-            "Please install it with: uv pip install replicate"
-        )
+            lucid_result["error"] = "Empty response"
     except Exception as e:
-        if "IMAGES_GENERATED|" in str(e) or "IMAGE_GENERATED|" in str(e):
-            raise
-        raise Exception(f"Failed to generate images: {str(e)}")
+        lucid_result["error"] = str(e)
+
+    # Run Seedream 4.5
+    try:
+        sw, sh = seedream_dims.get(aspect_ratio, (2048, 2048))
+        seedream_output = replicate_client.run(
+            "bytedance/seedream-4.5",
+            input={
+                "prompt": prompt,
+                "size": "custom",
+                "width": sw,
+                "height": sh,
+                "max_images": 1,
+                "sequential_image_generation": "disabled",
+            }
+        )
+        if seedream_output:
+            url = str(seedream_output[0])
+            if url and url.startswith("http"):
+                seedream_result["url"] = url
+            else:
+                seedream_result["error"] = f"Invalid URL: {url}"
+        else:
+            seedream_result["error"] = "Empty response"
+    except Exception as e:
+        seedream_result["error"] = str(e)
+
+    generation_time = time.time() - start_time
+
+    # Check results
+    lucid_url = lucid_result.get("url")
+    seedream_url = seedream_result.get("url")
+
+    if not lucid_url and not seedream_url:
+        errors = []
+        if lucid_result.get("error"):
+            errors.append(f"Lucid Origin: {lucid_result['error']}")
+        if seedream_result.get("error"):
+            errors.append(f"Seedream 4.5: {seedream_result['error']}")
+        raise Exception(f"Both models failed. {'; '.join(errors)}")
+
+    # Build signal — format: IMAGES_GENERATED|lucid_url|seedream_url|prompt|aspect_ratio|time
+    # Use "NONE" for URLs that failed
+    signal_prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('|', '-')
+    signal = (
+        f"IMAGES_GENERATED"
+        f"|{lucid_url or 'NONE'}"
+        f"|{seedream_url or 'NONE'}"
+        f"|{signal_prompt}"
+        f"|{aspect_ratio}"
+        f"|{generation_time:.1f}"
+    )
+
+    # Build human-readable instructions
+    lines = [f"\n\n---\nImages generated in {generation_time:.1f}s!\n"]
+
+    if lucid_url:
+        lines.append(f"**Lucid Origin** (abstract/artistic): {lucid_url}")
+    else:
+        lines.append(f"**Lucid Origin**: Failed — {lucid_result.get('error', 'unknown error')}")
+
+    if seedream_url:
+        lines.append(f"**Seedream 4.5** (text/diagrams/realistic): {seedream_url}")
+    else:
+        lines.append(f"**Seedream 4.5**: Failed — {seedream_result.get('error', 'unknown error')}")
+
+    lines.append("")
+    lines.append("To post your favorite, use reply_to_bluesky_post or create_new_bluesky_post with:")
+    lines.append("- image_url: <chosen URL>")
+    lines.append("- image_alt: <prompt>")
+    lines.append("")
+    lines.append("To post BOTH images in one post, use:")
+    lines.append("- image_url: <first URL>")
+    lines.append("- image_url_2: <second URL>")
+    lines.append("- image_alt / image_alt_2: alt text for each")
+
+    return signal + "\n".join(lines)

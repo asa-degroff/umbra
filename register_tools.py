@@ -142,7 +142,8 @@ TOOL_CONFIGS = [
         "func": generate_image,
         "args_schema": GenerateImageArgs,
         "description": "Generate an AI image using Leonardo Lucid Origin. Returns URL for review - use with post/reply tools to attach.",
-        "tags": ["image", "generation", "ai", "creative", "art"]
+        "tags": ["image", "generation", "ai", "creative", "art"],
+        "pip_requirements": [{"name": "replicate"}]
     },
     {
         "func": comind_records,
