@@ -22,3 +22,5 @@ generated_images/
 *.db
 *.sqlite3
 data/
+data/cache/zones.json
+data/cache/seeds.json
