@@ -18,7 +18,11 @@ from datetime import datetime, date, timezone, timedelta
 
 from letta_client import Letta
 import bsky_utils
-from image_utils import parse_image_generated_signal, send_image_review_message
+from image_utils import (
+    parse_image_generated_signal, parse_any_image_signal,
+    send_image_review_message, send_dual_image_review_message,
+    GeneratedImage, GeneratedImagePair,
+)
 
 # Module-level configuration
 SHOW_REASONING = False
@@ -1173,14 +1177,20 @@ then you can update your curiosities block with anything else you want to explor
                     status = getattr(chunk, 'status', '')
 
                     if status == 'success':
-                        # Check for IMAGE_GENERATED signal from generate_image tool
+                        # Check for IMAGE_GENERATED / IMAGES_GENERATED signal
                         if tool_name == 'generate_image':
                             result_str = str(getattr(chunk, 'tool_return', ''))
-                            parsed_image = parse_image_generated_signal(result_str)
+                            parsed_image = parse_any_image_signal(result_str)
                             if parsed_image:
                                 pending_generated_image = parsed_image
-                                logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
-                                log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
+                                gen_time = parsed_image.generation_time
+                                if isinstance(parsed_image, GeneratedImagePair):
+                                    count = parsed_image.available_count
+                                    logger.info(f"🎨 {count} image(s) generated in {gen_time}s - will show to agent for review")
+                                    log_with_panel(f"Generated {count} image(s) ready for review", "Images Generated \u2713", "magenta")
+                                else:
+                                    logger.info(f"🎨 Image generated in {gen_time}s - will show to agent for review")
+                                    log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
                             else:
                                 log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
                         else:
@@ -1199,19 +1209,30 @@ then you can update your curiosities block with anything else you want to explor
         # Send follow-up multimodal message if an image was generated
         if pending_generated_image:
             context_prompt = (
-                "Review this image and decide:\n"
+                "Review the generated image(s) and decide:\n"
                 "- If satisfied: call create_new_bluesky_post with the image_url, image_alt, "
                 "image_aspect_ratio parameters, and your caption text\n"
+                "- To post BOTH images: use image_url + image_url_2\n"
                 "- If not satisfied: call generate_image again with a revised prompt"
             )
-            send_image_review_message(
-                client=client,
-                agent_id=agent_id,
-                generated_image=pending_generated_image,
-                context_prompt=context_prompt,
-                show_reasoning=SHOW_REASONING,
-                max_steps=50
-            )
+            if isinstance(pending_generated_image, GeneratedImagePair):
+                send_dual_image_review_message(
+                    client=client,
+                    agent_id=agent_id,
+                    image_pair=pending_generated_image,
+                    context_prompt=context_prompt,
+                    show_reasoning=SHOW_REASONING,
+                    max_steps=50
+                )
+            else:
+                send_image_review_message(
+                    client=client,
+                    agent_id=agent_id,
+                    generated_image=pending_generated_image,
+                    context_prompt=context_prompt,
+                    show_reasoning=SHOW_REASONING,
+                    max_steps=50
+                )
 
         logger.info("Curiosities exploration message processed successfully")
 
@@ -1289,14 +1310,20 @@ then you can update your curiosities block with anything else you want to explor
                     status = getattr(chunk, 'status', '')
 
                     if status == 'success':
-                        # Check for IMAGE_GENERATED signal from generate_image tool
+                        # Check for IMAGE_GENERATED / IMAGES_GENERATED signal
                         if tool_name == 'generate_image':
                             result_str = str(getattr(chunk, 'tool_return', ''))
-                            parsed_image = parse_image_generated_signal(result_str)
+                            parsed_image = parse_any_image_signal(result_str)
                             if parsed_image:
                                 pending_generated_image = parsed_image
-                                logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
-                                log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
+                                gen_time = parsed_image.generation_time
+                                if isinstance(parsed_image, GeneratedImagePair):
+                                    count = parsed_image.available_count
+                                    logger.info(f"🎨 {count} image(s) generated in {gen_time}s - will show to agent for review")
+                                    log_with_panel(f"Generated {count} image(s) ready for review", "Images Generated \u2713", "magenta")
+                                else:
+                                    logger.info(f"🎨 Image generated in {gen_time}s - will show to agent for review")
+                                    log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
                             else:
                                 log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
                         else:
@@ -1315,19 +1342,30 @@ then you can update your curiosities block with anything else you want to explor
         # Send follow-up multimodal message if an image was generated
         if pending_generated_image:
             context_prompt = (
-                "Review this image and decide:\n"
+                "Review the generated image(s) and decide:\n"
                 "- If satisfied: call create_new_bluesky_post with the image_url, image_alt, "
                 "image_aspect_ratio parameters, and your caption text\n"
+                "- To post BOTH images: use image_url + image_url_2\n"
                 "- If not satisfied: call generate_image again with a revised prompt"
             )
-            send_image_review_message(
-                client=client,
-                agent_id=agent_id,
-                generated_image=pending_generated_image,
-                context_prompt=context_prompt,
-                show_reasoning=SHOW_REASONING,
-                max_steps=50
-            )
+            if isinstance(pending_generated_image, GeneratedImagePair):
+                send_dual_image_review_message(
+                    client=client,
+                    agent_id=agent_id,
+                    image_pair=pending_generated_image,
+                    context_prompt=context_prompt,
+                    show_reasoning=SHOW_REASONING,
+                    max_steps=50
+                )
+            else:
+                send_image_review_message(
+                    client=client,
+                    agent_id=agent_id,
+                    generated_image=pending_generated_image,
+                    context_prompt=context_prompt,
+                    show_reasoning=SHOW_REASONING,
+                    max_steps=50
+                )
 
         logger.info("World exploration message processed successfully")
 
@@ -1652,14 +1690,20 @@ once done, you  may also choose to create a comind reflection to capture this mo
                     status = getattr(chunk, 'status', '')
 
                     if status == 'success':
-                        # Check for IMAGE_GENERATED signal from generate_image tool
+                        # Check for IMAGE_GENERATED / IMAGES_GENERATED signal
                         if tool_name == 'generate_image':
                             result_str = str(getattr(chunk, 'tool_return', ''))
-                            parsed_image = parse_image_generated_signal(result_str)
+                            parsed_image = parse_any_image_signal(result_str)
                             if parsed_image:
                                 pending_generated_image = parsed_image
-                                logger.info(f"🎨 Image generated in {parsed_image.generation_time}s - will show to agent for review")
-                                log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
+                                gen_time = parsed_image.generation_time
+                                if isinstance(parsed_image, GeneratedImagePair):
+                                    count = parsed_image.available_count
+                                    logger.info(f"🎨 {count} image(s) generated in {gen_time}s - will show to agent for review")
+                                    log_with_panel(f"Generated {count} image(s) ready for review", "Images Generated \u2713", "magenta")
+                                else:
+                                    logger.info(f"🎨 Image generated in {gen_time}s - will show to agent for review")
+                                    log_with_panel(f"Generated image ready for review\nURL: {parsed_image.url[:60]}...", "Image Generated \u2713", "magenta")
                             else:
                                 log_with_panel("Success", f"Tool result: {tool_name} \u2713", "green")
                         else:
@@ -1678,19 +1722,30 @@ once done, you  may also choose to create a comind reflection to capture this mo
         # Send follow-up multimodal message if an image was generated
         if pending_generated_image:
             context_prompt = (
-                "Review this image and decide:\n"
+                "Review the generated image(s) and decide:\n"
                 "- If satisfied: call create_new_bluesky_post with the image_url, image_alt, "
                 "image_aspect_ratio parameters, and your caption text\n"
+                "- To post BOTH images: use image_url + image_url_2\n"
                 "- If not satisfied: call generate_image again with a revised prompt"
             )
-            send_image_review_message(
-                client=client,
-                agent_id=agent_id,
-                generated_image=pending_generated_image,
-                context_prompt=context_prompt,
-                show_reasoning=SHOW_REASONING,
-                max_steps=50
-            )
+            if isinstance(pending_generated_image, GeneratedImagePair):
+                send_dual_image_review_message(
+                    client=client,
+                    agent_id=agent_id,
+                    image_pair=pending_generated_image,
+                    context_prompt=context_prompt,
+                    show_reasoning=SHOW_REASONING,
+                    max_steps=50
+                )
+            else:
+                send_image_review_message(
+                    client=client,
+                    agent_id=agent_id,
+                    generated_image=pending_generated_image,
+                    context_prompt=context_prompt,
+                    show_reasoning=SHOW_REASONING,
+                    max_steps=50
+                )
 
         logger.info("Creative expression message processed successfully")
 

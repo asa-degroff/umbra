@@ -3992,7 +3992,9 @@ def main():
     parser.add_argument('--no-comind-reflection', action='store_true', help='Disable comind reflection')
     parser.add_argument('--retry-last', action='store_true', help='Retry the last attempted notification and exit')
     parser.add_argument('--run-task', type=str, metavar='TASK_NAME',
-                        help='Immediately run a scheduled task and exit (e.g., daily_review, synthesis, feed_engagement)')
+                        help='Immediately run a scheduled task, then continue normal operation (e.g., daily_review, synthesis, feed_engagement)')
+    parser.add_argument('--exit-after-task', action='store_true',
+                        help='Exit after running the task specified by --run-task (default: continue running)')
     args = parser.parse_args()
 
     # Initialize configuration with custom path
@@ -4308,7 +4310,9 @@ def main():
             import traceback
             traceback.print_exc()
 
-        return  # Exit after task execution
+        if args.exit_after_task:
+            return  # Exit after task execution
+        logger.info("Continuing to normal operation...")
 
     # Synthesis-only mode
     if SYNTHESIS_ONLY:
