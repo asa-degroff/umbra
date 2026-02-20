@@ -80,6 +80,7 @@ class QueryGenerator:
         focus_topics: Optional[list[str]] = None,
         seed_label: Optional[str] = None,
         seed_texts: Optional[list[str]] = None,
+        event_emitter=None,
     ) -> list[str]:
         """
         Generate search queries based on frontier zone context.
@@ -90,6 +91,7 @@ class QueryGenerator:
             focus_topics: Optional topic hints to guide generation
             seed_label: Optional interest seed label for targeted queries
             seed_texts: Optional representative texts from the seed
+            event_emitter: Optional DiscoveryEventEmitter for live progress
 
         Returns:
             List of search query strings
@@ -167,6 +169,20 @@ Queries:"""
             result = response.json().get('message', {}).get('content', '')
             queries = self._parse_queries(result, num_queries)
 
+            # Emit LLM detail event for dashboard visibility
+            if event_emitter:
+                try:
+                    event_emitter.llm_detail(
+                        prompt=prompt,
+                        raw_response=result,
+                        parsed_queries=queries,
+                        model=model,
+                        is_fallback=False,
+                        seed_label=seed_label,
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to emit llm_detail: {e}")
+
             if queries:
                 self.using_fallback = False
                 logger.info(f"Generated {len(queries)} LLM queries: {queries}")
@@ -179,7 +195,23 @@ Queries:"""
             logger.warning(f"LLM query generation failed ({e}), using keyword fallback")
 
         self.using_fallback = True
-        return self._fallback_queries(nearby_posts, num_queries, seed_label=seed_label, seed_texts=seed_texts)
+        fallback_queries = self._fallback_queries(nearby_posts, num_queries, seed_label=seed_label, seed_texts=seed_texts)
+
+        # Emit fallback detail so the dashboard shows what happened
+        if event_emitter:
+            try:
+                event_emitter.llm_detail(
+                    prompt=prompt if 'prompt' in locals() else "(LLM failed before prompt was built)",
+                    raw_response="(fallback: LLM unavailable or returned no parseable queries)",
+                    parsed_queries=fallback_queries,
+                    model=self.model,
+                    is_fallback=True,
+                    seed_label=seed_label,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to emit fallback llm_detail: {e}")
+
+        return fallback_queries
     
     def _parse_queries(self, response: str, expected: int) -> list[str]:
         """Parse LLM response to extract query strings."""

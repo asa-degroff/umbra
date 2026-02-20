@@ -226,6 +226,7 @@ class SourceDiscovery:
                     num_queries=queries_per_zone,
                     seed_label=seed_label,
                     seed_texts=seed_texts,
+                    event_emitter=event_emitter,
                 )
                 
                 if not queries:
@@ -472,6 +473,7 @@ class SourceDiscovery:
                     num_queries=queries_per_zone,
                     seed_label=outlier.label,
                     seed_texts=outlier.representative_texts,
+                    event_emitter=event_emitter,
                 )
 
                 if not queries:

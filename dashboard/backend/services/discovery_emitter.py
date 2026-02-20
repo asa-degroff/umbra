@@ -119,6 +119,25 @@ class DiscoveryEventEmitter:
             "is_fallback": is_fallback,
         })
 
+    def llm_detail(
+        self,
+        prompt: str,
+        raw_response: str,
+        parsed_queries: list[str],
+        model: str,
+        is_fallback: bool = False,
+        seed_label: Optional[str] = None,
+    ):
+        """Emit full LLM prompt and response for dashboard inspection."""
+        self.emit("discovery:llm_detail", {
+            "prompt": prompt,
+            "raw_response": raw_response,
+            "parsed_queries": parsed_queries,
+            "model": model,
+            "is_fallback": is_fallback,
+            "seed_label": seed_label,
+        })
+
     def provider_searching(self, provider: str, query: str):
         self.emit("discovery:provider_searching", {
             "provider": provider,

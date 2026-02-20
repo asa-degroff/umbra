@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   X, Brain, Sparkles, Search, BookOpen, CheckCircle,
   AlertCircle, Play, Flag, Compass, Pin, PinOff, Trash2,
-  Cpu, Clock, Wifi, WifiOff,
+  Cpu, Clock, Wifi, WifiOff, FileText, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,6 +59,7 @@ interface EventConfig {
   color: string // tailwind text color
   label: (evt: DiscoveryEvent) => string
   detail?: (evt: DiscoveryEvent) => string | null
+  expandable?: boolean // if true, event can be expanded to show more detail
 }
 
 const EVENT_CONFIG: Record<string, EventConfig> = {
@@ -95,6 +96,24 @@ const EVENT_CONFIG: Record<string, EventConfig> = {
       const queries = e.queries as string[] | undefined
       return queries?.join(', ') ?? null
     },
+  },
+  'discovery:llm_detail': {
+    icon: FileText,
+    color: 'text-purple-400',
+    label: (e) => {
+      const model = e.model as string || 'LLM'
+      const fallback = e.is_fallback as boolean
+      const queries = e.parsed_queries as string[] | undefined
+      const count = queries?.length ?? 0
+      return fallback
+        ? `${model} — fallback (${count} queries)`
+        : `${model} — ${count} queries generated`
+    },
+    detail: (e) => {
+      const seed = e.seed_label as string | undefined
+      return seed ? `Seed: ${seed}` : null
+    },
+    expandable: true,
   },
   'discovery:provider_searching': {
     icon: Search,
@@ -259,10 +278,20 @@ const MAX_EVENTS = 200
 export default function DiscoveryMonitor({ isOpen, onClose, onActivityChange }: DiscoveryMonitorProps) {
   const [events, setEvents] = useState<DiscoveryEvent[]>([])
   const [pinToBottom, setPinToBottom] = useState(true)
+  const [expandedEvents, setExpandedEvents] = useState<Set<number>>(new Set())
   const logEndRef = useRef<HTMLDivElement>(null)
   const logContainerRef = useRef<HTMLDivElement>(null)
   const onActivityChangeRef = useRef(onActivityChange)
   onActivityChangeRef.current = onActivityChange
+
+  const toggleExpand = useCallback((index: number) => {
+    setExpandedEvents(prev => {
+      const next = new Set(prev)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+  }, [])
 
   // --- WebSocket for discovery events ---
 
@@ -503,23 +532,71 @@ export default function DiscoveryMonitor({ isOpen, onClose, onActivityChange }: 
                   ? getSourceScoreColor(evt.status as string)
                   : config.color
                 const detail = config.detail?.(evt)
+                const isExpandable = config.expandable === true
+                const isExpanded = expandedEvents.has(i)
 
                 return (
-                  <div key={i} className="flex items-start gap-2 py-1 group">
-                    <span className="text-[10px] text-muted-foreground/50 mt-0.5 whitespace-nowrap font-mono">
-                      {formatTime(evt.timestamp)}
-                    </span>
-                    <Icon className={cn('w-3 h-3 mt-0.5 flex-shrink-0', colorClass)} />
-                    <div className="min-w-0 flex-1">
-                      <span className={cn('text-xs', colorClass)}>
-                        {config.label(evt)}
-                      </span>
-                      {detail && (
-                        <div className="text-[10px] text-muted-foreground/60 truncate font-mono">
-                          {detail}
-                        </div>
+                  <div key={i} className="py-1 group">
+                    <div
+                      className={cn(
+                        'flex items-start gap-2',
+                        isExpandable && 'cursor-pointer hover:bg-secondary/50 rounded px-1 -mx-1',
                       )}
+                      onClick={isExpandable ? () => toggleExpand(i) : undefined}
+                    >
+                      <span className="text-[10px] text-muted-foreground/50 mt-0.5 whitespace-nowrap font-mono">
+                        {formatTime(evt.timestamp)}
+                      </span>
+                      {isExpandable ? (
+                        isExpanded
+                          ? <ChevronDown className={cn('w-3 h-3 mt-0.5 flex-shrink-0', colorClass)} />
+                          : <ChevronRight className={cn('w-3 h-3 mt-0.5 flex-shrink-0', colorClass)} />
+                      ) : (
+                        <Icon className={cn('w-3 h-3 mt-0.5 flex-shrink-0', colorClass)} />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <span className={cn('text-xs', colorClass)}>
+                          {config.label(evt)}
+                        </span>
+                        {detail && (
+                          <div className="text-[10px] text-muted-foreground/60 truncate font-mono">
+                            {detail}
+                          </div>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Expandable LLM detail section */}
+                    {isExpandable && isExpanded && evt.type === 'discovery:llm_detail' && (
+                      <div className="ml-[70px] mt-1 mb-2 space-y-2">
+                        <div>
+                          <div className="text-[10px] font-medium text-purple-400 mb-0.5">Prompt</div>
+                          <pre className="text-[10px] text-muted-foreground bg-secondary rounded p-2 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words font-mono leading-relaxed">
+                            {evt.prompt as string || '(empty)'}
+                          </pre>
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-medium text-purple-400 mb-0.5">LLM Response</div>
+                          <pre className="text-[10px] text-muted-foreground bg-secondary rounded p-2 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words font-mono leading-relaxed">
+                            {evt.raw_response as string || '(empty)'}
+                          </pre>
+                        </div>
+                        {(evt.parsed_queries as string[] | undefined)?.length ? (
+                          <div>
+                            <div className="text-[10px] font-medium text-purple-400 mb-0.5">
+                              Parsed Queries ({(evt.parsed_queries as string[]).length})
+                            </div>
+                            <div className="space-y-0.5">
+                              {(evt.parsed_queries as string[]).map((q, qi) => (
+                                <div key={qi} className="text-[10px] text-muted-foreground font-mono pl-2 border-l border-purple-500/30">
+                                  {q}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 )
               })
