@@ -227,17 +227,71 @@ def reply_to_bluesky_post(
         image_embed = None
         if image_url:
             try:
-                from tools.bsky_image_upload import build_image_embed
-                image_embed = build_image_embed(
-                    pds_host=pds_host,
-                    access_token=access_token,
-                    image_url=image_url,
-                    image_alt=image_alt,
-                    image_aspect_ratio=image_aspect_ratio,
-                    image_url_2=image_url_2,
-                    image_alt_2=image_alt_2,
-                    image_aspect_ratio_2=image_aspect_ratio_2,
-                )
+                image_urls = [(image_url, image_alt, image_aspect_ratio)]
+                if image_url_2:
+                    image_urls.append((image_url_2, image_alt_2, image_aspect_ratio_2 or image_aspect_ratio))
+
+                images_list = []
+                for img_url, img_alt, img_ratio in image_urls:
+                    # Download image
+                    img_response = requests.get(img_url, timeout=30)
+                    img_response.raise_for_status()
+                    image_bytes = img_response.content
+
+                    # Compress if over 1MB
+                    if len(image_bytes) > 1_000_000:
+                        try:
+                            from PIL import Image
+                            import io
+                            img = Image.open(io.BytesIO(image_bytes))
+                            if img.mode in ('RGBA', 'P'):
+                                img = img.convert('RGB')
+                            quality = 85
+                            while len(image_bytes) > 1_000_000 and quality > 20:
+                                output = io.BytesIO()
+                                if quality < 50:
+                                    new_size = (int(img.width * 0.8), int(img.height * 0.8))
+                                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                                img.save(output, format='JPEG', quality=quality, optimize=True)
+                                image_bytes = output.getvalue()
+                                quality -= 10
+                            if len(image_bytes) > 1_000_000:
+                                raise Exception("Image too large and could not be compressed under 1MB")
+                        except ImportError:
+                            raise Exception(f"Image too large ({len(image_bytes)} bytes) and Pillow not installed")
+
+                    # Detect content type
+                    ct = img_response.headers.get('content-type', 'image/jpeg').lower()
+                    content_type = 'image/png' if 'png' in ct else 'image/webp' if 'webp' in ct else 'image/gif' if 'gif' in ct else 'image/jpeg'
+
+                    # Upload blob
+                    upload_resp = requests.post(
+                        f"{pds_host}/xrpc/com.atproto.repo.uploadBlob",
+                        headers={"Authorization": f"Bearer {access_token}", "Content-Type": content_type},
+                        data=image_bytes, timeout=30
+                    )
+                    upload_resp.raise_for_status()
+                    blob_ref = upload_resp.json().get("blob")
+                    if not blob_ref:
+                        raise Exception("Failed to get blob reference from upload")
+
+                    # Parse aspect ratio
+                    aw, ah = 1, 1
+                    if img_ratio and ":" in img_ratio:
+                        try:
+                            parts = img_ratio.split(":")
+                            aw, ah = int(parts[0]), int(parts[1])
+                        except (ValueError, IndexError):
+                            pass
+
+                    images_list.append({
+                        "image": blob_ref,
+                        "alt": img_alt or "AI-generated image",
+                        "aspectRatio": {"width": aw, "height": ah}
+                    })
+
+                image_embed = {"$type": "app.bsky.embed.images", "images": images_list}
+
             except requests.exceptions.RequestException as e:
                 raise Exception(f"Failed to download or upload image: {str(e)}")
             except Exception as e:
