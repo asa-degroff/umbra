@@ -192,12 +192,12 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
     lines = [f"\n\n---\nImages generated in {generation_time:.1f}s!\n"]
 
     if lucid_url:
-        lines.append(f"**Lucid Origin** (abstract/artistic): {lucid_url}")
+        lines.append(f"**Lucid Origin**: {lucid_url}")
     else:
         lines.append(f"**Lucid Origin**: Failed — {lucid_result.get('error', 'unknown error')}")
 
     if seedream_url:
-        lines.append(f"**Seedream 4.5** (text/diagrams/realistic): {seedream_url}")
+        lines.append(f"**Seedream 4.5**: {seedream_url}")
     else:
         lines.append(f"**Seedream 4.5**: Failed — {seedream_result.get('error', 'unknown error')}")
 

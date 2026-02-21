@@ -580,9 +580,9 @@ def send_dual_image_review_message(
             ]
 
             if current_pair.lucid_url:
-                review_lines.append(f"**Image 1 — Lucid Origin** (abstract/artistic): {current_pair.lucid_url}")
+                review_lines.append(f"**Image 1 — Lucid Origin**: {current_pair.lucid_url}")
             if current_pair.seedream_url:
-                review_lines.append(f"**Image 2 — Seedream 4.5** (text/diagrams/realistic): {current_pair.seedream_url}")
+                review_lines.append(f"**Image 2 — Seedream 4.5**: {current_pair.seedream_url}")
 
             review_lines.append("")
             review_lines.append("You can:")
