@@ -218,14 +218,32 @@ async def get_guidance():
         metrics = analyzer.calculate_metrics(recent)
         guidance = analyzer.generate_guidance(metrics)
 
+        # Build cluster data for dashboard (strip embeddings, keep display fields)
+        clusters_display = []
+        for i, cluster in enumerate(metrics.get("clusters", [])[:5]):
+            clusters_display.append({
+                "index": i + 1,
+                "pct": round(cluster.get("pct", 0), 1),
+                "size": cluster.get("size", 0),
+                "weight_sum": round(cluster.get("weight_sum", 0), 2),
+                "sample_texts": cluster.get("sample_texts", [])[:3],
+            })
+
         return {
             "guidance": guidance,
             "summary": analyzer.format_summary(metrics),
             "metrics": {
                 "diversity": metrics.get("weighted_avg_diversity"),
+                "avg_diversity": metrics.get("avg_diversity"),
                 "cluster_dominance": metrics.get("cluster_dominance"),
+                "avg_pairwise_similarity": metrics.get("avg_pairwise_similarity"),
+                "max_pairwise_similarity": metrics.get("max_pairwise_similarity"),
                 "records_analyzed": metrics.get("records_with_embeddings"),
-            }
+                "total_records": metrics.get("total_records"),
+                "temporal_half_life": metrics.get("temporal_half_life"),
+            },
+            "clusters": clusters_display,
+            "platforms": metrics.get("platforms", {}),
         }
     except Exception as e:
         logger.error(f"Error generating guidance: {e}")
