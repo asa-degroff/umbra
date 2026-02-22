@@ -12,6 +12,7 @@ import numpy as np
 from .base import DiscoveredSource, DiscoveryResult, SourceProvider
 from .wikipedia import WikipediaProvider
 from .arxiv import ArxivProvider
+from .exa import ExaProvider
 from .semantic_scholar import SemanticScholarProvider
 from .query_generator import QueryGenerator
 from .source_db import SourceDB
@@ -69,11 +70,22 @@ class SourceDiscovery:
         self.relevance_analyzer = relevance_analyzer
         self.source_db = source_db
 
-        self.providers = providers or [
-            WikipediaProvider(),
-            ArxivProvider(),
-            SemanticScholarProvider(),
-        ]
+        # Build default provider list — Exa is included if API key is available
+        if providers is not None:
+            self.providers = providers
+        else:
+            self.providers = [
+                WikipediaProvider(),
+                ArxivProvider(),
+                SemanticScholarProvider(),
+            ]
+            # Add Exa provider if API key is configured
+            exa = ExaProvider()  # Reads from EXA_API_KEY env or config
+            if exa.api_key:
+                self.providers.append(exa)
+                logger.info("Exa provider enabled (research paper + find_similar)")
+            else:
+                logger.debug("Exa provider skipped — no API key")
         self.query_generator = query_generator or QueryGenerator(ollama_url)
     
     def discover(
@@ -374,6 +386,100 @@ class SourceDiscovery:
                 if self.source_db and zone_sources:
                     self.source_db.save_sources(zone_sources)
                 
+                # --- Find Similar: use top frontier sources to discover related content ---
+                exa_providers = [p for p in self.providers if hasattr(p, 'find_similar')]
+                if exa_providers and sources_remaining > 0:
+                    # Pick the highest-scoring frontier source from this zone
+                    zone_frontier = [
+                        s for s in zone_sources
+                        if s.status == 'frontier' and s.url and s.relevance_score > 0
+                    ]
+                    zone_frontier.sort(key=lambda s: s.relevance_score, reverse=True)
+
+                    for top_source in zone_frontier[:1]:  # Use best source
+                        for exa_prov in exa_providers:
+                            try:
+                                emit("discovery:provider_searching", {
+                                    "provider": f"{exa_prov.source_type}:similar",
+                                    "query": top_source.url[:80],
+                                })
+
+                                similar_sources = exa_prov.find_similar(
+                                    top_source.url,
+                                    limit=min(3, sources_remaining),
+                                )
+
+                                if similar_sources:
+                                    emit("discovery:provider_result", {
+                                        "provider": f"{exa_prov.source_type}:similar",
+                                        "query": top_source.url[:80],
+                                        "count": len(similar_sources),
+                                        "titles": [s.title for s in similar_sources[:5]],
+                                    })
+
+                                # Dedup against DB and seen URLs
+                                deduped_similar = []
+                                for s in similar_sources:
+                                    key = (s.url, s.chunk_index)
+                                    if key in seen_urls:
+                                        continue
+                                    if self.source_db and self.source_db.get_by_url(s.url):
+                                        continue
+                                    seen_urls.add(key)
+                                    deduped_similar.append(s)
+
+                                if deduped_similar:
+                                    # Embed and score the similar sources
+                                    sim_texts = [s.excerpt for s in deduped_similar]
+                                    sim_embeddings = self.embedder.embed_batch(sim_texts)
+
+                                    for s_obj, s_emb in zip(deduped_similar, sim_embeddings):
+                                        s_arr = np.array(s_emb)
+                                        s_obj.embedding = s_emb
+                                        s_obj.frontier_zone_id = str(zone_id)
+                                        s_obj.seed_id = zone.seed_id
+
+                                        # Semantic dedup
+                                        if all_embeddings:
+                                            s_norm = s_arr / (np.linalg.norm(s_arr) or 1.0)
+                                            existing = np.array(all_embeddings)
+                                            norms = np.linalg.norm(existing, axis=1, keepdims=True)
+                                            norms[norms == 0] = 1.0
+                                            existing_norm = existing / norms
+                                            max_sim = float(np.max(existing_norm @ s_norm))
+                                            if max_sim > semantic_dedup_threshold:
+                                                continue
+
+                                        if self.relevance_analyzer:
+                                            s_obj.relevance_score = self.relevance_analyzer.compute_relevance_score(s_arr)
+
+                                        if s_obj.relevance_score >= frontier_threshold:
+                                            s_obj.status = 'frontier'
+                                            result.frontier_sources.append(s_obj)
+                                        else:
+                                            s_obj.status = 'pending'
+                                            result.pending_sources.append(s_obj)
+
+                                        all_sources.append(s_obj)
+                                        all_embeddings.append(s_arr)
+                                        sources_remaining -= 1
+
+                                        if s_obj.seed_id:
+                                            seed_source_counts[s_obj.seed_id] = seed_source_counts.get(s_obj.seed_id, 0) + 1
+
+                                        emit("discovery:source_scored", {
+                                            "title": s_obj.title,
+                                            "relevance": round(s_obj.relevance_score, 3),
+                                            "status": s_obj.status,
+                                            "source_type": f"{s_obj.source_type}:similar",
+                                        })
+
+                                    if self.source_db:
+                                        self.source_db.save_sources(deduped_similar)
+
+                            except Exception as e:
+                                logger.error(f"Find similar error: {e}")
+
                 explored_zone_ids.add(zone_id)
                 zones_this_round += 1
                 
