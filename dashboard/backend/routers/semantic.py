@@ -649,3 +649,23 @@ async def get_frontier_stats():
     except Exception as e:
         logger.error(f"Error getting frontier stats: {e}")
         return {"error": str(e)}
+
+
+@router.get("/frontier/providers")
+async def get_frontier_providers():
+    """Debug: list active source providers."""
+    try:
+        from dashboard.backend.services.frontier_service import _source_discovery
+        if _source_discovery is None:
+            return {"error": "Source discovery not initialized"}
+        providers = []
+        for p in _source_discovery.providers:
+            info = {"source_type": p.source_type, "has_find_similar": hasattr(p, 'find_similar')}
+            if hasattr(p, 'api_key'):
+                info["has_api_key"] = bool(p.api_key)
+            if hasattr(p, 'budget'):
+                info["budget"] = p.budget.today_summary
+            providers.append(info)
+        return {"providers": providers}
+    except Exception as e:
+        return {"error": str(e)}

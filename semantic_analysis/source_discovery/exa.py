@@ -213,6 +213,10 @@ class ExaProvider(SourceProvider):
         if not self.api_key:
             return []
 
+        if not query or not query.strip():
+            logger.debug("Exa search skipped: empty query")
+            return []
+
         if not self.budget.check_budget():
             return []
 
@@ -225,7 +229,7 @@ class ExaProvider(SourceProvider):
             ).strftime("%Y-%m-%dT00:00:00.000Z")
 
             payload = {
-                "query": query,
+                "query": query.strip(),
                 "type": self.search_type,
                 "category": self.category,
                 "numResults": min(limit, 10),
