@@ -405,13 +405,32 @@ def reply_to_bluesky_post(
                 "record": reply_record
             }
 
-            create_response = requests.post(
-                create_url,
-                headers=headers,
-                json=create_data,
-                timeout=10
-            )
-            create_response.raise_for_status()
+            try:
+                create_response = requests.post(
+                    create_url,
+                    headers=headers,
+                    json=create_data,
+                    timeout=10
+                )
+                create_response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                # If some posts in the chain already succeeded, report partial success
+                if reply_uris:
+                    error_msg = str(e)
+                    if hasattr(e, 'response') and e.response is not None:
+                        try:
+                            error_data = e.response.json()
+                            error_msg = error_data.get('message', error_msg)
+                        except:
+                            error_msg = e.response.text or error_msg
+                    uris_text = "\n".join([f"Reply {j+1}: {u}" for j, u in enumerate(reply_uris)])
+                    raise Exception(
+                        f"Partial thread posted: {len(reply_uris)} of {len(text)} replies succeeded, "
+                        f"reply {i+1} failed ({error_msg}). "
+                        f"DO NOT retry the entire thread — the following posts are already live:\n{uris_text}"
+                    )
+                # If this was the first post, just raise normally
+                raise
 
             response_data = create_response.json()
             new_uri = response_data.get("uri", "")

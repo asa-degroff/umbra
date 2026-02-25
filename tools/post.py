@@ -277,9 +277,27 @@ def create_new_bluesky_post(
                 "collection": "app.bsky.feed.post",
                 "record": post_record
             }
-            
-            post_response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
-            post_response.raise_for_status()
+
+            try:
+                post_response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+                post_response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                # If some posts in the thread already succeeded, report partial success
+                if post_urls:
+                    error_msg = str(e)
+                    if hasattr(e, 'response') and e.response is not None:
+                        try:
+                            error_data = e.response.json()
+                            error_msg = error_data.get('message', error_msg)
+                        except:
+                            error_msg = e.response.text or error_msg
+                    urls_text = "\n".join([f"Post {j+1}: {url}" for j, url in enumerate(post_urls)])
+                    raise Exception(
+                        f"Partial thread posted: {len(post_urls)} of {len(text)} posts succeeded, "
+                        f"post {i+1} failed ({error_msg}). "
+                        f"DO NOT retry the entire thread — the following posts are already live:\n{urls_text}"
+                    )
+                raise
             result = post_response.json()
             
             post_uri = result.get("uri")
