@@ -182,63 +182,65 @@ export default function SemanticView() {
               <div className="space-y-3">
                 {guidance.clusters.map((cluster: {
                   index: number
+                  label?: string
                   pct: number
                   size: number
                   weight_sum: number
                   sample_texts: string[]
-                }) => (
-                  <div
-                    key={cluster.index}
-                    className="bg-secondary rounded-lg p-3"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className={cn(
-                          'text-xs font-bold px-1.5 py-0.5 rounded',
-                          cluster.index === 1 ? 'bg-amber-500/20 text-amber-400' :
-                          cluster.index === 2 ? 'bg-blue-500/20 text-blue-400' :
-                          cluster.index === 3 ? 'bg-green-500/20 text-green-400' :
-                          cluster.index === 4 ? 'bg-purple-500/20 text-purple-400' :
-                          'bg-muted text-muted-foreground'
-                        )}>
-                          #{cluster.index}
-                        </span>
-                        <span className="text-sm font-medium">
-                          {cluster.pct}% of content
+                }) => {
+                  const clusterColors = [
+                    { bg: 'bg-amber-500/20', text: 'text-amber-400', bar: 'bg-amber-500' },
+                    { bg: 'bg-blue-500/20', text: 'text-blue-400', bar: 'bg-blue-500' },
+                    { bg: 'bg-green-500/20', text: 'text-green-400', bar: 'bg-green-500' },
+                    { bg: 'bg-purple-500/20', text: 'text-purple-400', bar: 'bg-purple-500' },
+                    { bg: 'bg-cyan-500/20', text: 'text-cyan-400', bar: 'bg-cyan-500' },
+                  ]
+                  const colors = clusterColors[(cluster.index - 1) % clusterColors.length] || 
+                    { bg: 'bg-muted', text: 'text-muted-foreground', bar: 'bg-muted-foreground' }
+                  
+                  return (
+                    <div
+                      key={cluster.index}
+                      className="bg-secondary rounded-lg p-3"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={cn(
+                            'text-xs font-bold px-1.5 py-0.5 rounded',
+                            colors.bg, colors.text,
+                          )}>
+                            {cluster.label || `#${cluster.index}`}
+                          </span>
+                          <span className="text-sm font-medium">
+                            {cluster.pct}% of content
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">
+                          {cluster.size} records · weight {cluster.weight_sum}
                         </span>
                       </div>
-                      <span className="text-[10px] text-muted-foreground">
-                        {cluster.size} records · weight {cluster.weight_sum}
-                      </span>
-                    </div>
-                    {/* Dominance bar */}
-                    <div className="h-1 bg-muted rounded-full overflow-hidden mb-2">
-                      <div
-                        className={cn(
-                          'h-full rounded-full',
-                          cluster.index === 1 ? 'bg-amber-500' :
-                          cluster.index === 2 ? 'bg-blue-500' :
-                          cluster.index === 3 ? 'bg-green-500' :
-                          cluster.index === 4 ? 'bg-purple-500' :
-                          'bg-muted-foreground'
-                        )}
-                        style={{ width: `${Math.min(100, cluster.pct)}%` }}
-                      />
-                    </div>
-                    {/* Sample texts */}
-                    <div className="space-y-1">
-                      {cluster.sample_texts.map((text: string, ti: number) => (
+                      {/* Dominance bar */}
+                      <div className="h-1 bg-muted rounded-full overflow-hidden mb-2">
                         <div
-                          key={ti}
-                          className="text-xs text-muted-foreground pl-2 border-l-2 border-border truncate"
-                          title={text}
-                        >
-                          {text}
-                        </div>
-                      ))}
+                          className={cn('h-full rounded-full', colors.bar)}
+                          style={{ width: `${Math.min(100, cluster.pct)}%` }}
+                        />
+                      </div>
+                      {/* Sample texts */}
+                      <div className="space-y-1">
+                        {cluster.sample_texts.map((text: string, ti: number) => (
+                          <div
+                            key={ti}
+                            className="text-xs text-muted-foreground pl-2 border-l-2 border-border truncate"
+                            title={text}
+                          >
+                            {text}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           </CardContent>

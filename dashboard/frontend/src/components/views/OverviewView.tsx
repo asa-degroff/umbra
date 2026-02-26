@@ -257,7 +257,7 @@ export default function OverviewView() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {relevantPosts.posts.slice(0, 5).map((post, i) => {
+                {relevantPosts.posts.slice(0, 5).map((post, _i) => {
                   const blueskyUrl = getBlueskyUrl(post.uri, post.source_handle)
                   return (
                     <div key={post.uri} className="p-3 bg-secondary rounded-lg">
@@ -303,7 +303,7 @@ export default function OverviewView() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {relevantAccounts.accounts.slice(0, 5).map((account, i) => (
+                {relevantAccounts.accounts.slice(0, 5).map((account, _i) => (
                   <div key={account.handle} className="flex items-center justify-between p-3 bg-secondary rounded-lg">
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-violet-400">@{account.handle}</div>

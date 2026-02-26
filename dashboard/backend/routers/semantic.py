@@ -28,6 +28,119 @@ router = APIRouter()
 chromadb_service = ChromaDBService()
 
 
+def _generate_topic_labels(cluster_texts: dict[int, list[str]]) -> dict[int, str]:
+    """
+    Generate short topic labels for clusters using local LLM.
+
+    Args:
+        cluster_texts: Dict mapping cluster_id -> list of sample texts
+
+    Returns:
+        Dict mapping cluster_id -> short topic label string
+    """
+    labels = {}
+    non_noise = {k: v for k, v in cluster_texts.items() if k != -1 and v}
+
+    if not non_noise:
+        return labels
+
+    try:
+        import requests as req
+
+        # Build a single prompt for all clusters at once (cheaper than per-cluster)
+        cluster_descriptions = []
+        for cid in sorted(non_noise.keys()):
+            texts = non_noise[cid]
+            samples = "\n".join(f"  - {t[:150]}" for t in texts[:4])
+            cluster_descriptions.append(f"Cluster {cid}:\n{samples}")
+
+        all_clusters = "\n\n".join(cluster_descriptions)
+
+        prompt = f"""Given these text clusters from an AI agent's content, generate a SHORT topic label (2-4 words) for each cluster. The label should capture the main theme.
+
+{all_clusters}
+
+Return ONLY a JSON object mapping cluster number to label. Example:
+{{"0": "AI consciousness", "1": "Protocol design", "2": "Creative writing"}}
+
+Labels:"""
+
+        # Determine which LLM model to use
+        llm_model = "qwen3:8b"  # default
+        try:
+            config = get_config()
+            configured_model = config.get("semantic_analysis.ollama.llm_model", "")
+            if configured_model:
+                # Verify the model exists in Ollama
+                tags_resp = req.get("http://localhost:11434/api/tags", timeout=5)
+                available = [m["name"] for m in tags_resp.json().get("models", [])]
+                if configured_model in available:
+                    llm_model = configured_model
+                else:
+                    logger.debug(f"Configured model '{configured_model}' not found, using {llm_model}")
+        except Exception:
+            pass
+
+        # Use /api/chat with thinking disabled for fast structured output
+        resp = req.post(
+            "http://localhost:11434/api/chat",
+            json={
+                "model": llm_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "think": False,
+                "keep_alive": "60s",
+                "options": {"temperature": 0.3, "num_predict": 1024},
+            },
+            timeout=300,
+        )
+        resp.raise_for_status()
+        result = resp.json().get("message", {}).get("content", "").strip()
+
+        # Strip markdown code fences if present
+        import re
+        result = re.sub(r'^```json\s*', '', result)
+        result = re.sub(r'\s*```$', '', result).strip()
+
+        # Parse JSON from response — try from the end first (thinking text has reasoning before JSON)
+        import json
+        end = result.rfind("}") + 1
+        if end > 0:
+            # Search backwards for the matching opening brace
+            depth = 0
+            start = -1
+            for i in range(end - 1, -1, -1):
+                if result[i] == '}':
+                    depth += 1
+                elif result[i] == '{':
+                    depth -= 1
+                    if depth == 0:
+                        start = i
+                        break
+
+            if start >= 0:
+                try:
+                    raw_labels = json.loads(result[start:end])
+                    for k, v in raw_labels.items():
+                        try:
+                            labels[int(k)] = str(v)[:50]
+                        except (ValueError, TypeError):
+                            pass
+                except json.JSONDecodeError as je:
+                    logger.warning(f"Failed to parse topic labels JSON: {je}, snippet: {result[start:end][:200]}")
+            else:
+                logger.warning(f"No JSON object found in LLM response ({len(result)} chars)")
+        else:
+            logger.warning(f"No closing brace in LLM response ({len(result)} chars)")
+
+        logger.info(f"Generated {len(labels)} topic labels via LLM")
+
+    except Exception as e:
+        logger.warning(f"Topic label generation failed: {e}", exc_info=True)
+
+    return labels
+
+
 @router.get("/stats")
 async def get_stats():
     """Get semantic database statistics."""
@@ -133,7 +246,7 @@ async def get_embeddings_2d(
             reducer = umap.UMAP(
                 n_components=2,
                 n_neighbors=min(15, len(embeddings) - 1),
-                min_dist=0.1,
+                min_dist=0.05,
                 metric="cosine",
                 random_state=42,
             )
@@ -142,6 +255,73 @@ async def get_embeddings_2d(
             from sklearn.decomposition import PCA
             reducer = PCA(n_components=2, random_state=42)
             coords_2d = reducer.fit_transform(embeddings)
+
+        # Run HDBSCAN on 2D projection for topic clustering
+        cluster_labels = np.full(len(coords_2d), -1)
+        cluster_meta = []
+        try:
+            from sklearn.cluster import HDBSCAN as _HDBSCAN
+            n = len(coords_2d)
+            clusterer = _HDBSCAN(
+                min_cluster_size=max(15, n // 60),
+                min_samples=5,
+                metric="euclidean",
+            )
+            cluster_labels = clusterer.fit_predict(coords_2d)
+
+            # Collect sample texts per cluster for label generation
+            unique_labels = sorted(set(cluster_labels))
+            cluster_texts = {}
+            for i, label in enumerate(cluster_labels):
+                if label not in cluster_texts:
+                    cluster_texts[label] = []
+                if len(cluster_texts[label]) < 5:
+                    text = (valid_data[i].get("text", "") or "")[:200]
+                    if text:
+                        cluster_texts[label].append(text)
+
+            # Generate LLM topic labels (limit to top 12 clusters by size)
+            real_clusters = {k: v for k, v in cluster_texts.items() if k != -1}
+            if len(real_clusters) <= 12:
+                topic_labels = _generate_topic_labels(cluster_texts)
+            else:
+                # Too many clusters for one LLM call — label the top 12
+                sorted_ids = sorted(real_clusters.keys(), 
+                    key=lambda k: int(np.sum(cluster_labels == k)), reverse=True)
+                top_texts = {k: cluster_texts[k] for k in sorted_ids[:12]}
+                topic_labels = _generate_topic_labels(top_texts)
+
+            topic_palette = [
+                "#f43f5e", "#3b82f6", "#22c55e", "#f59e0b",
+                "#a855f7", "#06b6d4", "#ec4899", "#84cc16",
+                "#f97316", "#6366f1", "#14b8a6", "#e11d48",
+            ]
+
+            for label in unique_labels:
+                count = int(np.sum(cluster_labels == label))
+                if label == -1:
+                    cluster_meta.append({
+                        "id": -1,
+                        "label": "Unclustered",
+                        "count": count,
+                        "color": "#6b7280",
+                    })
+                else:
+                    cluster_meta.append({
+                        "id": int(label),
+                        "label": topic_labels.get(label, f"Topic {label + 1}"),
+                        "count": count,
+                        "color": topic_palette[label % len(topic_palette)],
+                    })
+
+            n_clusters = len([l for l in unique_labels if l != -1])
+            n_noise = int(np.sum(cluster_labels == -1))
+            logger.info(f"HDBSCAN: {n_clusters} clusters, {n_noise} noise points")
+
+        except ImportError:
+            logger.warning("sklearn HDBSCAN not available, skipping topic clustering")
+        except Exception as e:
+            logger.warning(f"HDBSCAN clustering failed: {e}")
 
         # Build response
         points = []
@@ -152,8 +332,9 @@ async def get_embeddings_2d(
                 "y": float(coords_2d[i, 1]),
                 "uri": d["uri"],
                 "platform": d.get("platform", "unknown"),
+                "cluster_id": int(cluster_labels[i]),
                 "text_preview": full_text[:200] + ("..." if len(full_text) > 200 else ""),
-                "text": full_text,  # Full text for detail view
+                "text": full_text,
                 "created_at": d.get("created_at"),
             })
 
@@ -161,6 +342,7 @@ async def get_embeddings_2d(
             "points": points,
             "method": method,
             "total": len(points),
+            "clusters": cluster_meta,
         }
 
         # Cache result
@@ -218,11 +400,21 @@ async def get_guidance():
         metrics = analyzer.calculate_metrics(recent)
         guidance = analyzer.generate_guidance(metrics)
 
+        # Generate topic labels for clusters
+        raw_clusters = metrics.get("clusters", [])[:8]
+        cluster_texts_for_labels = {}
+        for i, cluster in enumerate(raw_clusters):
+            texts = cluster.get("sample_texts", [])
+            if texts:
+                cluster_texts_for_labels[i] = texts
+        topic_labels = _generate_topic_labels(cluster_texts_for_labels)
+
         # Build cluster data for dashboard (strip embeddings, keep display fields)
         clusters_display = []
-        for i, cluster in enumerate(metrics.get("clusters", [])[:5]):
+        for i, cluster in enumerate(raw_clusters):
             clusters_display.append({
                 "index": i + 1,
+                "label": topic_labels.get(i, f"Cluster {i + 1}"),
                 "pct": round(cluster.get("pct", 0), 1),
                 "size": cluster.get("size", 0),
                 "weight_sum": round(cluster.get("weight_sum", 0), 2),
