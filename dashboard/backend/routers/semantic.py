@@ -200,37 +200,55 @@ _embeddings_2d_lock = asyncio.Lock()
 async def get_embeddings_2d(
     limit: int = Query(1000, ge=1, le=5000),
     method: str = Query("umap", pattern="^(umap|pca)$"),
+    refresh: bool = Query(False),
 ):
     """
     Get 2D-projected embeddings for scatter plot visualization.
-    
+
     Uses UMAP or PCA to reduce high-dimensional embeddings to 2D.
     Results are cached until new records are added.
     """
     import hashlib
     import numpy as np
-    
+
     try:
+        # Check disk cache first (survives restarts)
+        if not refresh:
+            try:
+                from dashboard.backend.services.disk_cache import disk_cache, get_config_hash
+                config_hash = get_config_hash()
+                if disk_cache.is_fresh("embeddings_2d", max_age_seconds=48 * 3600, config_hash=config_hash):
+                    wrapper = disk_cache.get("embeddings_2d")
+                    if wrapper:
+                        data = wrapper["data"]
+                        data["from_cache"] = True
+                        # Also populate in-memory cache
+                        async with _embeddings_2d_lock:
+                            _embeddings_2d_cache["disk"] = data
+                        return data
+            except Exception as e:
+                logger.warning(f"Disk cache read (embeddings_2d) failed: {e}")
+
         # Get raw embeddings
         raw_data = chromadb_service.get_embeddings_for_visualization(limit=limit)
         if raw_data.get("error"):
             return raw_data
-        
+
         data = raw_data.get("data", [])
         if not data:
             return {"points": [], "method": method, "total": 0}
-        
+
         # Filter out records without embeddings
         valid_data = [d for d in data if d.get("embedding") is not None and len(d.get("embedding", [])) > 0]
         if not valid_data:
             return {"points": [], "method": method, "total": 0, "error": "No embeddings found"}
-        
+
         # Create cache key based on URIs and method
         uri_hash = hashlib.md5(
             (method + "".join(sorted(d["uri"] for d in valid_data))).encode()
         ).hexdigest()[:16]
-        
-        # Check cache
+
+        # Check in-memory cache
         async with _embeddings_2d_lock:
             if uri_hash in _embeddings_2d_cache:
                 logger.info(f"Using cached 2D embeddings ({method})")
@@ -345,9 +363,17 @@ async def get_embeddings_2d(
             "clusters": cluster_meta,
         }
 
-        # Cache result
+        # Cache result (in-memory)
         async with _embeddings_2d_lock:
             _embeddings_2d_cache[uri_hash] = result
+
+        # Persist to disk cache
+        try:
+            from dashboard.backend.services.disk_cache import disk_cache, get_config_hash
+            disk_cache.put("embeddings_2d", result, config_hash=get_config_hash())
+        except Exception as e:
+            logger.warning(f"Disk cache write (embeddings_2d) failed: {e}")
+
         logger.info(f"Cached 2D embeddings: {len(points)} points")
 
         return result
@@ -358,9 +384,21 @@ async def get_embeddings_2d(
 
 
 @router.get("/metrics")
-async def get_metrics():
+async def get_metrics(refresh: bool = Query(False)):
     """Get current diversity metrics using ANN-based computation."""
     try:
+        from dashboard.backend.services.disk_cache import disk_cache, get_config_hash
+
+        # Serve from disk cache unless refresh requested
+        if not refresh:
+            config_hash = get_config_hash()
+            if disk_cache.is_fresh("metrics", max_age_seconds=48 * 3600, config_hash=config_hash):
+                wrapper = disk_cache.get("metrics")
+                if wrapper:
+                    data = wrapper["data"]
+                    data["from_cache"] = True
+                    return data
+
         from semantic_analysis.analyzer import DiversityAnalyzer
 
         storage = get_shared_storage()
@@ -375,6 +413,13 @@ async def get_metrics():
 
         # Use ANN-based metrics for efficiency
         metrics = analyzer.calculate_metrics_ann(recent)
+
+        # Write to disk cache
+        try:
+            disk_cache.put("metrics", metrics, config_hash=get_config_hash())
+        except Exception as e:
+            logger.warning(f"Disk cache write (metrics) failed: {e}")
+
         return metrics
     except Exception as e:
         logger.error(f"Error calculating metrics: {e}")
@@ -382,9 +427,21 @@ async def get_metrics():
 
 
 @router.get("/guidance")
-async def get_guidance():
+async def get_guidance(refresh: bool = Query(False)):
     """Get latest diversity guidance."""
     try:
+        from dashboard.backend.services.disk_cache import disk_cache, get_config_hash
+
+        # Serve from disk cache unless refresh requested
+        if not refresh:
+            config_hash = get_config_hash()
+            if disk_cache.is_fresh("guidance", max_age_seconds=48 * 3600, config_hash=config_hash):
+                wrapper = disk_cache.get("guidance")
+                if wrapper:
+                    data = wrapper["data"]
+                    data["from_cache"] = True
+                    return data
+
         from semantic_analysis.analyzer import DiversityAnalyzer
 
         storage = get_shared_storage()
@@ -421,7 +478,7 @@ async def get_guidance():
                 "sample_texts": cluster.get("sample_texts", [])[:3],
             })
 
-        return {
+        result = {
             "guidance": guidance,
             "summary": analyzer.format_summary(metrics),
             "metrics": {
@@ -437,6 +494,14 @@ async def get_guidance():
             "clusters": clusters_display,
             "platforms": metrics.get("platforms", {}),
         }
+
+        # Write to disk cache
+        try:
+            disk_cache.put("guidance", result, config_hash=get_config_hash())
+        except Exception as e:
+            logger.warning(f"Disk cache write (guidance) failed: {e}")
+
+        return result
     except Exception as e:
         logger.error(f"Error generating guidance: {e}")
         return {"error": str(e)}

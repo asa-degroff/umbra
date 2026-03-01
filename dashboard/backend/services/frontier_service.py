@@ -34,15 +34,15 @@ _cache = {
     'discovery_result': None,
     'discovery_time': None,
 }
-_cache_ttl = 3600  # 1 hour — scheduled refresh handles freshness
+_cache_ttl = 13 * 3600  # 13 hours — just over 12h so memory cache outlasts scheduled refresh
 _init_lock = threading.Lock()
 _discovery_lock = threading.Lock()
 _discovery_running = False
 _init_started = False
 _init_done = threading.Event()
 _refresh_timer = None
-_REFRESH_INTERVAL = 4 * 3600  # 4 hours between scheduled refreshes
-_DISK_CACHE_MAX_AGE = 24 * 3600  # Consider disk cache stale after 24 hours
+_REFRESH_INTERVAL = 12 * 3600  # 12 hours between scheduled refreshes
+_DISK_CACHE_MAX_AGE = 48 * 3600  # Consider disk cache stale after 48 hours
 
 
 def _load_disk_cache():
@@ -69,6 +69,184 @@ def _load_disk_cache():
         logger.warning(f"Disk cache load failed (non-fatal): {e}")
 
 
+def _refresh_semantic_caches():
+    """Regenerate metrics, guidance, and 2D embeddings caches after seeds+zones."""
+    from dashboard.backend.services.disk_cache import disk_cache, get_config_hash
+    from dashboard.backend.services.shared_storage import get_shared_storage
+
+    config_hash = get_config_hash()
+
+    # 1. Metrics (ANN-based, cheap — no ollama)
+    try:
+        from semantic_analysis.analyzer import DiversityAnalyzer
+        storage = get_shared_storage()
+        if storage:
+            analyzer = DiversityAnalyzer(storage=storage)
+            recent = storage.get_recent(days=7)
+            if recent:
+                metrics = analyzer.calculate_metrics_ann(recent)
+                disk_cache.put("metrics", metrics, config_hash=config_hash)
+                logger.info("Scheduled refresh: metrics cached")
+    except Exception as e:
+        logger.error(f"Scheduled refresh: metrics failed: {e}")
+
+    # 2. Guidance (uses LLM for guidance text + topic labels)
+    try:
+        from semantic_analysis.analyzer import DiversityAnalyzer
+        from dashboard.backend.routers.semantic import _generate_topic_labels
+        storage = get_shared_storage()
+        if storage:
+            analyzer = DiversityAnalyzer()
+            recent = storage.get_recent(days=7)
+            if recent:
+                metrics = analyzer.calculate_metrics(recent)
+                guidance = analyzer.generate_guidance(metrics)
+
+                raw_clusters = metrics.get("clusters", [])[:8]
+                cluster_texts_for_labels = {}
+                for i, cluster in enumerate(raw_clusters):
+                    texts = cluster.get("sample_texts", [])
+                    if texts:
+                        cluster_texts_for_labels[i] = texts
+                topic_labels = _generate_topic_labels(cluster_texts_for_labels)
+
+                clusters_display = []
+                for i, cluster in enumerate(raw_clusters):
+                    clusters_display.append({
+                        "index": i + 1,
+                        "label": topic_labels.get(i, f"Cluster {i + 1}"),
+                        "pct": round(cluster.get("pct", 0), 1),
+                        "size": cluster.get("size", 0),
+                        "weight_sum": round(cluster.get("weight_sum", 0), 2),
+                        "sample_texts": cluster.get("sample_texts", [])[:3],
+                    })
+
+                guidance_data = {
+                    "guidance": guidance,
+                    "summary": analyzer.format_summary(metrics),
+                    "metrics": {
+                        "diversity": metrics.get("weighted_avg_diversity"),
+                        "avg_diversity": metrics.get("avg_diversity"),
+                        "cluster_dominance": metrics.get("cluster_dominance"),
+                        "avg_pairwise_similarity": metrics.get("avg_pairwise_similarity"),
+                        "max_pairwise_similarity": metrics.get("max_pairwise_similarity"),
+                        "records_analyzed": metrics.get("records_with_embeddings"),
+                        "total_records": metrics.get("total_records"),
+                        "temporal_half_life": metrics.get("temporal_half_life"),
+                    },
+                    "clusters": clusters_display,
+                    "platforms": metrics.get("platforms", {}),
+                }
+                disk_cache.put("guidance", guidance_data, config_hash=config_hash)
+                logger.info("Scheduled refresh: guidance cached")
+    except Exception as e:
+        logger.error(f"Scheduled refresh: guidance failed: {e}")
+
+    # 3. 2D embeddings (UMAP + HDBSCAN + topic labels)
+    try:
+        from dashboard.backend.services.chromadb_service import ChromaDBService
+        import numpy as np
+        import hashlib
+
+        chromadb_service = ChromaDBService()
+        raw_data = chromadb_service.get_embeddings_for_visualization(limit=1000)
+        data = raw_data.get("data", [])
+        valid_data = [d for d in data if d.get("embedding") is not None and len(d.get("embedding", [])) > 0]
+
+        if valid_data:
+            embeddings = np.array([d["embedding"] for d in valid_data])
+            logger.info(f"Scheduled refresh: reducing {len(embeddings)} embeddings to 2D...")
+
+            import umap
+            reducer = umap.UMAP(
+                n_components=2,
+                n_neighbors=min(15, len(embeddings) - 1),
+                min_dist=0.05,
+                metric="cosine",
+                random_state=42,
+            )
+            coords_2d = reducer.fit_transform(embeddings)
+
+            cluster_labels = np.full(len(coords_2d), -1)
+            cluster_meta = []
+            try:
+                from sklearn.cluster import HDBSCAN as _HDBSCAN
+                n = len(coords_2d)
+                clusterer = _HDBSCAN(
+                    min_cluster_size=max(15, n // 60),
+                    min_samples=5,
+                    metric="euclidean",
+                )
+                cluster_labels = clusterer.fit_predict(coords_2d)
+
+                unique_labels = sorted(set(cluster_labels))
+                cluster_texts = {}
+                for i, label in enumerate(cluster_labels):
+                    if label not in cluster_texts:
+                        cluster_texts[label] = []
+                    if len(cluster_texts[label]) < 5:
+                        text = (valid_data[i].get("text", "") or "")[:200]
+                        if text:
+                            cluster_texts[label].append(text)
+
+                real_clusters = {k: v for k, v in cluster_texts.items() if k != -1}
+                if len(real_clusters) <= 12:
+                    topic_labels = _generate_topic_labels(cluster_texts)
+                else:
+                    sorted_ids = sorted(real_clusters.keys(),
+                        key=lambda k: int(np.sum(cluster_labels == k)), reverse=True)
+                    top_texts = {k: cluster_texts[k] for k in sorted_ids[:12]}
+                    topic_labels = _generate_topic_labels(top_texts)
+
+                topic_palette = [
+                    "#f43f5e", "#3b82f6", "#22c55e", "#f59e0b",
+                    "#a855f7", "#06b6d4", "#ec4899", "#84cc16",
+                    "#f97316", "#6366f1", "#14b8a6", "#e11d48",
+                ]
+
+                for label in unique_labels:
+                    count = int(np.sum(cluster_labels == label))
+                    if label == -1:
+                        cluster_meta.append({
+                            "id": -1, "label": "Unclustered",
+                            "count": count, "color": "#6b7280",
+                        })
+                    else:
+                        cluster_meta.append({
+                            "id": int(label),
+                            "label": topic_labels.get(label, f"Topic {label + 1}"),
+                            "count": count,
+                            "color": topic_palette[label % len(topic_palette)],
+                        })
+            except Exception as e:
+                logger.warning(f"Scheduled refresh: HDBSCAN failed: {e}")
+
+            points = []
+            for i, d in enumerate(valid_data):
+                full_text = d.get("text", "") or ""
+                points.append({
+                    "x": float(coords_2d[i, 0]),
+                    "y": float(coords_2d[i, 1]),
+                    "uri": d["uri"],
+                    "platform": d.get("platform", "unknown"),
+                    "cluster_id": int(cluster_labels[i]),
+                    "text_preview": full_text[:200] + ("..." if len(full_text) > 200 else ""),
+                    "text": full_text,
+                    "created_at": d.get("created_at"),
+                })
+
+            embeddings_2d_data = {
+                "points": points,
+                "method": "umap",
+                "total": len(points),
+                "clusters": cluster_meta,
+            }
+            disk_cache.put("embeddings_2d", embeddings_2d_data, config_hash=config_hash)
+            logger.info(f"Scheduled refresh: 2D embeddings cached ({len(points)} points)")
+    except Exception as e:
+        logger.error(f"Scheduled refresh: 2D embeddings failed: {e}")
+
+
 def _schedule_refresh():
     """Start a repeating timer that refreshes seeds and zones in the background."""
     global _refresh_timer
@@ -82,13 +260,22 @@ def _schedule_refresh():
             _refresh_timer.start()
             return
 
-        logger.info("Scheduled refresh: regenerating seeds and zones...")
+        logger.info("Scheduled refresh: regenerating seeds, zones, and semantic caches...")
         try:
             frontier_service.get_seeds(days=30, force_refresh=True)
             frontier_service.get_zones(days=30, force_refresh=True)
+            _refresh_semantic_caches()
             logger.info("Scheduled refresh complete")
         except Exception as e:
             logger.error(f"Scheduled refresh failed: {e}")
+        finally:
+            # Release ollama model to free VRAM for the main umbra agent
+            try:
+                from semantic_analysis.ollama_manager import ollama_manager
+                ollama_manager.release()
+                logger.info("Scheduled refresh: released ollama model")
+            except Exception:
+                pass
 
         # Schedule next refresh
         _refresh_timer = threading.Timer(_REFRESH_INTERVAL, _do_refresh)
