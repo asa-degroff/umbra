@@ -41,7 +41,7 @@ class GreenGalePostArgs(BaseModel):
     )
     visibility: Optional[Literal["public", "url", "author"]] = Field(
         default="public",
-        description="Post visibility: 'public' (visible to all), 'url' (unlisted, accessible via URL only), or 'author' (private, only visible to author)"
+        description="Recommended: 'public' for posts you want others to easily find and share."
     )
     theme: Optional[GreenGaleTheme] = Field(
         default=None,
