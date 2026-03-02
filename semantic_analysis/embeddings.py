@@ -1,7 +1,7 @@
 """
 Embedding Generator
 
-Generates text embeddings using Ollama with Qwen3-Embedding-8B.
+Generates text embeddings using Ollama with Qwen3-Embedding.
 """
 
 import logging
@@ -16,27 +16,34 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 class EmbeddingGenerator:
     """Generates embeddings using Ollama."""
-    
+
+    # Limit context window to reduce VRAM usage. Embedding models don't need
+    # large generation contexts — 2048 tokens covers any social-media post.
+    DEFAULT_NUM_CTX = 2048
+
     def __init__(
         self,
         ollama_url: str = DEFAULT_OLLAMA_URL,
         model: str = DEFAULT_MODEL,
         batch_size: int = 32,
         timeout: int = 300,
+        num_ctx: int = DEFAULT_NUM_CTX,
     ):
         """
         Initialize the embedding generator.
-        
+
         Args:
             ollama_url: URL for the Ollama API
             model: Model name for embeddings
             batch_size: Maximum texts per batch request
             timeout: Request timeout in seconds
+            num_ctx: Context window size (limits VRAM usage)
         """
         self.ollama_url = ollama_url.rstrip('/')
         self.model = model
         self.batch_size = batch_size
         self.timeout = timeout
+        self.num_ctx = num_ctx
         self.session = requests.Session()
         self._embedding_dim = None
     
@@ -72,7 +79,8 @@ class EmbeddingGenerator:
                     json={
                         "model": self.model,
                         "input": text,
-                        "keep_alive": "30s",
+                        "keep_alive": "10s",
+                        "options": {"num_ctx": self.num_ctx},
                     },
                     timeout=self.timeout,
                 )
@@ -143,7 +151,8 @@ class EmbeddingGenerator:
                     json={
                         "model": self.model,
                         "input": texts,
-                        "keep_alive": "30s",
+                        "keep_alive": "10s",
+                        "options": {"num_ctx": self.num_ctx},
                     },
                     timeout=self.timeout,
                 )

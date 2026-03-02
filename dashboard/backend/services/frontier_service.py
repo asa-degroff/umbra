@@ -369,10 +369,24 @@ def _init_components():
             # Apply any existing user feedback
             _apply_feedback()
 
+            # Release the embedding model to free VRAM — init is done
+            try:
+                from semantic_analysis.ollama_manager import ollama_manager
+                ollama_manager.release()
+                logger.info("Init: released ollama model after initialization")
+            except Exception:
+                pass
+
             logger.info("Frontier service components initialized")
             return True
 
         except Exception as e:
+            # Release on failure too
+            try:
+                from semantic_analysis.ollama_manager import ollama_manager
+                ollama_manager.release()
+            except Exception:
+                pass
             logger.error(f"Failed to initialize frontier components: {e}")
             return False
 
