@@ -33,7 +33,7 @@ class GreenGalePostArgs(BaseModel):
     )
     content: str = Field(
         ...,
-        description="Main content of the blog post in Markdown format (max 100,000 characters). KaTeX math rendering is always available via $...$ or $$...$$ syntax."
+        description="Main content of the blog post in Markdown format (max 100,000 characters). To include an image, use the blobref from the upload_blog_image tool in a Markdown image tag, e.g. ![alt text](blobref://abc123). To embed an SVG, use a code block with 'svg' as the language."
     )
     subtitle: Optional[str] = Field(
         default=None,
@@ -53,7 +53,7 @@ class GreenGalePostArgs(BaseModel):
     )
     blobs: Optional[List[dict]] = Field(
         default=None,
-        description="List of blob metadata objects from upload_blog_image tool. Each object should have name, blobref, and optionally alt fields."
+        description="List of blob metadata objects from upload_blog_image tool. Each object should have name, blobref, and optionally alt fields. Use these blobrefs in the content to include images, e.g. ![alt text](blobref://abc123). This allows you to upload images and reference them in your blog post content."
     )
 
 
