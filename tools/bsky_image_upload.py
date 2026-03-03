@@ -77,15 +77,22 @@ def upload_image_to_pds(url: str, alt: str, ratio: str, pds_host: str, access_to
     if not blob_ref:
         raise Exception("Failed to get blob reference from upload response")
 
-    # Parse aspect ratio
+    # Detect aspect ratio from actual image dimensions
     aspect_width, aspect_height = 1, 1
-    if ratio and ":" in ratio:
-        try:
-            parts = ratio.split(":")
-            aspect_width = int(parts[0])
-            aspect_height = int(parts[1])
-        except (ValueError, IndexError):
-            pass
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(image_bytes))
+        aspect_width, aspect_height = img.width, img.height
+    except Exception:
+        # Fall back to caller-provided ratio
+        if ratio and ":" in ratio:
+            try:
+                parts = ratio.split(":")
+                aspect_width = int(parts[0])
+                aspect_height = int(parts[1])
+            except (ValueError, IndexError):
+                pass
 
     return {
         "image": blob_ref,

@@ -275,14 +275,21 @@ def reply_to_bluesky_post(
                     if not blob_ref:
                         raise Exception("Failed to get blob reference from upload")
 
-                    # Parse aspect ratio
+                    # Detect aspect ratio from actual image dimensions
                     aw, ah = 1, 1
-                    if img_ratio and ":" in img_ratio:
-                        try:
-                            parts = img_ratio.split(":")
-                            aw, ah = int(parts[0]), int(parts[1])
-                        except (ValueError, IndexError):
-                            pass
+                    try:
+                        from PIL import Image
+                        import io
+                        img = Image.open(io.BytesIO(image_bytes))
+                        aw, ah = img.width, img.height
+                    except Exception:
+                        # Fall back to agent-provided ratio
+                        if img_ratio and ":" in img_ratio:
+                            try:
+                                parts = img_ratio.split(":")
+                                aw, ah = int(parts[0]), int(parts[1])
+                            except (ValueError, IndexError):
+                                pass
 
                     images_list.append({
                         "image": blob_ref,
