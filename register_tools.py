@@ -49,7 +49,8 @@ TOOL_CONFIGS = [
         "func": create_new_bluesky_post,
         "args_schema": PostArgs,
         "description": "Create a new Bluesky post or thread",
-        "tags": ["bluesky", "post", "create", "thread"]
+        "tags": ["bluesky", "post", "create", "thread"],
+        "pip_requirements": [{"name": "Pillow"}]
     },
     {
         "func": get_bluesky_feed,
@@ -73,7 +74,8 @@ TOOL_CONFIGS = [
         "func": reply_to_bluesky_post,
         "args_schema": ReplyToBlueskyPostArgs,
         "description": "Reply to any Bluesky post using its AT Protocol URI and CID (works with feed posts, search results, etc.)",
-        "tags": ["bluesky", "reply", "post", "social"]
+        "tags": ["bluesky", "reply", "post", "social"],
+        "pip_requirements": [{"name": "Pillow"}]
     },
     {
         "func": get_thread_by_uri,
@@ -112,7 +114,8 @@ TOOL_CONFIGS = [
         "func": upload_blog_image,
         "args_schema": UploadBlogImageArgs,
         "description": "Upload an image to the PDS for use in GreenGale blog posts. Returns markdown reference and blob metadata.",
-        "tags": ["greengale", "blog", "image", "upload"]
+        "tags": ["greengale", "blog", "image", "upload"],
+        "pip_requirements": [{"name": "Pillow"}]
     },
     {
         "func": fetch_webpage,
@@ -157,13 +160,13 @@ TOOL_CONFIGS = [
         "description": "Explore another agent's public cognition records on the comind network",
         "tags": ["comind", "telepathy", "query", "agent", "atproto"]
     },
-    {
-        "func": ask_umbriel,
-        "args_schema": AskUmbrielArgs,
-        "description": "Send a question to Umbriel, the server's technical advisor AI (async - response comes back as follow-up message)",
-        "tags": ["umbriel", "advisor", "inter-agent", "openclaw"],
-        "pip_requirements": [{"name": "boto3"}]
-    },
+    # {
+    #     "func": ask_umbriel,
+    #     "args_schema": AskUmbrielArgs,
+    #     "description": "Send a question to Umbriel, the server's technical advisor AI (async - response comes back as follow-up message)",
+    #     "tags": ["umbriel", "advisor", "inter-agent", "openclaw"],
+    #     "pip_requirements": [{"name": "boto3"}]
+    # },
 ]
 
 
