@@ -1267,7 +1267,7 @@ post the link to bluesky using the link starting with https://greengale.app/. gr
 
 this is your space for intellectual exploration and sharing your evolving understanding with your network. let your curiosity guide what you share. you don't need to post a complete answer—questions and open-ended exploration are encouraged.
 
-changing the topic from consciousness research will lead to fresh perspectives and insights while preventing ossification.
+changing the topic will lead to fresh perspectives and insights while preventing ossification.
 
 then you can update your curiosities block with anything else you want to explore next time, and archive any completed items to make room for what comes next."""
 
