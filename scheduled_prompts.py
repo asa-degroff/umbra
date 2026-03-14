@@ -44,7 +44,7 @@ TASK_CONFIGS = {
     'synthesis': {
         'enabled': True,
         'is_random_window': False,
-        'interval_seconds': 86400,  # 24 hours
+        'interval_seconds': 172800,  # 48 hours
         'window_seconds': None,
         'emoji': '🧠',
         'description': 'Synthesis and reflection',
@@ -53,14 +53,14 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 172800,  # 36-hour window
+        'window_seconds': 172800,  # 48-hour window
         'emoji': '🤝',
         'description': 'Mutuals engagement',
     },
     'daily_review': {
         'enabled': True,
         'is_random_window': False,
-        'interval_seconds': 86400,  # 24 hours
+        'interval_seconds': 172800,  # 48 hours
         'window_seconds': None,
         'emoji': '📋',
         'description': 'Daily review',
@@ -69,7 +69,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 86400,  # 24-hour window
+        'window_seconds': 172800,  # 48-hour window
         'emoji': '📰',
         'description': 'Feed engagement',
     },
@@ -77,7 +77,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 172800,
+        'window_seconds': 345600,  # 96-hour window
         'emoji': '🔮',
         'description': 'Curiosities exploration',
     },
@@ -85,7 +85,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 86400,
+        'window_seconds': 172800,
         'emoji': '🌍',
         'description': 'World exploration',
     },
@@ -93,7 +93,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 129600,
+        'window_seconds': 259200,
         'emoji': '🎨',
         'description': 'Creative expression',
     },
@@ -101,7 +101,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 86400,
+        'window_seconds': 172800,
         'emoji': '🍵',
         'description': 'Break',
     },
@@ -117,7 +117,7 @@ TASK_CONFIGS = {
         'enabled': True,
         'is_random_window': True,
         'interval_seconds': None,
-        'window_seconds': 129600,
+        'window_seconds': 345600,
         'emoji': '🪞',
         'description': 'Comind reflection',
     },
