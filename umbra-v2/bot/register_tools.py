@@ -31,6 +31,8 @@ from tools.upload_blog_image import upload_blog_image, UploadBlogImageArgs
 from tools.comind import comind_records, ComindRecordsArgs
 from tools.comind_telepathy import comind_telepathy, ComindTelepathyArgs
 from tools.ask_umbriel import ask_umbriel, AskUmbrielArgs
+from tools.web_search import web_search, WebSearchArgs
+from tools.fetch_webpage_puppeteer import fetch_webpage_puppeteer, FetchWebpagePuppeteerArgs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -167,6 +169,18 @@ TOOL_CONFIGS = [
     #     "tags": ["umbriel", "advisor", "inter-agent", "openclaw"],
     #     "pip_requirements": [{"name": "boto3"}]
     # },
+    {
+        "func": web_search,
+        "args_schema": WebSearchArgs,
+        "description": "Search the web using Brave Search API. Returns titles, URLs, and descriptions.",
+        "tags": ["web", "search", "brave"]
+    },
+    {
+        "func": fetch_webpage_puppeteer,
+        "args_schema": FetchWebpagePuppeteerArgs,
+        "description": "Fetch a webpage and convert it to readable text using Puppeteer (renders JavaScript)",
+        "tags": ["web", "fetch", "webpage", "puppeteer"]
+    },
 ]
 
 
@@ -227,6 +241,11 @@ def register_tools(agent_id: str = None, tools: List[str] = None, set_env: bool 
                 image_config = get_image_generation_config()
                 if image_config.get('replicate_api_token'):
                     env_vars['REPLICATE_API_TOKEN'] = image_config['replicate_api_token']
+
+                # Add Brave Search API key if configured (for web search)
+                brave_key = get_config().get('brave_search.api_key', os.getenv('BRAVE_SEARCH_API_KEY', ''))
+                if brave_key:
+                    env_vars['BRAVE_SEARCH_API_KEY'] = brave_key
 
                 console.print(f"\n[bold cyan]Setting tool execution environment variables:[/bold cyan]")
                 console.print(f"  BSKY_USERNAME: {env_vars['BSKY_USERNAME']}")

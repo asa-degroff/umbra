@@ -216,10 +216,16 @@ def main():
 
     console.print(f"\n[bold green]Import complete![/bold green]")
     console.print(f"  New agent ID: {agent_id}")
-    console.print(f"  Update your config.yaml with:")
-    console.print(f"    letta:")
-    console.print(f"      base_url: \"{args.base_url}\"")
-    console.print(f"      agent_id: \"{agent_id}\"")
+    console.print(f"\n  [bold]Next steps:[/bold]")
+    console.print(f"  1. Update config.yaml:")
+    console.print(f"       letta:")
+    console.print(f"         base_url: \"{args.base_url}\"")
+    console.print(f"         agent_id: \"{agent_id}\"")
+    console.print(f"  2. Register custom tools:")
+    console.print(f"       cd bot && python register_tools.py --config ../config.yaml")
+    console.print(f"  3. Built-in tools (archival_memory_insert/search, conversation_search,")
+    console.print(f"     memory, open_files, semantic_search_files) are automatic on self-hosted.")
+    console.print(f"  4. web_search and fetch_webpage replaced by custom Brave/Puppeteer versions.")
 
 
 if __name__ == "__main__":
