@@ -1,0 +1,272 @@
+"""GreenGale blog post creation tool."""
+from typing import Optional, List, Literal
+from pydantic import BaseModel, Field
+
+
+class GreenGaleTheme(BaseModel):
+    """Theme configuration for GreenGale posts."""
+    preset: Optional[Literal[
+        "github-light", "github-dark", "dracula", "nord",
+        "solarized-light", "solarized-dark", "monokai"
+    ]] = Field(
+        default=None,
+        description="Preset theme name. If not provided, uses github-light."
+    )
+    background: Optional[str] = Field(
+        default=None,
+        description="Custom background color (hex, e.g. '#1a1a2e'). Requires text and accent colors."
+    )
+    text: Optional[str] = Field(
+        default=None,
+        description="Custom text color (hex, e.g. '#eaeaea'). Requires background and accent colors."
+    )
+    accent: Optional[str] = Field(
+        default=None,
+        description="Custom accent color (hex, e.g. '#00d4ff'). Requires background and text colors."
+    )
+
+
+class GreenGalePostArgs(BaseModel):
+    title: str = Field(
+        ...,
+        description="Title of the blog post (max 1,000 characters)"
+    )
+    content: str = Field(
+        ...,
+        description="Main content of the blog post in Markdown format (max 100,000 characters). To include an image, use the blobref from the upload_blog_image tool in a Markdown image tag, e.g. ![alt text](blobref://abc123). To embed an SVG, use a code block with 'svg' as the language."
+    )
+    subtitle: Optional[str] = Field(
+        default=None,
+        description="Optional subtitle for the blog post"
+    )
+    visibility: Optional[Literal["public", "url", "author"]] = Field(
+        default="public",
+        description="Recommended: 'public' for posts you want others to easily find and share."
+    )
+    theme: Optional[GreenGaleTheme] = Field(
+        default=None,
+        description="Theme configuration. Use preset for built-in themes, or provide custom background/text/accent colors."
+    )
+    tags: Optional[List[str]] = Field(
+        default=None,
+        description="List of tags for categorizing the post (max 100 tags)"
+    )
+    blobs: Optional[List[dict]] = Field(
+        default=None,
+        description="List of blob metadata objects from upload_blog_image tool. Each object should have name, blobref, and optionally alt fields. Use these blobrefs in the content to include images, e.g. ![alt text](blobref://abc123). This allows you to upload images and reference them in your blog post content."
+    )
+
+
+def create_greengale_blog_post(
+    title: str,
+    content: str,
+    subtitle: Optional[str] = None,
+    visibility: Optional[str] = "public",
+    theme: Optional[dict] = None,
+    tags: Optional[list] = None,
+    blobs: Optional[list] = None
+) -> str:
+    """
+    Create a new blog post on GreenGale.
+
+    This tool creates blog posts using the app.greengale.document lexicon on the ATProto network.
+    GreenGale supports custom themes, KaTeX math rendering (via $...$ or $$...$$), inline SVGs,
+    tags for categorization, and multiple visibility options.
+    To post a link to the blog, use the returned URL. Ensure that you prepend it with "https://".
+    To embed an SVG, use a code block with "svg" as the language, e.g.:
+    ```svg
+    <svg width="100" height="100">
+      <circle cx="50" cy="50" r="40" stroke="black" stroke-width="3" fill="red" />
+    </svg>
+    ```
+
+    Args:
+        title: Title of the blog post (max 1,000 characters)
+        content: Main content of the blog post in Markdown (max 100,000 characters)
+        subtitle: Optional subtitle for the blog post
+        visibility: Post visibility - 'public', 'url' (unlisted), or 'author' (private)
+        theme: Theme configuration dict with either 'preset' key or custom 'background'/'text'/'accent' colors
+        tags: List of tags for categorizing the post (max 100 tags)
+        blobs: List of blob metadata objects from upload_blog_image tool (each with name, blobref, and optionally alt)
+
+    Returns:
+        Success message with the blog post URL
+
+    Raises:
+        Exception: If the post creation fails
+    """
+    import os
+    import time
+    import random
+    import requests
+    from datetime import datetime, timezone
+
+    try:
+        # Get credentials from environment
+        username = os.getenv("BSKY_USERNAME")
+        password = os.getenv("BSKY_PASSWORD")
+        pds_host = os.getenv("PDS_URI", "https://bsky.social")
+
+        if not username or not password:
+            raise Exception("BSKY_USERNAME and BSKY_PASSWORD environment variables must be set")
+
+        # Normalize visibility - handle both string and enum types
+        if hasattr(visibility, 'value'):
+            visibility = visibility.value
+        visibility = str(visibility) if visibility else "public"
+
+        # Validate inputs
+        if len(title) > 1000:
+            raise Exception(f"Title exceeds maximum length of 1,000 characters (got {len(title)})")
+        if len(content) > 100000:
+            raise Exception(f"Content exceeds maximum length of 100,000 characters (got {len(content)})")
+        if visibility not in ("public", "url", "author"):
+            raise Exception(f"Invalid visibility '{visibility}'. Must be 'public', 'url', or 'author'")
+        if tags and len(tags) > 100:
+            raise Exception(f"Tags exceeds maximum of 100 (got {len(tags)})")
+
+        # Create session
+        session_url = f"{pds_host}/xrpc/com.atproto.server.createSession"
+        session_data = {
+            "identifier": username,
+            "password": password
+        }
+
+        session_response = requests.post(session_url, json=session_data, timeout=10)
+        session_response.raise_for_status()
+        session = session_response.json()
+        access_token = session.get("accessJwt")
+        user_did = session.get("did")
+        handle = session.get("handle", username)
+
+        if not access_token or not user_did:
+            raise Exception("Failed to get access token or DID from session")
+
+        # Generate TID for the record key (needed for path field)
+        # TID: 13-char base32-sortable identifier (microsecond timestamp + clock ID)
+        tid_charset = "234567abcdefghijklmnopqrstuvwxyz"
+        timestamp_us = int(time.time() * 1_000_000)
+        clock_id = random.randint(0, 1023)
+        tid_int = (timestamp_us << 10) | clock_id
+        rkey = ""
+        for _ in range(13):
+            rkey = tid_charset[tid_int & 0x1F] + rkey
+            tid_int >>= 5
+
+        # Create blog post record using V2 lexicon
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        blog_record = {
+            "$type": "app.greengale.document",
+            "title": title,
+            "content": content,
+            "publishedAt": now,
+            "visibility": visibility,
+            "url": "https://greengale.app",
+            "path": f"/{handle}/{rkey}"
+        }
+
+        # Add subtitle if provided
+        if subtitle:
+            blog_record["subtitle"] = subtitle
+
+        # Add theme if provided - handle both Pydantic models and dicts
+        theme_description = "github-light (default)"
+        if theme:
+            # Convert Pydantic model to dict if needed
+            if hasattr(theme, 'model_dump'):
+                theme_dict = theme.model_dump(exclude_none=True)
+            elif hasattr(theme, 'dict'):
+                theme_dict = theme.dict(exclude_none=True)
+            elif isinstance(theme, dict):
+                theme_dict = {k: v for k, v in theme.items() if v is not None}
+            else:
+                theme_dict = {}
+
+            # Handle case where theme might be a string (preset name directly)
+            if isinstance(theme, str):
+                theme_dict = {"preset": theme}
+
+            # Extract preset value if it's an enum
+            preset_val = theme_dict.get("preset")
+            if preset_val and hasattr(preset_val, 'value'):
+                preset_val = preset_val.value
+
+            if preset_val:
+                blog_record["theme"] = {"preset": preset_val}
+                theme_description = preset_val
+            elif theme_dict.get("custom"):
+                # Already has custom nested structure
+                custom = theme_dict["custom"]
+                if custom.get("background") and custom.get("text") and custom.get("accent"):
+                    blog_record["theme"] = {"custom": custom}
+                    theme_description = f"custom (bg: {custom['background']}, text: {custom['text']}, accent: {custom['accent']})"
+                else:
+                    blog_record["theme"] = {"preset": "github-light"}
+            elif theme_dict.get("background") and theme_dict.get("text") and theme_dict.get("accent"):
+                # Custom colors at top level - nest under "custom" key
+                blog_record["theme"] = {
+                    "custom": {
+                        "background": theme_dict["background"],
+                        "text": theme_dict["text"],
+                        "accent": theme_dict["accent"]
+                    }
+                }
+                theme_description = f"custom (bg: {theme_dict['background']}, text: {theme_dict['text']}, accent: {theme_dict['accent']})"
+            else:
+                # Default to github-light if theme is incomplete
+                blog_record["theme"] = {"preset": "github-light"}
+        else:
+            # Default theme
+            blog_record["theme"] = {"preset": "github-light"}
+
+        # Add tags if provided
+        if tags:
+            blog_record["tags"] = tags
+
+        # Add blobs if provided
+        if blobs:
+            blog_record["blobs"] = blobs
+
+        # Create the record
+        headers = {"Authorization": f"Bearer {access_token}"}
+        create_record_url = f"{pds_host}/xrpc/com.atproto.repo.createRecord"
+
+        create_data = {
+            "repo": user_did,
+            "collection": "app.greengale.document",
+            "rkey": rkey,
+            "record": blog_record
+        }
+
+        post_response = requests.post(create_record_url, headers=headers, json=create_data, timeout=10)
+        post_response.raise_for_status()
+
+        # Construct the GreenGale blog URL (we already have the rkey)
+        blog_url = f"https://greengale.app/{handle}/{rkey}"
+
+        # Build success message
+        visibility_labels = {
+            "public": "public",
+            "url": "unlisted (URL only)",
+            "author": "private (author only)"
+        }
+
+        success_parts = [
+            f"Successfully created GreenGale blog post!",
+            f"Title: {title}"
+        ]
+        if subtitle:
+            success_parts.append(f"Subtitle: {subtitle}")
+        success_parts.extend([
+            f"URL: {blog_url}",
+            f"Theme: {theme_description}",
+            f"Visibility: {visibility_labels.get(visibility, visibility)}"
+        ])
+        if tags:
+            success_parts.append(f"Tags: {', '.join(tags)}")
+
+        return "\n".join(success_parts)
+
+    except Exception as e:
+        raise Exception(f"Error creating GreenGale blog post: {str(e)}")

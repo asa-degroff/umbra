@@ -1,0 +1,12 @@
+services:
+  letta-server:
+    image: letta/letta:latest
+    network_mode: host
+    environment:
+      - OLLAMA_BASE_URL=http://localhost:11434
+    volumes:
+      - letta-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  letta-data:

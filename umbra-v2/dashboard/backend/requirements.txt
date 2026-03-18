@@ -1,0 +1,6 @@
+fastapi>=0.115.0
+uvicorn>=0.34.0
+letta-client>=0.1.235
+websockets>=13.0
+requests>=2.32.0
+pyyaml>=6.0.2

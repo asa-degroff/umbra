@@ -1,0 +1,10 @@
+# Blocked Strings Configuration
+# Each non-empty, non-comment line is treated as a string to filter out.
+# These strings will be replaced with [content filtered] before being sent to the LLM.
+#
+# Example:
+# some problematic string here
+# another string to block
+#
+# Add your strings below this line:
+ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL_1FAEFB6177B4672DEE07F9D3AFC62588CCD2631EDCF22E8CCC1FB35B501C9C86
