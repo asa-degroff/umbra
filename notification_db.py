@@ -594,7 +594,7 @@ class NotificationDB:
         cursor = self.conn.execute("""
             SELECT MAX(indexed_at) as latest
             FROM notifications
-            WHERE status IN ('processed', 'ignored', 'no_reply', 'error')
+            WHERE status IN ('processed', 'ignored', 'no_reply', 'error', 'skipped')
             AND (auto_debounced IS NULL OR auto_debounced = 0)
         """)
         row = cursor.fetchone()
@@ -680,7 +680,7 @@ class NotificationDB:
         """Get set of processed URIs for compatibility with existing code."""
         cursor = self.conn.execute("""
             SELECT uri FROM notifications
-            WHERE status IN ('processed', 'ignored', 'no_reply', 'in_progress', 'error')
+            WHERE status IN ('processed', 'ignored', 'no_reply', 'in_progress', 'error', 'skipped')
             ORDER BY processed_at DESC
             LIMIT ?
         """, (limit,))
